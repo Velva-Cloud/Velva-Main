@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  OWNER
+  ADMIN
+  SUPPORT
+  USER
+}
+
+enum SubscriptionStatus {
+  active
+  canceled
+  expired
+}
+
+enum ServerStatus {
+  running
+  stopped
+  suspended
+}
+
+enum NodeStatus {
+  online
+  offline
+}
+
+enum LogAction {
+  login
+  server_create
+  plan_change
+}
+
+model User {
+  id            Int       @id @default(autoincrement())
+  email         String    @unique
+  password      String?
+  oauthProvider String?
+  oauthId       String?
+  role          Role      @default(USER)
+  createdAt     DateTime  @default(now())
+  lastLogin     DateTime?
+
+  subscriptions Subscription[]
+  servers       Server[]
+  logs          Log[]
+}
+
+model Plan {
+  id             Int      @id @default(autoincrement())
+  name           String
+  pricePerMonth  Decimal  @db.Decimal(10, 2)
+  resources      Json
+  isActive       Boolean  @default(true)
+
+  subscriptions  Subscription[]
+  servers        Server[]
+}
+
+model Subscription {
+  id        Int                 @id @default(autoincrement())
+  userId    Int
+  planId    Int
+  startDate DateTime
+  endDate   DateTime?
+  status    SubscriptionStatus
+
+  user User @relation(fields: [userId], references: [id])
+  plan Plan @relation(fields: [planId], references: [id])
+}
+
+model Node {
+  id       Int        @id @default(autoincrement())
+  name     String
+  location String
+  ip       String
+  status   NodeStatus
+  capacity Int
+
+  servers  Server[]
+}
+
+model Server {
+  id        Int          @id @default(autoincrement())
+  userId    Int
+  planId    Int
+  nodeId    Int?
+  name      String
+  status    ServerStatus
+  createdAt DateTime     @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+  plan Plan @relation(fields: [planId], references: [id])
+  node Node? @relation(fields: [nodeId], references: [id])
+}
+
+model Log {
+  id        Int       @id @default(autoincrement())
+  userId    Int?
+  action    LogAction
+  metadata  Json?
+  timestamp DateTime  @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+}

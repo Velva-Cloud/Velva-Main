@@ -1,0 +1,24 @@
+# Node
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-lock.yaml
+
+# Env
+.env
+.env.local
+.env.*.local
+backend/.env
+
+# Build outputs
+dist
+.next
+coverage
+
+# Prisma
+backend/prisma/dev.db
+backend/prisma/*.db-journal
+
+# Mac/OS
+.DS_Store
