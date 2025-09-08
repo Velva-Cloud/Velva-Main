@@ -45,9 +45,41 @@ export class AuthService {
     return { access_token: token };
   }
 
-  // Stubs for OAuth Phase 1 - return not implemented
-  async oauthLogin(provider: 'google' | 'discord') {
-    return { message: `OAuth with ${provider} not implemented in MVP.` };
+  async handleOAuthLogin(provider: 'google' | 'discord', oauthId: string, email?: string) {
+    let user = await this.prisma.user.findFirst({ where: { oauthProvider: provider, oauthId } });
+
+    if (!user && email) {
+      // Link by email if exists
+      const byEmail = await this.prisma.user.findUnique({ where: { email } });
+      if (byEmail) {
+        user = await this.prisma.user.update({
+          where: { id: byEmail.id },
+          data: { oauthProvider: provider, oauthId },
+        });
+      }
+    }
+
+    if (!user) {
+      // Create new user
+      const userCount = await this.prisma.user.count();
+      const role: Role = userCount === 0 ? Role.OWNER : Role.USER;
+
+      user = await this.prisma.user.create({
+        data: {
+          email: email ?? `${provider}_${oauthId}@example.local`,
+          oauthProvider: provider,
+          oauthId,
+          role,
+        },
+      });
+    }
+
+    await this.prisma.user.update({
+      where: { id: user.id },
+      data: { lastLogin: new Date() },
+    });
+
+    return this.signToken(user.id, user.email, user.role as Role);
   }
 
   private async signToken(userId: number, email: string, role: Role) {

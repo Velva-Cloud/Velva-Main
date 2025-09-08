@@ -1,9 +1,10 @@
-import { Body, Controller, Get, Post } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, Res, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
+import { AuthGuard } from '@nestjs/passport';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -28,13 +29,36 @@ export class AuthController {
     return result;
   }
 
-  @Get('oauth/google')
-  async oauthGoogle() {
-    return this.auth.oauthLogin('google');
+  // Google OAuth
+  @Get('google')
+  @UseGuards(AuthGuard('google'))
+  async googleAuth() {
+    // Initiates Google OAuth2 login flow
+    return;
   }
 
-  @Get('oauth/discord')
-  async oauthDiscord() {
-    return this.auth.oauthLogin('discord');
+  @Get('google/callback')
+  @UseGuards(AuthGuard('google'))
+  async googleCallback(@Req() req: any, @Res() res: any) {
+    const { provider, oauthId, email } = req.user as { provider: 'google'; oauthId: string; email?: string };
+    const token = await this.auth.handleOAuthLogin(provider, oauthId, email);
+    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?token=${encodeURIComponent(token)}`;
+    return res.redirect(redirectUrl);
+  }
+
+  // Discord OAuth
+  @Get('discord')
+  @UseGuards(AuthGuard('discord'))
+  async discordAuth() {
+    return;
+  }
+
+  @Get('discord/callback')
+  @UseGuards(AuthGuard('discord'))
+  async discordCallback(@Req() req: any, @Res() res: any) {
+    const { provider, oauthId, email } = req.user as { provider: 'discord'; oauthId: string; email?: string };
+    const token = await this.auth.handleOAuthLogin(provider, oauthId, email);
+    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?token=${encodeURIComponent(token)}`;
+    return res.redirect(redirectUrl);
   }
 }

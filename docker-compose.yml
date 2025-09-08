@@ -16,6 +16,34 @@ services:
       - mysql_data:/var/lib/mysql
     command: ["--default-authentication-plugin=mysql_native_password"]
 
+  backend:
+    build: ./backend
+    container_name: hosting_backend
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    environment:
+      # Ensure Prisma connects to the mysql container
+      DATABASE_URL: mysql://panel:panel@mysql:3306/panel
+      FRONTEND_URL: http://localhost:3000
+      PORT: 4000
+    depends_on:
+      - mysql
+    ports:
+      - "4000:4000"
+
+  frontend:
+    build: ./frontend
+    container_name: hosting_frontend
+    restart: unless-stopped
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4000/api
+      PORT: 3000
+    depends_on:
+      - backend
+    ports:
+      - "3000:3000"
+
   # Redis reserved for future phases (rate limiting, queues)
   # redis:
   #   image: redis:7
