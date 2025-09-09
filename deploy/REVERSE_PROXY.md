@@ -28,12 +28,12 @@ server {
     proxy_pass http://127.0.0.1:3000;
   }
 
-  # API
+  # API (preserve /api prefix for Nest globalPrefix)
   location /api/ {
     proxy_set_header Host $host;
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    proxy_pass http://127.0.0.1:4000;
+    proxy_pass http://127.0.0.1:4000/api/;
   }
 }
 
@@ -59,10 +59,11 @@ Apache (example)
   SSLCertificateKeyFile /etc/letsencrypt/live/panel.velvacloud.com/privkey.pem
 
   ProxyPreserveHost On
-  ProxyPass /api/ http://127.0.0.1:4000/
-  ProxyPassReverse /api/ http://127.0.0.1:4000/
+  # Keep /api prefix when proxying
+  ProxyPass        /api/ http://127.0.0.1:4000/api/
+  ProxyPassReverse /api/ http://127.0.0.1:4000/api/
 
-  ProxyPass / http://127.0.0.1:3000/
+  ProxyPass        / http://127.0.0.1:3000/
   ProxyPassReverse / http://127.0.0.1:3000/
 </VirtualHost>
 
