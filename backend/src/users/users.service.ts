@@ -18,7 +18,10 @@ export class UsersService {
   }
 
   async updateRole(userId: number, role: Role) {
-    return this.prisma.user.update({ where: { id: userId }, data: { role } });
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { role: { set: role } },
+    });
   }
 
   async create(data: Prisma.UserCreateInput) {
