@@ -9,9 +9,9 @@ async function bootstrap() {
 
   app.setGlobalPrefix('api');
 
-  // CORS for frontend
+  // CORS for frontend: reflect request origin (safe for this API with bearer tokens)
   app.enableCors({
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: true,
     credentials: true,
   });
 
@@ -34,7 +34,7 @@ async function bootstrap() {
   SwaggerModule.setup('api/docs', app, document);
 
   const port = process.env.PORT || 4000;
-  await app.listen(port);
+  await app.listen(port, '0.0.0.0');
   // eslint-disable-next-line no-console
   console.log(`API running at http://localhost:${port}/api`);
   // eslint-disable-next-line no-console
