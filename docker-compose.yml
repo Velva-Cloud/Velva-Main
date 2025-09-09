@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   mysql:
     image: mysql:8.0
@@ -10,8 +8,10 @@ services:
       MYSQL_DATABASE: panel
       MYSQL_USER: panel
       MYSQL_PASSWORD: panel
-    ports:
-      - "3306:3306"
+    # No host port publish to avoid conflicts (backend reaches it via service name)
+    # If you need host access to MySQL, uncomment and change to a free host port, e.g.:
+    # ports:
+    #   - "3307:3306"
     volumes:
       - mysql_data:/var/lib/mysql
     command: ["--default-authentication-plugin=mysql_native_password"]
