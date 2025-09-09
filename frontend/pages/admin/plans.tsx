@@ -1,0 +1,160 @@
+import Head from 'next/head';
+import { useEffect, useState } from 'react';
+import api from '../../utils/api';
+import NavBar from '../../components/NavBar';
+
+type Plan = {
+  id: number;
+  name: string;
+  pricePerMonth: string;
+  resources: any;
+  isActive: boolean;
+};
+
+export default function AdminPlans() {
+  const [plans, setPlans] = useState<Plan[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  // form state
+  const [name, setName] = useState('');
+  const [price, setPrice] = useState('9.99');
+  const [resources, setResources] = useState('{\n  "cpu": 100,\n  "ramMB": 2048,\n  "diskGB": 20\n}');
+  const [isActive, setIsActive] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+
+  const fetchPlans = async () => {
+    setLoading(true);
+    try {
+      const res = await api.get('/plans/admin');
+      setPlans(res.data);
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || 'Failed to load plans (are you ADMIN/OWNER?)');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPlans();
+  }, []);
+
+  const createPlan = async () => {
+    setErr(null);
+    try {
+      await api.post('/plans', {
+        name,
+        pricePerMonth: price,
+        resources,
+        isActive,
+      });
+      setName('');
+      setPrice('9.99');
+      setResources('{\n  "cpu": 100,\n  "ramMB": 2048,\n  "diskGB": 20\n}');
+      setIsActive(true);
+      await fetchPlans();
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || 'Failed to create plan');
+    }
+  };
+
+  const toggleActive = async (id: number, current: boolean) => {
+    setErr(null);
+    try {
+      await api.patch(`/plans/${id}`, { isActive: !current });
+      await fetchPlans();
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || 'Failed to update plan');
+    }
+  };
+
+  const updatePrice = async (id: number, newPrice: string) => {
+    setErr(null);
+    try {
+      await api.patch(`/plans/${id}`, { pricePerMonth: newPrice });
+      await fetchPlans();
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || 'Failed to update price');
+    }
+  };
+
+  const remove = async (id: number) => {
+    if (!confirm('Delete this plan?')) return;
+    setErr(null);
+    try {
+      await api.delete(`/plans/${id}`);
+      await fetchPlans();
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || 'Failed to delete plan (is it referenced by servers/subscriptions?)');
+    }
+  };
+
+  return (
+    <>
+      <Head>
+        <title>Admin • Plans</title>
+      </Head>
+      <NavBar />
+      <main className="max-w-5xl mx-auto px-6 py-10">
+        <h1 className="text-2xl font-semibold mb-6">Admin • Plans</h1>
+
+        {err && <div className="mb-4 text-red-400">{err}</div>}
+
+        <section className="mb-8 p-4 bg-slate-900 border border-slate-800 rounded">
+          <h2 className="font-semibold mb-3">Create Plan</h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block">
+              <div className="text-sm mb-1">Name</div>
+              <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700" />
+            </label>
+            <label className="block">
+              <div className="text-sm mb-1">Price per month (decimal string)</div>
+              <input value={price} onChange={e => setPrice(e.target.value)} className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700" />
+            </label>
+          </div>
+          <div className="mt-3">
+            <div className="text-sm mb-1">Resources (JSON)</div>
+            <textarea value={resources} onChange={e => setResources(e.target.value)} rows={6} className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 font-mono text-sm" />
+          </div>
+          <label className="mt-3 inline-flex items-center gap-2">
+            <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />
+            <span>Active</span>
+          </label>
+          <div className="mt-4">
+            <button onClick={createPlan} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded">Create</button>
+          </div>
+        </section>
+
+        <section>
+          <h2 className="font-semibold mb-3">Existing Plans</h2>
+          {loading ? (
+            <div>Loading...</div>
+          ) : (
+            <div className="space-y-3">
+              {plans.map(p => (
+                <div key={p.id} className="p-4 bg-slate-900 border border-slate-800 rounded">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold">{p.name}</div>
+                      <div className="text-sm text-slate-400">ID: {p.id} • ${p.pricePerMonth}/mo • {p.isActive ? 'Active' : 'Inactive'}</div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => toggleActive(p.id, p.isActive)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">
+                        {p.isActive ? 'Deactivate' : 'Activate'}
+                      </button>
+                      <button onClick={() => {
+                        const newPrice = prompt('New price (decimal string):', String(p.pricePerMonth));
+                        if (newPrice) updatePrice(p.id, newPrice);
+                      }} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">Edit Price</button>
+                      <button onClick={() => remove(p.id)} className="px-3 py-1 rounded bg-red-600 hover:bg-red-500">Delete</button>
+                    </div>
+                  </div>
+                  <pre className="mt-3 bg-slate-800 rounded p-2 text-xs overflow-auto">{JSON.stringify(p.resources, null, 2)}</pre>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+      </main>
+    </>
+  );
+}
