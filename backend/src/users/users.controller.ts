@@ -2,10 +2,11 @@ import { Body, Controller, Get, Param, ParseIntPipe, Patch, UseGuards } from '@n
 import { UsersService } from './users.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
-import { Role } from '../common/roles.enum';
+import { Role as PanelRole } from '../common/roles.enum';
 import { RolesGuard } from '../common/roles.guard';
 import { AuthGuard } from '@nestjs/passport';
 import { PrismaService } from '../prisma/prisma.service';
+import { Role } from '@prisma/client';
 
 @ApiTags('users')
 @ApiBearerAuth()
@@ -15,13 +16,13 @@ export class UsersController {
   constructor(private users: UsersService, private prisma: PrismaService) {}
 
   @Get()
-  @Roles(Role.ADMIN, Role.OWNER)
+  @Roles(PanelRole.ADMIN, PanelRole.OWNER)
   async list() {
     return this.users.findAll();
   }
 
   @Patch(':id/role')
-  @Roles(Role.ADMIN, Role.OWNER)
+  @Roles(PanelRole.ADMIN, PanelRole.OWNER)
   async setRole(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { role: Role },
