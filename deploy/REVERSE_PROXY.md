@@ -35,6 +35,12 @@ server {
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     proxy_pass http://127.0.0.1:4000/api/;
   }
+
+  # TEMP: Prisma Studio (only while needed)
+  location /studio/ {
+    proxy_set_header Host $host;
+    proxy_pass http://127.0.0.1:5555/;
+  }
 }
 
 Caddy (example)
@@ -63,6 +69,10 @@ Apache (example)
   ProxyPass        /api/ http://127.0.0.1:4000/api/
   ProxyPassReverse /api/ http://127.0.0.1:4000/api/
 
+  # TEMP: Prisma Studio
+  ProxyPass        /studio/ http://127.0.0.1:5555/
+  ProxyPassReverse /studio/ http://127.0.0.1:5555/
+
   ProxyPass        / http://127.0.0.1:3000/
   ProxyPassReverse / http://127.0.0.1:3000/
 </VirtualHost>
@@ -76,5 +86,10 @@ Backend environment variables
 Then:
 1) Update DNS for panel.velvacloud.com
 2) Reload your reverse proxy
-3) Restart the stack:
-   docker compose up -d --build
+3) Start Prisma Studio bound to 0.0.0.0:
+   docker compose exec backend npx prisma studio --host 0.0.0.0 --port 5555
+4) Access Studio at:
+   https://panel.velvacloud.com/studio
+5) When done, Ctrl+C Studio or stop it:
+   docker compose exec backend pkill -f "prisma studio"
+   (and optionally remove /studio proxy from your vhost and reload)
