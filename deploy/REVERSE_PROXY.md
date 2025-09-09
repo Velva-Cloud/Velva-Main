@@ -37,6 +37,7 @@ server {
   }
 
   # TEMP: Prisma Studio (only while needed)
+  location = /studio { return 301 /studio/; }
   location /studio/ {
     proxy_set_header Host $host;
     proxy_pass http://127.0.0.1:5555/;
@@ -70,6 +71,7 @@ Apache (example)
   ProxyPassReverse /api/ http://127.0.0.1:4000/api/
 
   # TEMP: Prisma Studio
+  RedirectMatch 301 ^/studio$ /studio/
   ProxyPass        /studio/ http://127.0.0.1:5555/
   ProxyPassReverse /studio/ http://127.0.0.1:5555/
 
@@ -87,7 +89,7 @@ Then:
 1) Update DNS for panel.velvacloud.com
 2) Reload your reverse proxy
 3) Start Prisma Studio bound to 0.0.0.0:
-   docker compose exec backend npx prisma studio --host 0.0.0.0 --port 5555
+   docker compose exec backend npx prisma studio --hostname 0.0.0.0 --port 5555 --browser none
 4) Access Studio at:
    https://panel.velvacloud.com/studio
 5) When done, Ctrl+C Studio or stop it:
