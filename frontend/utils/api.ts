@@ -5,9 +5,8 @@ function resolveBaseUrl() {
     return process.env.NEXT_PUBLIC_API_BASE_URL;
   }
   if (typeof window !== 'undefined') {
-    const proto = window.location.protocol;
-    const host = window.location.hostname;
-    return `${proto}//${host}:4000/api`;
+    // Default to same-origin proxy at /api when behind a reverse proxy (Caddy/Nginx)
+    return '/api';
   }
   // SSR/build fallback
   return 'http://localhost:4000/api';
