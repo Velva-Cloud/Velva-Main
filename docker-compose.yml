@@ -20,12 +20,12 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
-      FRONTEND_URL: https://velvacloud.com
+      FRONTEND_URL: https://panel.velvacloud.com
       PORT: 4000
     depends_on:
       - mysql
-    expose:
-      - "4000"
+    ports:
+      - "4000:4000"
 
   frontend:
     build: ./frontend
@@ -36,25 +36,11 @@ services:
       PORT: 3000
     depends_on:
       - backend
-    expose:
-      - "3000"
-
-  caddy:
-    image: caddy:2.7
-    container_name: hosting_caddy
-    restart: unless-stopped
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    depends_on:
-      - frontend
-      - backend
+      - "3000:3000"
+
+# Remove caddy here to avoid port 80/443 conflicts with your existing site.
+# Configure your existing web server to reverse proxy the subdomain instead.
 
 volumes:
   mysql_data:
-  caddy_data:
-  caddy_config:
