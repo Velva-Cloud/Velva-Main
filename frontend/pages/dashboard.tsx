@@ -10,21 +10,39 @@ type Server = {
   planId: number;
 };
 
+type Plan = {
+  id: number;
+  name: string;
+};
+
 export default function Dashboard() {
   const [servers, setServers] = useState<Server[]>([]);
+  const [plans, setPlans] = useState<Plan[]>([]);
   const [name, setName] = useState('');
-  const [planId, setPlanId] = useState<number>(1);
+  const [planId, setPlanId] = useState<number | ''>('');
   const [err, setErr] = useState<string | null>(null);
 
   useEffect(() => {
     api.get('/servers')
       .then(res => setServers(res.data))
       .catch(() => setServers([]));
+
+    api.get('/plans')
+      .then(res => {
+        const list = res.data as any[];
+        setPlans(list.map(p => ({ id: p.id, name: p.name })));
+        if (list.length > 0) setPlanId(list[0].id);
+      })
+      .catch(() => setPlans([]));
   }, []);
 
   const createServer = async () => {
     setErr(null);
     try {
+      if (!planId) {
+        setErr('Please select a plan');
+        return;
+      }
       const res = await api.post('/servers', { name, planId });
       setServers([res.data, ...servers]);
       setName('');
@@ -42,11 +60,24 @@ export default function Dashboard() {
       <main className="max-w-4xl mx-auto px-6 py-10">
         <h1 className="text-2xl font-semibold mb-6">Your Servers</h1>
 
-        <div className="mb-6 space-y-2">
-          <input value={name} onChange={e => setName(e.target.value)} placeholder="Server name" className="px-3 py-2 rounded bg-slate-800 border border-slate-700" />
-          <input value={planId} onChange={e => setPlanId(Number(e.target.value))} type="number" min={1} placeholder="Plan ID" className="ml-2 px-3 py-2 rounded bg-slate-800 border border-slate-700 w-28" />
-          <button onClick={createServer} className="ml-2 bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded">Create (mock)</button>
-          {err && <div className="text-red-400">{err}</div>}
+        <div className="mb-6 flex flex-wrap items-center gap-2">
+          <input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="Server name"
+            className="px-3 py-2 rounded bg-slate-800 border border-slate-700"
+          />
+          <select
+            value={planId}
+            onChange={e => setPlanId(Number(e.target.value))}
+            className="px-3 py-2 rounded bg-slate-800 border border-slate-700"
+          >
+            {plans.map(p => (
+              <option key={p.id} value={p.id}>{p.name}</option>
+            ))}
+          </select>
+          <button onClick={createServer} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded">Create (mock)</button>
+          {err && <div className="text-red-400 w-full">{err}</div>}
         </div>
 
         <ul className="space-y-3">

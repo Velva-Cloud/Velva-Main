@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 @Injectable()
@@ -17,18 +17,23 @@ export class ServersService {
   }
 
   async create(userId: number, planId: number, name: string) {
-    // For MVP Phase 1: no plan limits, simple creation
+    // Validate plan exists and is active to avoid FK violations
+    const plan = await this.prisma.plan.findUnique({ where: { id: Number(planId) } });
+    if (!plan || !plan.isActive) {
+      throw new BadRequestException('Invalid or inactive plan');
+    }
+
     const server = await this.prisma.server.create({
       data: {
         userId,
-        planId,
+        planId: plan.id,
         name,
         status: 'stopped',
       },
     });
 
     await this.prisma.log.create({
-      data: { userId, action: 'server_create', metadata: { serverId: server.id, name } },
+      data: { userId, action: 'server_create', metadata: { serverId: server.id, name, planId: plan.id } },
     });
 
     return server;
