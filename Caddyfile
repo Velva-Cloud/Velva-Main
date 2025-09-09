@@ -1,8 +1,8 @@
 {
-  email you@example.com
+  email hill.l.ethan6066@gmail.com
 }
 
-your-domain.com, www.your-domain.com {
+velvacloud.com, www.velvacloud.com {
   encode gzip
   @api path /api* /api/*
 

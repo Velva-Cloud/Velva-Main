@@ -20,7 +20,7 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
-      FRONTEND_URL: https://your-domain.com
+      FRONTEND_URL: https://velvacloud.com
       PORT: 4000
     depends_on:
       - mysql
