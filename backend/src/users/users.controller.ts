@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseIntPipe, Patch, Query, Req, UseGuards } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -28,8 +28,8 @@ export class UsersController {
 
   @Get()
   @Roles(Role.ADMIN, Role.OWNER)
-  async list() {
-    return this.users.findAll();
+  async list(@Query('search') search?: string, @Query('role') role?: Role | 'ALL') {
+    return this.users.findAll({ search: search || undefined, role: role || undefined });
   }
 
   @Patch(':id/role')
