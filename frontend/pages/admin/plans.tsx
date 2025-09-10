@@ -18,6 +18,10 @@ export default function AdminPlans() {
   // form state
   const [name, setName] = useState('');
   const [price, setPrice] = useState('9.99');
+  const [cpu, setCpu] = useState(100);
+  const [ramMB, setRamMB] = useState(2048);
+  const [diskGB, setDiskGB] = useState(20);
+  const [advanced, setAdvanced] = useState(false);
   const [resources, setResources] = useState('{\n  "cpu": 100,\n  "ramMB": 2048,\n  "diskGB": 20\n}');
   const [isActive, setIsActive] = useState(true);
   const [err, setErr] = useState<string | null>(null);
@@ -41,14 +45,18 @@ export default function AdminPlans() {
   const createPlan = async () => {
     setErr(null);
     try {
+      const resObj = advanced ? JSON.parse(resources) : { cpu, ramMB, diskGB };
       await api.post('/plans', {
         name,
         pricePerMonth: price,
-        resources,
+        resources: JSON.stringify(resObj),
         isActive,
       });
       setName('');
       setPrice('9.99');
+      setCpu(100);
+      setRamMB(2048);
+      setDiskGB(20);
       setResources('{\n  "cpu": 100,\n  "ramMB": 2048,\n  "diskGB": 20\n}');
       setIsActive(true);
       await fetchPlans();
@@ -99,28 +107,54 @@ export default function AdminPlans() {
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
-        <section className="mb-8 p-4 bg-slate-900 border border-slate-800 rounded">
+        <section className="mb-8 p-4 card">
           <h2 className="font-semibold mb-3">Create Plan</h2>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block">
               <div className="text-sm mb-1">Name</div>
-              <input value={name} onChange={e => setName(e.target.value)} className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700" />
+              <input value={name} onChange={e => setName(e.target.value)} className="input" />
             </label>
             <label className="block">
               <div className="text-sm mb-1">Price per month (decimal string)</div>
-              <input value={price} onChange={e => setPrice(e.target.value)} className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700" />
+              <input value={price} onChange={e => setPrice(e.target.value)} className="input" />
             </label>
           </div>
-          <div className="mt-3">
-            <div className="text-sm mb-1">Resources (JSON)</div>
-            <textarea value={resources} onChange={e => setResources(e.target.value)} rows={6} className="w-full px-3 py-2 rounded bg-slate-800 border border-slate-700 font-mono text-sm" />
+
+          <div className="mt-4">
+            <label className="inline-flex items-center gap-2">
+              <input type="checkbox" checked={advanced} onChange={e => setAdvanced(e.target.checked)} />
+              <span>Advanced JSON</span>
+            </label>
           </div>
+
+          {!advanced ? (
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <label className="block">
+                <div className="text-sm mb-1">CPU (%)</div>
+                <input type="number" value={cpu} onChange={e => setCpu(Number(e.target.value))} className="input" />
+              </label>
+              <label className="block">
+                <div className="text-sm mb-1">RAM (MB)</div>
+                <input type="number" value={ramMB} onChange={e => setRamMB(Number(e.target.value))} className="input" />
+              </label>
+              <label className="block">
+                <div className="text-sm mb-1">Disk (GB)</div>
+                <input type="number" value={diskGB} onChange={e => setDiskGB(Number(e.target.value))} className="input" />
+              </label>
+            </div>
+          ) : (
+            <div className="mt-3">
+              <div className="text-sm mb-1">Resources (JSON)</div>
+              <textarea value={resources} onChange={e => setResources(e.target.value)} rows={6} className="textarea font-mono text-sm" />
+            </div>
+          )}
+
           <label className="mt-3 inline-flex items-center gap-2">
             <input type="checkbox" checked={isActive} onChange={e => setIsActive(e.target.checked)} />
             <span>Active</span>
           </label>
           <div className="mt-4">
-            <button onClick={createPlan} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded">Create</button>
+            <button onClick={createPlan} className="btn btn-primary">Create</button>
           </div>
         </section>
 
@@ -131,8 +165,8 @@ export default function AdminPlans() {
           ) : (
             <div className="space-y-3">
               {plans.map(p => (
-                <div key={p.id} className="p-4 bg-slate-900 border border-slate-800 rounded">
-                  <div className="flex items-center justify-between">
+                <div key={p.id} className="p-4 card">
+                  <div className="flex items-center justify-between gap-3">
                     <div>
                       <div className="font-semibold">{p.name}</div>
                       <div className="text-sm text-slate-400">ID: {p.id} • ${p.pricePerMonth}/mo • {p.isActive ? 'Active' : 'Inactive'}</div>

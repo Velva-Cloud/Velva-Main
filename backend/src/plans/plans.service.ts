@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
@@ -43,7 +43,15 @@ export class PlansService {
     });
   }
 
-  delete(id: number) {
-    return this.prisma.plan.delete({ where: { id } });
+  async delete(id: number) {
+    try {
+      return await this.prisma.plan.delete({ where: { id } });
+    } catch (e: any) {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2003') {
+        // Foreign key constraint failed on the field: `planId`
+        throw new BadRequestException('Cannot delete plan: it is referenced by servers or subscriptions.');
+      }
+      throw e;
+    }
   }
 }
