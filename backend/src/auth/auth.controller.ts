@@ -5,7 +5,6 @@ import { LoginDto } from './dto/login.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthGuard } from '@nestjs/passport';
-import { Throttle } from '@nestjs/throttler';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
@@ -15,7 +14,6 @@ export class AuthController {
   constructor(private auth: AuthService, private prisma: PrismaService) {}
 
   @Post('register')
-  @Throttle('auth-std')
   async register(@Body() dto: RegisterDto) {
     const result = await this.auth.register(dto.email, dto.password);
     await this.prisma.log.create({
@@ -25,7 +23,6 @@ export class AuthController {
   }
 
   @Post('login')
-  @Throttle('auth-std')
   async login(@Body() dto: LoginDto) {
     const result = await this.auth.login(dto.email, dto.password);
     await this.prisma.log.create({
@@ -35,13 +32,11 @@ export class AuthController {
   }
 
   @Post('forgot-password')
-  @Throttle('auth-low')
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.auth.requestPasswordReset(dto.email);
   }
 
   @Post('reset-password')
-  @Throttle('auth-low')
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(dto.token, dto.password);
   }
