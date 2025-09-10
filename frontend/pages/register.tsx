@@ -1,23 +1,38 @@
 import Head from 'next/head';
-import { FormEvent, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import api from '../utils/api';
 import NavBar from '../components/NavBar';
+import { useToast } from '../components/Toast';
 
 export default function Register() {
+  const toast = useToast();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const passwordError = useMemo(() => (password.length >= 8 ? null : 'Password must be at least 8 characters'), [password]);
 
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setErr(null);
+    if (passwordError) {
+      setErr(passwordError);
+      return;
+    }
+    setLoading(true);
     try {
       const res = await api.post('/auth/register', { email, password });
       const token = res.data.access_token;
       localStorage.setItem('token', token);
+      toast.show('Account created', 'success');
       window.location.href = '/dashboard';
     } catch (e: any) {
-      setErr(e?.response?.data?.message || 'Register failed');
+      const msg = e?.response?.data?.message || 'Register failed';
+      setErr(msg);
+      toast.show(msg, 'error');
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -34,8 +49,13 @@ export default function Register() {
           {err && <p className="mb-4 text-red-400">{err}</p>}
           <form onSubmit={onSubmit} className="space-y-4">
             <input value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" type="email" className="input" />
-            <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min 8 chars)" type="password" className="input" />
-            <button className="btn btn-primary w-full">Register</button>
+            <div>
+              <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Password (min 8 chars)" type="password" className="input" aria-invalid={!!passwordError} />
+              {passwordError && <div className="mt-1 text-xs text-red-400">{passwordError}</div>}
+            </div>
+            <button className={`btn btn-primary w-full ${loading ? 'opacity-70 cursor-not-allowed' : ''}`} disabled={loading} aria-busy={loading}>
+              {loading ? 'Creating…' : 'Register'}
+            </button>
           </form>
 
           <div className="mt-6 space-y-3">

@@ -2,6 +2,7 @@ import Head from 'next/head';
 import { useEffect, useState } from 'react';
 import api from '../utils/api';
 import NavBar from '../components/NavBar';
+import { useRequireAuth } from '../utils/guards';
 
 type Server = {
   id: number;
@@ -16,11 +17,14 @@ type Plan = {
 };
 
 export default function Dashboard() {
+  useRequireAuth();
+
   const [servers, setServers] = useState<Server[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [name, setName] = useState('');
   const [planId, setPlanId] = useState<number | ''>('');
   const [err, setErr] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
 
   useEffect(() => {
     api.get('/servers')
@@ -43,11 +47,14 @@ export default function Dashboard() {
         setErr('Please select a plan');
         return;
       }
+      setCreating(true);
       const res = await api.post('/servers', { name, planId });
       setServers([res.data, ...servers]);
       setName('');
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to create server');
+    } finally {
+      setCreating(false);
     }
   };
 
@@ -77,7 +84,7 @@ export default function Dashboard() {
               <option key={p.id} value={p.id}>{p.name}</option>
             ))}
           </select>
-          <button onClick={createServer} className="bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded">Create (mock)</button>
+          <button onClick={createServer} disabled={creating} className={`bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded ${creating ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create (mock)'}</button>
           {err && <div className="text-red-400 w-full">{err}</div>}
         </div>
 
@@ -93,7 +100,7 @@ export default function Dashboard() {
             <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
             <h3 className="text-xl font-semibold mb-2">No servers yet</h3>
             <p className="text-slate-400 mb-5">Use the form above to create your first server on VelvaCloud.</p>
-            <button onClick={createServer} className="btn btn-primary">Create (mock)</button>
+            <button onClick={createServer} disabled={creating} className={`btn btn-primary ${creating ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create (mock)'}</button>
           </div>
         ) : (
           <ul className="space-y-3">

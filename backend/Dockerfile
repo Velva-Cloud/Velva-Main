@@ -14,8 +14,8 @@ RUN npm run build
 FROM node:20-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
-# Install OpenSSL for Prisma engines at runtime
-RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
+# Install OpenSSL and wget for Prisma engines and healthchecks at runtime
+RUN apt-get update && apt-get install -y openssl wget && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist

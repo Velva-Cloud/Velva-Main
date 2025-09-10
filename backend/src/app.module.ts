@@ -9,6 +9,7 @@ import { NodesModule } from './nodes/nodes.module';
 import { LogsModule } from './logs/logs.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
+import { StatusModule } from './status/status.module';
 
 @Module({
   imports: [
@@ -25,6 +26,7 @@ import { APP_GUARD } from '@nestjs/core';
     ServersModule,
     NodesModule,
     LogsModule,
+    StatusModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

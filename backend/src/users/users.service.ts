@@ -10,9 +10,18 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email } });
   }
 
-  async findAll(): Promise<Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin'>[]> {
+  async findAll(params?: { search?: string; role?: Role | 'ALL' }): Promise<Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin'>[]> {
+    const where: Prisma.UserWhereInput = {};
+    if (params?.search) {
+      // Most MySQL collations are case-insensitive by default; drop mode for compatibility
+      where.email = { contains: params.search };
+    }
+    if (params?.role && params.role !== 'ALL') {
+      where.role = params.role as Role;
+    }
     return this.prisma.user.findMany({
       select: { id: true, email: true, role: true, createdAt: true, lastLogin: true },
+      where,
       orderBy: { id: 'desc' },
     });
   }
