@@ -15,7 +15,7 @@ export class AuthController {
   constructor(private auth: AuthService, private prisma: PrismaService) {}
 
   @Post('register')
-  @Throttle(10, 60) // 10 requests per minute
+  @Throttle({ ttl: 60, limit: 10 }) // 10 requests per minute
   async register(@Body() dto: RegisterDto) {
     const result = await this.auth.register(dto.email, dto.password);
     await this.prisma.log.create({
@@ -25,7 +25,7 @@ export class AuthController {
   }
 
   @Post('login')
-  @Throttle(10, 60)
+  @Throttle({ ttl: 60, limit: 10 })
   async login(@Body() dto: LoginDto) {
     const result = await this.auth.login(dto.email, dto.password);
     await this.prisma.log.create({
@@ -35,13 +35,13 @@ export class AuthController {
   }
 
   @Post('forgot-password')
-  @Throttle(5, 60)
+  @Throttle({ ttl: 60, limit: 5 })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.auth.requestPasswordReset(dto.email);
   }
 
   @Post('reset-password')
-  @Throttle(5, 60)
+  @Throttle({ ttl: 60, limit: 5 })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(dto.token, dto.password);
   }
