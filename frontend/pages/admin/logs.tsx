@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import api from '../../utils/api';
 import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
+import SystemStatus from '../../components/SystemStatus';
 
 type Log = {
   id: number;
@@ -43,7 +44,12 @@ export default function AdminLogs() {
       </Head>
       <NavBar />
       <main className="max-w-5xl mx-auto px-6 py-10">
-        <h1 className="text-2xl font-semibold mb-4">Admin • Logs</h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold">Admin • Logs</h1>
+          <div className="w-full max-w-sm ml-4">
+            <SystemStatus />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>

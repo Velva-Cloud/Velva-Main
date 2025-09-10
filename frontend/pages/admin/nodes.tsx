@@ -4,6 +4,7 @@ import api from '../../utils/api';
 import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
 import { useToast } from '../../components/Toast';
+import SystemStatus from '../../components/SystemStatus';
 
 type NodeRec = {
   id: number;
@@ -32,7 +33,7 @@ export default function AdminNodes() {
 
   const nameError = useMemo(() => (name.trim() ? null : 'Name is required'), [name]);
   const locError = useMemo(() => (location.trim() ? null : 'Location is required'), [location]);
-  const ipError = useMemo(() => (/^\\d{1,3}(?:\\.\\d{1,3}){3}$/.test(ip) ? null : 'Enter a valid IPv4 address'), [ip]);
+  const ipError = useMemo(() => (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) ? null : 'Enter a valid IPv4 address'), [ip]);
   const capError = useMemo(() => (typeof capacity === 'number' && capacity > 0 ? null : 'Capacity must be a positive integer'), [capacity]);
 
   const fetchNodes = async () => {
@@ -133,7 +134,12 @@ export default function AdminNodes() {
       </Head>
       <NavBar />
       <main className="max-w-5xl mx-auto px-6 py-10">
-        <h1 className="text-2xl font-semibold mb-4">Admin • Nodes</h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold">Admin • Nodes</h1>
+          <div className="w-full max-w-sm ml-4">
+            <SystemStatus />
+          </div>
+        </div>
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Nodes</a>
