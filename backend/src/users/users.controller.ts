@@ -44,8 +44,4 @@ export class UsersController {
     });
     return updated;
   }
-} },
-    });
-    return updated;
-  }
 }
