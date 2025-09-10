@@ -1,7 +1,8 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  // Use default output for next start to avoid runtime warning
+  // output: 'standalone',
 };
 
 module.exports = nextConfig;
