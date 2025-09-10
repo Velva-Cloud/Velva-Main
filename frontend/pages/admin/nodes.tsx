@@ -221,6 +221,24 @@ export default function AdminNodes() {
                       >
                         Edit
                       </button>
+                      <button
+                        onClick={async () => {
+                          if (!confirm('Delete this node? Servers assigned to it will be detached.')) return;
+                          setBusyId(n.id);
+                          try {
+                            await api.delete(`/nodes/${n.id}`);
+                            setNodes((prev) => prev.filter((x) => x.id !== n.id));
+                            toast.show('Node deleted', 'success');
+                          } catch (e: any) {
+                            toast.show(e?.response?.data?.message || 'Failed to delete node', 'error');
+                          } finally {
+                            setBusyId(null);
+                          }
+                        }}
+                        className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        Delete
+                      </button>
                     </div>
                   </div>
                 </div>

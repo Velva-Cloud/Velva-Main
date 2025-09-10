@@ -1,5 +1,5 @@
 import Head from 'next/head';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import api from '../utils/api';
 import NavBar from '../components/NavBar';
 import { useRequireAuth } from '../utils/guards';
@@ -26,6 +26,14 @@ export default function Dashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const nameError = useMemo(() => {
+    const n = name.trim();
+    if (n.length < 3) return 'Name must be at least 3 characters';
+    if (n.length > 32) return 'Name must be at most 32 characters';
+    if (!/^[A-Za-z0-9_-]+$/.test(n)) return 'Only letters, numbers, dash and underscore allowed';
+    return null;
+  }, [name]);
+
   useEffect(() => {
     api.get('/servers')
       .then(res => setServers(res.data))
@@ -47,8 +55,12 @@ export default function Dashboard() {
         setErr('Please select a plan');
         return;
       }
+      if (nameError) {
+        setErr(nameError);
+        return;
+      }
       setCreating(true);
-      const res = await api.post('/servers', { name, planId });
+      const res = await api.post('/servers', { name: name.trim(), planId });
       setServers([res.data, ...servers]);
       setName('');
     } catch (e: any) {
@@ -74,6 +86,7 @@ export default function Dashboard() {
             onChange={e => setName(e.target.value)}
             placeholder="Server name"
             className="px-3 py-2 rounded bg-slate-800 border border-slate-700"
+            aria-invalid={!!nameError}
           />
           <select
             value={planId}
@@ -85,7 +98,7 @@ export default function Dashboard() {
             ))}
           </select>
           <button onClick={createServer} disabled={creating} className={`bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded ${creating ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create (mock)'}</button>
-          {err && <div className="text-red-400 w-full">{err}</div>}
+          {(err || nameError) && <div className="text-red-400 w-full">{err || nameError}</div>}
         </div>
 
         {servers.length === 0 ? (

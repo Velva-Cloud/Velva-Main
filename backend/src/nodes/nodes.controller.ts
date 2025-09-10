@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { NodesService } from './nodes.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
@@ -58,6 +58,19 @@ export class NodesController {
       data: { userId, action: 'plan_change', metadata: { event: 'node_toggle', nodeId: id, status: toggled.status } },
     });
     return toggled;
+  }
+
+  // Admin: delete node
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Delete(':id')
+  async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const result = await this.service.delete(id);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'node_delete', nodeId: id } },
+    });
+    return result;
   }
 
   // Admin: ping node

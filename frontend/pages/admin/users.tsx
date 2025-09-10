@@ -60,6 +60,33 @@ export default function AdminUsers() {
     }
   };
 
+  const editEmail = async (u: User) => {
+    const newEmail = prompt('Enter new email', u.email);
+    if (!newEmail || newEmail.trim() === u.email) return;
+    const prev = { ...u };
+    setUsers((list) => list.map((it) => (it.id === u.id ? { ...it, email: newEmail.trim() } : it)));
+    try {
+      await api.patch(`/users/${u.id}/email`, { email: newEmail.trim() });
+      toast.show('Email updated', 'success');
+    } catch (e: any) {
+      setUsers((list) => list.map((it) => (it.id === u.id ? prev : it)));
+      toast.show(e?.response?.data?.message || 'Failed to update email', 'error');
+    }
+  };
+
+  const deleteUser = async (u: User) => {
+    if (!confirm(`Delete user ${u.email}? This removes their servers, subscriptions and logs.`)) return;
+    const prev = [...users];
+    setUsers((list) => list.filter((it) => it.id !== u.id));
+    try {
+      await api.delete(`/users/${u.id}`);
+      toast.show('User deleted', 'success');
+    } catch (e: any) {
+      setUsers(prev);
+      toast.show(e?.response?.data?.message || 'Failed to delete user', 'error');
+    }
+  };
+
   return (
     <>
       <Head>
@@ -131,6 +158,8 @@ export default function AdminUsers() {
                     <option value="SUPPORT">SUPPORT</option>
                     <option value="USER">USER</option>
                   </select>
+                  <button onClick={() => editEmail(u)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">Edit email</button>
+                  <button onClick={() => deleteUser(u)} className="px-3 py-1 rounded bg-red-700 hover:bg-red-600">Delete</button>
                 </div>
               </div>
             ))}
