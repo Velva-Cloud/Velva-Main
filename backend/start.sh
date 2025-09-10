@@ -5,6 +5,12 @@ set -e
 # Run migrations (safe for prod with migrate deploy); fallback to db push if no migrations exist
 npx prisma migrate deploy || npx prisma db push
 
+# Optional seed on boot (idempotent)
+if [ "${SEED_ON_BOOT:-true}" = "true" ]; then
+  echo "Running seed (idempotent)..."
+  node prisma/seed.js || echo "Seed step skipped or failed (continuing)."
+fi
+
 # Start the API (support both dist/src/main.js and dist/main.js layouts)
 if [ -f "dist/src/main.js" ]; then
   node dist/src/main.js
