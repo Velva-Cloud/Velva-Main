@@ -51,6 +51,7 @@ model User {
   subscriptions Subscription[]
   servers       Server[]
   logs          Log[]
+  resetTokens   PasswordResetToken[]
 }
 
 model Plan {
@@ -109,4 +110,15 @@ model Log {
   timestamp DateTime  @default(now())
 
   user User? @relation(fields: [userId], references: [id])
+}
+
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  token     String   @unique
+  expiresAt DateTime
+  used      Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
 }

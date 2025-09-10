@@ -5,6 +5,9 @@ import { LoginDto } from './dto/login.dto';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthGuard } from '@nestjs/passport';
+import { Throttle } from '@nestjs/throttler';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
+import { ResetPasswordDto } from './dto/reset-password.dto';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -12,6 +15,7 @@ export class AuthController {
   constructor(private auth: AuthService, private prisma: PrismaService) {}
 
   @Post('register')
+  @Throttle(10, 60) // 10 requests per minute
   async register(@Body() dto: RegisterDto) {
     const result = await this.auth.register(dto.email, dto.password);
     await this.prisma.log.create({
@@ -21,12 +25,25 @@ export class AuthController {
   }
 
   @Post('login')
+  @Throttle(10, 60)
   async login(@Body() dto: LoginDto) {
     const result = await this.auth.login(dto.email, dto.password);
     await this.prisma.log.create({
       data: { action: 'login', userId: null, metadata: { event: 'login', email: dto.email } },
     });
     return result;
+  }
+
+  @Post('forgot-password')
+  @Throttle(5, 60)
+  async forgotPassword(@Body() dto: ForgotPasswordDto) {
+    return this.auth.requestPasswordReset(dto.email);
+  }
+
+  @Post('reset-password')
+  @Throttle(5, 60)
+  async resetPassword(@Body() dto: ResetPasswordDto) {
+    return this.auth.resetPassword(dto.token, dto.password);
   }
 
   // Google OAuth
