@@ -27,6 +27,12 @@ export class AuthService {
         role,
       },
     });
+
+    // Log registration as a login event with metadata
+    await this.prisma.log.create({
+      data: { userId: user.id, action: 'login', metadata: { event: 'register', email } },
+    });
+
     const token = await this.signToken(user.id, user.email, user.role as Role);
     return { access_token: token };
   }
@@ -40,6 +46,11 @@ export class AuthService {
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
+    });
+
+    // Log successful login
+    await this.prisma.log.create({
+      data: { userId: user.id, action: 'login', metadata: { event: 'login', email } },
     });
 
     const token = await this.signToken(user.id, user.email, user.role as Role);
@@ -78,6 +89,11 @@ export class AuthService {
     await this.prisma.user.update({
       where: { id: user.id },
       data: { lastLogin: new Date() },
+    });
+
+    // Log OAuth login
+    await this.prisma.log.create({
+      data: { userId: user.id, action: 'login', metadata: { event: 'oauth', provider, email: user.email } },
     });
 
     return this.signToken(user.id, user.email, user.role as Role);

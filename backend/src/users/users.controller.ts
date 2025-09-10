@@ -17,7 +17,7 @@ export class UsersController {
   // Current user profile
   @Get('me')
   async me(@Req() req: any) {
-    const userId = req.user?.sub as number;
+    const userId = req.user?.userId as number;
     if (!userId) return null;
     const u = await this.prisma.user.findUnique({
       where: { id: userId },

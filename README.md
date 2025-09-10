@@ -52,6 +52,9 @@ Local development (without Docker)
 3) Frontend
    cd frontend
    npm i
+   # To have the Next server proxy /api to your local backend:
+   #   export API_PROXY_TARGET=http://localhost:4000
+   # Then:
    npm run dev
    # Frontend at http://localhost:3000
 
@@ -69,6 +72,12 @@ Environment variables (backend/.env)
   - DISCORD_CLIENT_ID
   - DISCORD_CLIENT_SECRET
   - DISCORD_CALLBACK_URL (default http://localhost:4000/api/auth/discord/callback)
+
+Environment variables (frontend)
+- NEXT_PUBLIC_API_BASE_URL
+  - Default is /api (suitable when behind a reverse proxy or when using the rewrite below)
+- API_PROXY_TARGET
+  - If set (e.g., http://backend:4000 in Docker or http://localhost:4000 locally), Next.js will proxy /api to this target via next.config.js rewrites
 
 OAuth setup (Google & Discord)
 - Configure OAuth apps in Google Cloud Console and Discord Developer Portal.

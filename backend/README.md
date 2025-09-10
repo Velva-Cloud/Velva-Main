@@ -4,7 +4,7 @@ Hosting Platform Backend (MVP)
 Stack
 - Node.js + NestJS (TS)
 - Prisma ORM + MySQL
-- JWT Auth (email/password)
+- JWT Auth (email/password) + OAuth (Google/Discord)
 - Swagger (OpenAPI) at /api/docs
 
 Getting Started (Local)
@@ -27,6 +27,7 @@ Getting Started (Local)
    Use Prisma Studio:
    npm run prisma:studio
    - Add a few Plans (name, pricePerMonth, resources JSON, isActive) and Nodes
+   # A basic seed is also available via `node prisma/seed.js`
 
 6) Start the API
    npm run dev
@@ -46,8 +47,8 @@ Core Endpoints (Phase 1)
 - PATCH  /api/users/:id/role          (auth; ADMIN/OWNER)
 
 Notes
-- OAuth (Google/Discord) routes are stubbed for now: /api/auth/oauth/google, /api/auth/oauth/discord
-- Logging is implemented for key actions (login/register via metadata, plan_change, server_create).
+- OAuth (Google/Discord) is implemented: /api/auth/google and /api/auth/discord (configure env vars in .env)
+- Logging is implemented for key actions (register/login via metadata, plan_change, server_create).
 - Roles supported: OWNER, ADMIN, SUPPORT, USER. Use PATCH /users/:id/role to set roles (ADMIN/OWNER only).
 - For MySQL in Docker, default creds are in docker-compose.yml (DB: panel / user: panel / pass: panel).
 

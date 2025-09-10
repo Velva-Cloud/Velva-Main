@@ -25,7 +25,7 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
-      FRONTEND_URL: https://panel.velvacloud.com
+      FRONTEND_URL: http://localhost:3000
       PORT: 4000
       SEED_ON_BOOT: "true"
     depends_on:
@@ -47,6 +47,7 @@ services:
     restart: unless-stopped
     environment:
       NEXT_PUBLIC_API_BASE_URL: /api
+      API_PROXY_TARGET: http://backend:4000
       PORT: 3000
     depends_on:
       backend:
