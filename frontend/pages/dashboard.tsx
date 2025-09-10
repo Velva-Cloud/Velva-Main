@@ -54,7 +54,7 @@ export default function Dashboard() {
   return (
     <>
       <Head>
-        <title>Dashboard - HostX</title>
+        <title>Dashboard • VelvaCloud</title>
       </Head>
       <NavBar />
       <main className="max-w-4xl mx-auto px-6 py-10">

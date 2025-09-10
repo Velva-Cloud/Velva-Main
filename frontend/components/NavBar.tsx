@@ -20,10 +20,14 @@ export default function NavBar() {
   };
 
   return (
-    <nav className="sticky top-0 z-40 flex items-center justify-between px-6 py-4 bg-[#0a0f1a]/80 backdrop-blur border-b border-slate-800">
-      <Link href="/" className="font-semibold text-lg">
-        <span className="text-white">Velva</span>
-        <span className="text-sky-400">Cloud</span>
+    <nav className="sticky top-0 z-40 flex items-center justify-between px-6 py-3 bg-[#0a0f1a]/80 backdrop-blur border-b border-slate-800">
+      <Link href="/" className="flex items-center gap-3">
+        <img
+          src="https://velvacloud.com/logo.png"
+          alt="VelvaCloud"
+          className="h-8 w-auto"
+        />
+        <span className="sr-only">VelvaCloud</span>
       </Link>
       <div className="flex items-center gap-4">
         <Link href="/dashboard" className="hover:text-sky-300 transition-colors">Dashboard</Link>
