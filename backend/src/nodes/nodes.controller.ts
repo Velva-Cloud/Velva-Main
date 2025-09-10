@@ -8,6 +8,7 @@ import { Role } from '../common/roles.enum';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import type { Prisma } from '@prisma/client';
 
 @ApiTags('nodes')
 @ApiBearerAuth()
@@ -41,8 +42,15 @@ export class NodesController {
   async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateNodeDto, @Req() req: any) {
     const updated = await this.service.update(id, dto);
     const userId = req?.user?.userId ?? null;
+
+    const metaPatch = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined)) as Prisma.JsonObject;
+
     await this.prisma.log.create({
-      data: { userId, action: 'plan_change', metadata: { event: 'node_update', nodeId: id, patch: dto } },
+      data: {
+        userId,
+        action: 'plan_change',
+        metadata: { event: 'node_update', nodeId: id, patch: metaPatch } as Prisma.InputJsonValue,
+      },
     });
     return updated;
   }
