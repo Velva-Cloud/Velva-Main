@@ -32,7 +32,7 @@ export default function NavBar() {
       <div className="flex items-center gap-4">
         <Link href="/dashboard" className="hover:text-sky-300 transition-colors">Dashboard</Link>
         {role && (role === 'ADMIN' || role === 'OWNER') && (
-          <Link href="/admin/plans" className="hover:text-sky-300 transition-colors">Admin</Link>
+          <Link href="/admin" className="hover:text-sky-300 transition-colors">Admin</Link>
         )}
         {!token ? (
           <>
