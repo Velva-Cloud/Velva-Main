@@ -62,6 +62,7 @@ export default function Dashboard() {
 
         <div className="mb-6 flex flex-wrap items-center gap-2">
           <input
+            id="server-name"
             value={name}
             onChange={e => setName(e.target.value)}
             placeholder="Server name"
@@ -80,14 +81,30 @@ export default function Dashboard() {
           {err && <div className="text-red-400 w-full">{err}</div>}
         </div>
 
-        <ul className="space-y-3">
-          {servers.map(s => (
-            <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
-              <div className="font-semibold">{s.name}</div>
-              <div className="text-sm text-slate-300">Status: {s.status} • Plan #{s.planId}</div>
-            </li>
-          ))}
-        </ul>
+        {servers.length === 0 ? (
+          <div className="relative overflow-hidden card p-10 text-center">
+            <div
+              className="absolute inset-0 -z-10 opacity-40"
+              style={{
+                background:
+                  'radial-gradient(500px 200px at 20% 0%, rgba(109,40,217,0.25), transparent 60%), radial-gradient(500px 200px at 80% 100%, rgba(6,182,212,0.25), transparent 60%)',
+              }}
+            />
+            <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
+            <h3 className="text-xl font-semibold mb-2">No servers yet</h3>
+            <p className="text-slate-400 mb-5">Use the form above to create your first server on VelvaCloud.</p>
+            <button onClick={createServer} className="btn btn-primary">Create (mock)</button>
+          </div>
+        ) : (
+          <ul className="space-y-3">
+            {servers.map(s => (
+              <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
+                <div className="font-semibold">{s.name}</div>
+                <div className="text-sm text-slate-300">Status: {s.status} • Plan #{s.planId}</div>
+              </li>
+            ))}
+          </ul>
+        )}
       </main>
     </>
   );
