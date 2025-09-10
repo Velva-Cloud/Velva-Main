@@ -107,7 +107,7 @@ export default function AdminPlans() {
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
-        <section className="mb-8 p-4 card">
+        <section id="create-plan" className="mb-8 p-4 card">
           <h2 className="font-semibold mb-3">Create Plan</h2>
           <div className="grid gap-3 md:grid-cols-2">
             <label className="block">
@@ -162,6 +162,20 @@ export default function AdminPlans() {
           <h2 className="font-semibold mb-3">Existing Plans</h2>
           {loading ? (
             <div>Loading...</div>
+          ) : plans.length === 0 ? (
+            <div className="relative overflow-hidden card p-10 text-center">
+              <div
+                className="absolute inset-0 -z-10 opacity-40"
+                style={{
+                  background:
+                    'radial-gradient(500px 200px at 20% 0%, rgba(109,40,217,0.25), transparent 60%), radial-gradient(500px 200px at 80% 100%, rgba(6,182,212,0.25), transparent 60%)',
+                }}
+              />
+              <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
+              <h3 className="text-xl font-semibold mb-2">No plans yet</h3>
+              <p className="text-slate-400 mb-5">Use the form above to create your first plan.</p>
+              <a href="#create-plan" className="btn btn-primary inline-flex">Create plan</a>
+            </div>
           ) : (
             <div className="space-y-3">
               {plans.map(p => (
