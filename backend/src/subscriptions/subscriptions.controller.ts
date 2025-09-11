@@ -35,9 +35,9 @@ export class SubscriptionsController {
   }
 
   @Post()
-  async subscribe(@Body() body: { planId: number }, @Request() req: any) {
+  async subscribe(@Body() body: { planId: number; customRamGB?: number }, @Request() req: any) {
     const userId = req.user.userId as number;
-    const sub = await this.service.create(userId, Number(body.planId));
+    const sub = await this.service.create(userId, Number(body.planId), { customRamGB: body.customRamGB });
     const nextRenewalDate = this.nextRenewalDateFrom(sub.startDate);
     // Include plan details for convenience
     const withPlan = await this.service.getCurrent(userId);

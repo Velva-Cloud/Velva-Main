@@ -38,7 +38,7 @@ export class SubscriptionsService {
     return { canceled: true };
   }
 
-  async create(userId: number, planId: number) {
+  async create(userId: number, planId: number, opts?: { customRamGB?: number }) {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan || !plan.isActive) throw new BadRequestException('Invalid plan');
 
@@ -58,17 +58,37 @@ export class SubscriptionsService {
       select: { id: true, planId: true, startDate: true, status: true },
     });
 
+    // Determine amount in GBP
+    const resources: any = plan.resources || {};
+    const ramRange = resources?.ramRange as { minMB?: number; maxMB?: number } | undefined;
+    const pricePerGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
+    let amountStr = String(plan.pricePerMonth);
+    const metadata: any = { reason: 'initial_subscription' };
+
+    if (ramRange && pricePerGB !== undefined) {
+      const customGB = Number(opts?.customRamGB ?? 0);
+      const minGB = ramRange.minMB ? Math.round(ramRange.minMB / 1024) : 0;
+      const maxGB = ramRange.maxMB ? Math.round(ramRange.maxMB / 1024) : 0;
+      if (!customGB || customGB < minGB || customGB > maxGB) {
+        throw new BadRequestException(`Please choose a RAM size between ${minGB} and ${maxGB} GB`);
+      }
+      const amount = pricePerGB * customGB;
+      amountStr = amount.toFixed(2);
+      metadata.customRamGB = customGB;
+      metadata.pricePerGB = pricePerGB;
+    }
+
     // Record a mock successful transaction for this subscription
     await this.prisma.transaction.create({
       data: {
         userId,
         subscriptionId: sub.id,
         planId: plan.id,
-        amount: plan.pricePerMonth as any,
-        currency: 'USD',
+        amount: amountStr as any,
+        currency: 'GBP',
         gateway: 'mock',
         status: 'success',
-        metadata: { reason: 'initial_subscription' },
+        metadata,
       },
     });
 

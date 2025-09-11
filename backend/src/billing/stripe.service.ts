@@ -44,7 +44,7 @@ export class StripeService {
     const price = await this.stripe.prices.create({
       product: productId,
       unit_amount: Math.round(unitAmount),
-      currency: 'usd',
+      currency: 'gbp',
       recurring: { interval: 'month' },
       metadata: { planId: String(plan.id) },
     });
@@ -189,7 +189,7 @@ export class StripeService {
             subscriptionId: newSub.id,
             planId,
             amount: (totalCents / 100).toFixed(2) as any,
-            currency: (invoice.currency || 'usd').toUpperCase(),
+            currency: (invoice.currency || 'gbp').toUpperCase(),
             gateway: 'stripe',
             status: 'success',
             metadata: {
@@ -229,7 +229,7 @@ export class StripeService {
               userId: user.id,
               planId,
               amount: ((invoice.total || 0) / 100).toFixed(2) as any,
-              currency: (invoice.currency || 'usd').toUpperCase(),
+              currency: (invoice.currency || 'gbp').toUpperCase(),
               gateway: 'stripe',
               status: 'failed',
               metadata: { invoiceId: invoice.id, reason: 'payment_failed' },

@@ -40,6 +40,18 @@ async function main() {
       pricePerMonth: '30.00',
       resources: { cpu: 800, ramMB: 16384, diskGB: 160, maxServers: 1 },
     },
+    {
+      name: 'Server • Custom (32–128 GB RAM)',
+      // pricePerMonth is not used directly; pricing is per-GB in resources
+      pricePerMonth: '0.00',
+      resources: {
+        ramRange: { minMB: 32768, maxMB: 131072 },
+        pricePerGB: 2.5, // GBP per GB per month
+        cpuPerGB: 50,     // CPU units per GB (for future enforcement)
+        diskPerGB: 5,     // Disk GB per GB RAM (for future enforcement)
+        maxServers: 1,
+      },
+    },
   ];
 
   for (const p of defaultPlans) {

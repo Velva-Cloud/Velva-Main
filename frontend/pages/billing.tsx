@@ -81,11 +81,15 @@ export default function Billing() {
     return () => clearInterval(timer);
   }, [sub?.status, sub?.graceUntil]);
 
-  const onSubscribe = async (planId: number) => {
+  const [customGB, setCustomGB] = useState<Record<number, number>>({});
+
+  const onSubscribe = async (planId: number, customRamGB?: number) => {
     setBusy(true);
     setErr(null);
     try {
-      const res = await api.post('/subscriptions', { planId });
+      const payload: any = { planId };
+      if (typeof customRamGB === 'number') payload.customRamGB = customRamGB;
+      const res = await api.post('/subscriptions', payload);
       setSub(res.data);
       toast.show('Subscription updated', 'success');
     } catch (e: any) {

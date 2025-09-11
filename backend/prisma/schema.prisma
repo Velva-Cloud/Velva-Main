@@ -142,7 +142,7 @@ model Transaction {
   subscriptionId Int?
   planId         Int?
   amount         Decimal            @db.Decimal(10, 2)
-  currency       String             @default("USD")
+  currency       String             @default("GBP")
   gateway        String             @default("mock")
   status         TransactionStatus
   metadata       Json?
