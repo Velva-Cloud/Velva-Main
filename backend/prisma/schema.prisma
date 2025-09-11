@@ -60,6 +60,7 @@ model User {
   servers       Server[]
   logs          Log[]
   resetTokens   PasswordResetToken[]
+  transactions  Transaction[]
 }
 
 model Plan {
@@ -71,6 +72,7 @@ model Plan {
 
   subscriptions  Subscription[]
   servers        Server[]
+  transactions   Transaction[]
 }
 
 model Subscription {
@@ -84,6 +86,8 @@ model Subscription {
 
   user User @relation(fields: [userId], references: [id])
   plan Plan @relation(fields: [planId], references: [id])
+
+  transactions Transaction[]
 }
 
 model Node {
