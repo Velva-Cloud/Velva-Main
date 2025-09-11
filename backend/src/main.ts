@@ -15,11 +15,13 @@ async function bootstrap() {
   app.use(helmet());
 
   // Add raw body parser for Stripe webhooks before global json
-  app.use('/api/webhooks/stripe', raw({ type: 'application/json' }));
+  // Use */* to be robust to any content-type variations
+  app.use('/api/webhooks/stripe', raw({ type: '*/*' }));
   // JSON body for the rest, but preserve raw body for Stripe route
   app.use(json({
     verify: (req: any, _res, buf) => {
-      if (req.originalUrl === '/api/webhooks/stripe') {
+      const url = req.originalUrl || req.url || '';
+      if (url.startsWith('/api/webhooks/stripe')) {
         req.rawBody = buf;
       }
     },
