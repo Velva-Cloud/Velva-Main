@@ -2,14 +2,13 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
-
-const GRACE_DAYS = 3;
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class DunningService {
   private readonly logger = new Logger(DunningService.name);
 
-  constructor(private prisma: PrismaService, private mail: MailService) {}
+  constructor(private prisma: PrismaService, private mail: MailService, private settings: SettingsService) {}
 
   // Runs hourly to enforce grace period expiry
   @Cron(CronExpression.EVERY_HOUR)
@@ -52,8 +51,11 @@ export class DunningService {
     });
     if (!active) return;
 
+    const billing = await this.settings.getBilling();
+    const graceDays = billing?.graceDays ?? 3;
+
     const until = new Date();
-    until.setDate(until.getDate() + GRACE_DAYS);
+    until.setDate(until.getDate() + graceDays);
 
     await this.prisma.subscription.update({
       where: { id: active.id },

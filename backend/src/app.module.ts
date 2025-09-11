@@ -15,6 +15,7 @@ import { StripeModule } from './billing/stripe.module';
 import { MailModule } from './mail/mail.module';
 import { DunningModule } from './dunning/dunning.module';
 import { FinanceModule } from './finance/finance.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -37,6 +38,7 @@ import { FinanceModule } from './finance/finance.module';
     MailModule,
     DunningModule,
     FinanceModule,
+    SettingsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

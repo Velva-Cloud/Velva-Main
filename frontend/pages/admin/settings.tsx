@@ -34,14 +34,19 @@ export default function AdminSettings() {
     fromName: '',
   });
 
+  const [billingGraceDays, setBillingGraceDays] = useState<number>(3);
+
   const [testTo, setTestTo] = useState('');
 
   const fetchSettings = async () => {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get('/settings/mail');
-      const data = res.data || {};
+      const [mailRes, billingRes] = await Promise.all([
+        api.get('/settings/mail'),
+        api.get('/settings/billing').catch(() => ({ data: { graceDays: 3 } })),
+      ]);
+      const data = mailRes.data || {};
       setMail({
         host: data.host || '',
         port: data.port || 587,
@@ -51,6 +56,7 @@ export default function AdminSettings() {
         fromEmail: data.fromEmail || '',
         fromName: data.fromName || '',
       });
+      setBillingGraceDays(Number(billingRes.data?.graceDays || 3));
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load settings');
     } finally {
@@ -66,14 +72,17 @@ export default function AdminSettings() {
     setSaving(true);
     setErr(null);
     try {
-      await api.post('/settings/mail', {
-        ...mail,
-        port: Number(mail.port),
-        secure: !!mail.secure,
-        user: mail.user || undefined,
-        pass: mail.pass || undefined,
-        fromName: mail.fromName || undefined,
-      });
+      await Promise.all([
+        api.post('/settings/mail', {
+          ...mail,
+          port: Number(mail.port),
+          secure: !!mail.secure,
+          user: mail.user || undefined,
+          pass: mail.pass || undefined,
+          fromName: mail.fromName || undefined,
+        }),
+        api.post('/settings/billing', { graceDays: Number(billingGraceDays || 3) }),
+      ]);
       toast.show('Settings saved', 'success');
     } catch (e: any) {
       const msg = e?.response?.data?.message || 'Failed to save settings';
@@ -122,7 +131,7 @@ export default function AdminSettings() {
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
-        <section className="card p-4">
+        <section className="card p-4 mb-6">
           <h2 className="font-semibold mb-3">Email (SMTP)</h2>
           {loading ? (
             <div className="space-y-3">
@@ -181,6 +190,19 @@ export default function AdminSettings() {
               </div>
             </>
           )}
+        </section>
+
+        <section className="card p-4">
+          <h2 className="font-semibold mb-3">Billing</h2>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block">
+              <div className="text-sm mb-1">Grace period (days)</div>
+              <input className="input" type="number" min={1} max={60} value={billingGraceDays} onChange={e => setBillingGraceDays(Number(e.target.value))} />
+            </label>
+          </div>
+          <div className="mt-3">
+            <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>Save</button>
+          </div>
         </section>
       </main>
     </>

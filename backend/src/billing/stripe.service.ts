@@ -2,6 +2,7 @@ import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
+import { SettingsService } from '../settings/settings.service';
 
 @Injectable()
 export class StripeService {
@@ -10,7 +11,7 @@ export class StripeService {
   private readonly successUrl = process.env.STRIPE_SUCCESS_URL || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing?success=1`;
   private readonly cancelUrl = process.env.STRIPE_CANCEL_URL || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing?canceled=1`;
 
-  constructor(private prisma: PrismaService, private mail: MailService) {
+  constructor(private prisma: PrismaService, private mail: MailService, private settings: SettingsService) {
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) {
       this.logger.warn('STRIPE_SECRET_KEY not set. Stripe features will not work.');
@@ -236,14 +237,16 @@ export class StripeService {
             data: { userId: user.id, action: 'plan_change', metadata: { event: 'stripe_invoice_failed', planId, invoiceId: invoice.id } },
           });
 
-          // Mark current subscription as past_due and set graceUntil
+          // Mark current subscription as past_due and set graceUntil based on settings
           const active = await this.prisma.subscription.findFirst({
             where: { userId: user.id, status: 'active' },
             orderBy: { id: 'desc' },
           });
           if (active) {
+            const billing = await this.settings.getBilling();
+            const graceDays = billing?.graceDays ?? 3;
             const until = new Date();
-            until.setDate(until.getDate() + 3);
+            until.setDate(until.getDate() + graceDays);
             await this.prisma.subscription.update({
               where: { id: active.id },
               data: { status: 'past_due', graceUntil: until },

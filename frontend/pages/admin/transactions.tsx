@@ -70,11 +70,23 @@ export default function AdminTransactions() {
 
   useEffect(() => {
     fetchTxs();
-  }, [page, status]);
+  }, [page, status, pageSize]);
 
   const applyFilters = () => {
     setPage(1);
     fetchTxs();
+  };
+
+  const exportCsv = () => {
+    const params = new URLSearchParams();
+    params.set('all', '1');
+    if (status) params.set('status', status);
+    if (gateway) params.set('gateway', gateway);
+    if (q) params.set('q', q);
+    if (planId) params.set('planId', String(Number(planId)));
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    window.location.href = `/api/transactions/export?${params.toString()}`;
   };
 
   return (
@@ -129,6 +141,9 @@ export default function AdminTransactions() {
               <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
             </label>
             <button onClick={applyFilters} className="btn btn-primary">Apply</button>
+            <div className="ml-auto">
+              <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
+            </div>
           </div>
         </div>
 

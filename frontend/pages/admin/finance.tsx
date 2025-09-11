@@ -32,6 +32,10 @@ export default function AdminFinance() {
       .finally(() => setLoading(false));
   }, []);
 
+  const exportCsv = () => {
+    window.location.href = '/api/admin/finance/export';
+  };
+
   return (
     <>
       <Head>
@@ -53,6 +57,9 @@ export default function AdminFinance() {
           <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
           <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
           <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Finance</a>
+          <div className="ml-auto">
+            <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
+          </div>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}

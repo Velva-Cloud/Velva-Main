@@ -63,11 +63,20 @@ export default function AdminLogs() {
 
   useEffect(() => {
     fetchLogs();
-  }, [page, action]);
+  }, [page, action, pageSize]);
 
   const applyFilters = () => {
     setPage(1);
     fetchLogs();
+  };
+
+  const exportCsv = () => {
+    const params = new URLSearchParams();
+    if (action) params.set('action', action);
+    if (q) params.set('q', q);
+    if (from) params.set('from', from);
+    if (to) params.set('to', to);
+    window.location.href = `/api/logs/export?${params.toString()}`;
   };
 
   return (
@@ -114,6 +123,9 @@ export default function AdminLogs() {
               <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
             </label>
             <button onClick={applyFilters} className="btn btn-primary">Apply</button>
+            <div className="ml-auto">
+              <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
+            </div>
           </div>
         </div>
 
