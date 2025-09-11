@@ -63,10 +63,8 @@ export class ServersService {
   async getById(id: number) {
     const s = await this.prisma.server.findUnique({ where: { id } });
     if (!s) return null;
-    const [plan, node] = await this.prisma.$transaction([
-      this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true } }),
-      s.nodeId ? this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : Promise.resolve(null),
-    ]);
+    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true } });
+    const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
     const ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
     return {
