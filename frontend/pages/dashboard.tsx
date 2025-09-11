@@ -16,6 +16,8 @@ type Plan = {
   name: string;
 };
 
+type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
+
 export default function Dashboard() {
   useRequireAuth();
 
@@ -26,6 +28,11 @@ export default function Dashboard() {
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(10);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const nameError = useMemo(() => {
     const n = name.trim();
     if (n.length < 3) return 'Name must be at least 3 characters';
@@ -34,11 +41,23 @@ export default function Dashboard() {
     return null;
   }, [name]);
 
-  useEffect(() => {
-    api.get('/servers')
-      .then(res => setServers(res.data))
-      .catch(() => setServers([]));
+  const fetchServers = async () => {
+    try {
+      const res = await api.get('/servers', { params: { page, pageSize } });
+      const data = res.data as Paged<Server>;
+      setServers(data.items);
+      setTotal(data.total);
+    } catch {
+      setServers([]);
+      setTotal(0);
+    }
+  };
 
+  useEffect(() => {
+    fetchServers();
+  }, [page]);
+
+  useEffect(() => {
     api.get('/plans')
       .then(res => {
         const list = res.data as any[];
@@ -62,6 +81,7 @@ export default function Dashboard() {
       setCreating(true);
       const res = await api.post('/servers', { name: name.trim(), planId });
       setServers([res.data, ...servers]);
+      setTotal((t) => t + 1);
       setName('');
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to create server');
@@ -77,7 +97,10 @@ export default function Dashboard() {
       </Head>
       <NavBar />
       <main className="max-w-4xl mx-auto px-6 py-10">
-        <h1 className="text-2xl font-semibold mb-6">Your Servers</h1>
+        <div className="flex items-center justify-between mb-4">
+          <h1 className="text-2xl font-semibold">Your Servers</h1>
+          <div className="text-sm text-slate-400">Page {page} of {totalPages} • {total} total</div>
+        </div>
 
         <div className="mb-6 flex flex-wrap items-center gap-2">
           <input
@@ -116,14 +139,23 @@ export default function Dashboard() {
             <button onClick={createServer} disabled={creating} className={`btn btn-primary ${creating ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create (mock)'}</button>
           </div>
         ) : (
-          <ul className="space-y-3">
-            {servers.map(s => (
-              <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
-                <div className="font-semibold">{s.name}</div>
-                <div className="text-sm text-slate-300">Status: {s.status} • Plan #{s.planId}</div>
-              </li>
-            ))}
-          </ul>
+          <>
+            <ul className="space-y-3">
+              {servers.map(s => (
+                <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
+                  <div className="font-semibold">{s.name}</div>
+                  <div className="text-sm text-slate-300">Status: {s.status} • Plan #{s.planId}</div>
+                </li>
+              ))}
+            </ul>
+            <div className="flex items-center justify-between mt-4">
+              <div />
+              <div className="flex items-center gap-2">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+              </div>
+            </div>
+          </>
         )}
       </main>
     </>

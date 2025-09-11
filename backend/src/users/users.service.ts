@@ -2,6 +2,10 @@ import { BadRequestException, Injectable } from '@nestjs/common';
 import { Prisma, User, Role } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 @Injectable()
 export class UsersService {
   constructor(private prisma: PrismaService) {}
@@ -10,7 +14,12 @@ export class UsersService {
     return this.prisma.user.findUnique({ where: { email } });
   }
 
-  async findAll(params?: { search?: string; role?: Role | 'ALL' }): Promise<Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin'>[]> {
+  async findAll(params?: {
+    search?: string;
+    role?: Role | 'ALL';
+    page?: number;
+    pageSize?: number;
+  }): Promise<{ items: Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin'>[]; total: number; page: number; pageSize: number }> {
     const where: Prisma.UserWhereInput = {};
     if (params?.search) {
       // Most MySQL collations are case-insensitive by default; drop mode for compatibility
@@ -19,11 +28,19 @@ export class UsersService {
     if (params?.role && params.role !== 'ALL') {
       where.role = params.role as Role;
     }
-    return this.prisma.user.findMany({
-      select: { id: true, email: true, role: true, createdAt: true, lastLogin: true },
-      where,
-      orderBy: { id: 'desc' },
-    });
+    const p = clamp(params?.page ?? 1, 1, 100000);
+    const ps = clamp(params?.pageSize ?? 20, 1, 100);
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.user.count({ where }),
+      this.prisma.user.findMany({
+        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true },
+        where,
+        orderBy: { id: 'desc' },
+        skip: (p - 1) * ps,
+        take: ps,
+      }),
+    ]);
+    return { items, total, page: p, pageSize: ps };
   }
 
   async updateRole(userId: number, role: Role) {

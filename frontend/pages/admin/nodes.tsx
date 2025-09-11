@@ -15,6 +15,8 @@ type NodeRec = {
   capacity: number;
 };
 
+type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
+
 export default function AdminNodes() {
   useRequireAdmin();
   const toast = useToast();
@@ -23,6 +25,11 @@ export default function AdminNodes() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
   // form
   const [name, setName] = useState('');
@@ -40,8 +47,10 @@ export default function AdminNodes() {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get('/nodes');
-      setNodes(res.data);
+      const res = await api.get('/nodes', { params: { page, pageSize } });
+      const data = res.data as Paged<NodeRec>;
+      setNodes(data.items);
+      setTotal(data.total);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load nodes');
     } finally {
@@ -51,7 +60,7 @@ export default function AdminNodes() {
 
   useEffect(() => {
     fetchNodes();
-  }, []);
+  }, [page]);
 
   const createNode = async () => {
     if (nameError || locError || ipError || capError) {
@@ -63,6 +72,7 @@ export default function AdminNodes() {
     try {
       const res = await api.post('/nodes', { name, location, ip, capacity: Number(capacity) });
       setNodes((prev) => [res.data, ...prev]);
+      setTotal((t) => t + 1);
       setName('');
       setLocation('');
       setIp('');
@@ -145,6 +155,7 @@ export default function AdminNodes() {
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Nodes</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
           <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
+          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
@@ -181,7 +192,10 @@ export default function AdminNodes() {
         </section>
 
         <section>
-          <h2 className="font-semibold mb-3">Nodes</h2>
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-semibold">Nodes</h2>
+            <div className="text-sm text-slate-400">Page {page} of {totalPages} • {total} total</div>
+          </div>
           {loading ? (
             <div className="space-y-3">
               {[...Array(3)].map((_, i) => (
@@ -199,51 +213,61 @@ export default function AdminNodes() {
               <a href="#create-node" className="btn btn-primary inline-flex">Add node</a>
             </div>
           ) : (
-            <div className="space-y-3">
-              {nodes.map((n) => (
-                <div key={n.id} className="p-4 card">
-                  <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div>
-                      <div className="font-semibold">{n.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${n.status === 'online' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-red-600/30 text-red-300 border border-red-700'}`}>{n.status}</span></div>
-                      <div className="text-sm text-slate-400">#{n.id} • {n.location} • {n.ip} • capacity {n.capacity}</div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => ping(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Ping</button>
-                      <button onClick={() => toggle(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>
-                        {n.status === 'online' ? 'Set offline' : 'Set online'}
-                      </button>
-                      <button
-                        onClick={() => {
-                          const newName = prompt('Edit name', n.name);
-                          if (newName !== null && newName.trim()) saveInline(n.id, { name: newName });
-                        }}
-                        className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={async () => {
-                          if (!confirm('Delete this node? Servers assigned to it will be detached.')) return;
-                          setBusyId(n.id);
-                          try {
-                            await api.delete(`/nodes/${n.id}`);
-                            setNodes((prev) => prev.filter((x) => x.id !== n.id));
-                            toast.show('Node deleted', 'success');
-                          } catch (e: any) {
-                            toast.show(e?.response?.data?.message || 'Failed to delete node', 'error');
-                          } finally {
-                            setBusyId(null);
-                          }
-                        }}
-                        className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}
-                      >
-                        Delete
-                      </button>
+            <>
+              <div className="space-y-3">
+                {nodes.map((n) => (
+                  <div key={n.id} className="p-4 card">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <div className="font-semibold">{n.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${n.status === 'online' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-red-600/30 text-red-300 border border-red-700'}`}>{n.status}</span></div>
+                        <div className="text-sm text-slate-400">#{n.id} • {n.location} • {n.ip} • capacity {n.capacity}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => ping(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Ping</button>
+                        <button onClick={() => toggle(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                          {n.status === 'online' ? 'Set offline' : 'Set online'}
+                        </button>
+                        <button
+                          onClick={() => {
+                            const newName = prompt('Edit name', n.name);
+                            if (newName !== null && newName.trim()) saveInline(n.id, { name: newName });
+                          }}
+                          className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!confirm('Delete this node? Servers assigned to it will be detached.')) return;
+                            setBusyId(n.id);
+                            try {
+                              await api.delete(`/nodes/${n.id}`);
+                              setNodes((prev) => prev.filter((x) => x.id !== n.id));
+                              setTotal((t) => Math.max(0, t - 1));
+                              toast.show('Node deleted', 'success');
+                            } catch (e: any) {
+                              toast.show(e?.response?.data?.message || 'Failed to delete node', 'error');
+                            } finally {
+                              setBusyId(null);
+                            }
+                          }}
+                          className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}
+                        >
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   </div>
+                ))}
+              </div>
+              <div className="flex items-center justify-between mt-4">
+                <div />
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
                 </div>
-              ))}
-            </div>
+              </div>
+            </>
           )}
         </section>
       </main>

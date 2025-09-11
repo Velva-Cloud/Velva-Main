@@ -15,12 +15,18 @@ export class ServersController {
   constructor(private service: ServersService) {}
 
   @Get()
-  async list(@Request() req: any, @Query('all') all?: string) {
+  async list(
+    @Request() req: any,
+    @Query()
+    query: { all?: string; page?: string; pageSize?: string },
+  ) {
     const user = req.user as { userId: number; role: Role };
-    if (all === '1' && (user.role === Role.ADMIN || user.role === Role.OWNER)) {
-      return this.service.listAll();
+    const page = Number(query.page) || 1;
+    const pageSize = Number(query.pageSize) || 20;
+    if (query.all === '1' && (user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      return this.service.listAll(page, pageSize);
     }
-    return this.service.listForUser(user.userId);
+    return this.service.listForUser(user.userId, page, pageSize);
   }
 
   @Post()

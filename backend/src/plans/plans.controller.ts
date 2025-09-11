@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { PlansService } from './plans.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -25,8 +25,10 @@ export class PlansController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(PanelRole.ADMIN, PanelRole.OWNER)
   @Get('admin')
-  async listAll() {
-    return this.plans.listAll();
+  async listAll(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    const p = page ? Number(page) : 1;
+    const ps = pageSize ? Number(pageSize) : 20;
+    return this.plans.listAllPaged(p, ps);
   }
 
   @ApiBearerAuth()

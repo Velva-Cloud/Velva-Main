@@ -15,6 +15,8 @@ type User = {
   lastLogin?: string | null;
 };
 
+type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
+
 export default function AdminUsers() {
   useRequireAdmin();
   const toast = useToast();
@@ -28,17 +30,24 @@ export default function AdminUsers() {
 
   const debouncedSearch = useDebounce(search, 300);
 
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [newEmail, setNewEmail] = useState('');
   const [emailErr, setEmailErr] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const fetchUsers = async (params?: { search?: string; role?: string }) => {
+  const fetchUsers = async (params?: { search?: string; role?: string; page?: number; pageSize?: number }) => {
     setLoading(true);
     setErr(null);
     try {
       const res = await api.get('/users', { params });
-      setUsers(res.data);
+      const data = res.data as Paged<User>;
+      setUsers(data.items);
+      setTotal(data.total);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load users');
     } finally {
@@ -46,9 +55,14 @@ export default function AdminUsers() {
     }
   };
 
+  // Reset to first page when filters change
   useEffect(() => {
-    fetchUsers({ search: debouncedSearch || undefined, role: role !== 'ALL' ? role : undefined });
+    setPage(1);
   }, [debouncedSearch, role]);
+
+  useEffect(() => {
+    fetchUsers({ search: debouncedSearch || undefined, role: role !== 'ALL' ? role : undefined, page, pageSize });
+  }, [debouncedSearch, role, page]);
 
   const setUserRole = async (id: number, newRole: User['role']) => {
     const confirmMsg = `Change this user's role to ${newRole}?`;
@@ -104,6 +118,7 @@ export default function AdminUsers() {
     if (!confirm(`Delete user ${u.email}? This removes their servers, subscriptions and logs.`)) return;
     const prev = [...users];
     setUsers((list) => list.filter((it) => it.id !== u.id));
+    setTotal((t) => Math.max(0, t - 1));
     try {
       await api.delete(`/users/${u.id}`);
       toast.show('User deleted', 'success');
@@ -131,6 +146,7 @@ export default function AdminUsers() {
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Users</a>
           <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
+          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
@@ -169,27 +185,38 @@ export default function AdminUsers() {
             <p className="text-slate-400">Try adjusting your search or role filter.</p>
           </div>
         ) : (
-          <div className="space-y-3">
-            {users.map((u) => (
-              <div key={u.id} className="p-4 card flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold">{u.email}</div>
-                  <div className="text-sm text-slate-400">ID {u.id} • joined {new Date(u.createdAt).toLocaleString()} {u.lastLogin ? `• last login ${new Date(u.lastLogin).toLocaleString()}` : ''}</div>
+          <>
+            <div className="space-y-3">
+              {users.map((u) => (
+                <div key={u.id} className="p-4 card flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="font-semibold">{u.email}</div>
+                    <div className="text-sm text-slate-400">ID {u.id} • joined {new Date(u.createdAt).toLocaleString()} {u.lastLogin ? `• last login ${new Date(u.lastLogin).toLocaleString()}` : ''}</div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <label className="text-sm text-slate-300">Role</label>
+                    <select value={u.role} onChange={(e) => setUserRole(u.id, e.target.value as User['role'])} className="input">
+                      <option value="OWNER">OWNER</option>
+                      <option value="ADMIN">ADMIN</option>
+                      <option value="SUPPORT">SUPPORT</option>
+                      <option value="USER">USER</option>
+                    </select>
+                    <button onClick={() => openEdit(u)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">Edit email</button>
+                    <button onClick={() => deleteUser(u)} className="px-3 py-1 rounded bg-red-700 hover:bg-red-600">Delete</button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <label className="text-sm text-slate-300">Role</label>
-                  <select value={u.role} onChange={(e) => setUserRole(u.id, e.target.value as User['role'])} className="input">
-                    <option value="OWNER">OWNER</option>
-                    <option value="ADMIN">ADMIN</option>
-                    <option value="SUPPORT">SUPPORT</option>
-                    <option value="USER">USER</option>
-                  </select>
-                  <button onClick={() => openEdit(u)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">Edit email</button>
-                  <button onClick={() => deleteUser(u)} className="px-3 py-1 rounded bg-red-700 hover:bg-red-600">Delete</button>
-                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-slate-400">
+                Page {page} of {totalPages} • {total} total
               </div>
-            ))}
-          </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+              </div>
+            </div>
+          </>
         )}
       </main>
 

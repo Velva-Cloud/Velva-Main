@@ -1,19 +1,38 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 @Injectable()
 export class ServersService {
   constructor(private prisma: PrismaService) {}
 
-  async listForUser(userId: number) {
-    return this.prisma.server.findMany({
-      where: { userId },
-      orderBy: { id: 'desc' },
-    });
+  async listForUser(userId: number, page = 1, pageSize = 20) {
+    const p = clamp(page, 1, 100000);
+    const ps = clamp(pageSize, 1, 100);
+    const where = { userId };
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.server.count({ where }),
+      this.prisma.server.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        skip: (p - 1) * ps,
+        take: ps,
+      }),
+    ]);
+    return { items, total, page: p, pageSize: ps };
   }
 
-  async listAll() {
-    return this.prisma.server.findMany({ orderBy: { id: 'desc' } });
+  async listAll(page = 1, pageSize = 20) {
+    const p = clamp(page, 1, 100000);
+    const ps = clamp(pageSize, 1, 100);
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.server.count(),
+      this.prisma.server.findMany({ orderBy: { id: 'desc' }, skip: (p - 1) * ps, take: ps }),
+    ]);
+    return { items, total, page: p, pageSize: ps };
   }
 
   async create(userId: number, planId: number, name: string) {
