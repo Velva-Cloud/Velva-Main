@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
+import { json, raw } from 'express';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -12,6 +13,11 @@ async function bootstrap() {
 
   // Security headers
   app.use(helmet());
+
+  // Add raw body parser for Stripe webhooks before global json
+  app.use('/api/webhooks/stripe', raw({ type: 'application/json' }));
+  // JSON body for the rest
+  app.use(json());
 
   // CORS restricted to configured frontend URL
   const frontend = process.env.FRONTEND_URL || 'http://localhost:3000';

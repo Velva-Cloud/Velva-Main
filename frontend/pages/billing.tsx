@@ -173,6 +173,26 @@ export default function Billing() {
                             </button>
                           )}
                         </div>
+                        <div className="flex flex-wrap gap-2 mt-3">
+                          <button
+                            onClick={async () => {
+                              try {
+                                setBusy(true);
+                                const res = await api.post('/billing/stripe/checkout', { planId: p.id });
+                                window.location.href = res.data.url;
+                              } catch (e: any) {
+                                const msg = e?.response?.data?.message || 'Failed to create Stripe session';
+                                toast.show(msg, 'error');
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            className="px-3 py-1 rounded bg-purple-600 hover:bg-purple-500"
+                            disabled={busy}
+                          >
+                            Subscribe with Stripe
+                          </button>
+                        </div>
                         <pre className="mt-3 bg-slate-800 rounded p-2 text-xs overflow-auto">
                           {JSON.stringify(p.resources, null, 2)}
                         </pre>
@@ -182,6 +202,27 @@ export default function Billing() {
                 </div>
               )}
             </section>
+
+            <div className="mt-6">
+              <button
+                onClick={async () => {
+                  try {
+                    setBusy(true);
+                    const res = await api.post('/billing/stripe/portal');
+                    window.location.href = res.data.url;
+                  } catch (e: any) {
+                    const msg = e?.response?.data?.message || 'Failed to open Stripe portal';
+                    toast.show(msg, 'error');
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+                className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800"
+                disabled={busy}
+              >
+                Manage billing (Stripe)
+              </button>
+            </div>
           </>
         )}
       </main>
