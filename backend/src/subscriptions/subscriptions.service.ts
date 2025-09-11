@@ -1,10 +1,10 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Optional } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class SubscriptionsService {
-  constructor(private prisma: PrismaService, private mail: MailService) {}
+  constructor(private prisma: PrismaService, @Optional() private mail?: MailService) {}
 
   async getCurrent(userId: number) {
     return this.prisma.subscription.findFirst({
@@ -33,7 +33,7 @@ export class SubscriptionsService {
     // Send cancellation email
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     const plan = await this.prisma.plan.findUnique({ where: { id: current.planId } });
-    if (user) await this.mail.sendCanceled(user.email, plan?.name);
+    if (user && this.mail) await this.mail.sendCanceled(user.email, plan?.name);
 
     return { canceled: true };
   }
@@ -77,7 +77,7 @@ export class SubscriptionsService {
 
     // Send subscribed email
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
-    if (user) await this.mail.sendSubscribed(user.email, plan.name);
+    if (user && this.mail) await this.mail.sendSubscribed(user.email, plan.name);
 
     return sub;
   }
