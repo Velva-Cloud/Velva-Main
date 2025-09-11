@@ -16,7 +16,8 @@ export class StripeService {
     if (!key) {
       this.logger.warn('STRIPE_SECRET_KEY not set. Stripe features will not work.');
     }
-    this.stripe = new Stripe(key || 'sk_test_x', { apiVersion: '2024-06-20' });
+    // Use a supported API version for the installed stripe types
+    this.stripe = new Stripe(key || 'sk_test_x', { apiVersion: '2023-10-16' });
   }
 
   private ensureStripeEnabled() {
@@ -192,8 +193,8 @@ export class StripeService {
             status: 'success',
             metadata: {
               invoiceId: invoice.id,
-              subscriptionId: sub,
-              customer: invoice.customer,
+              subscriptionId: typeof sub === 'string' ? sub : sub?.id ?? null,
+              customerId: typeof invoice.customer === 'string' ? invoice.customer : (invoice.customer as any)?.id ?? null,
               hostedInvoiceUrl: invoice.hosted_invoice_url,
             },
           },

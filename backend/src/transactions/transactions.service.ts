@@ -81,7 +81,9 @@ export class TransactionsService {
       ...(filters.q
         ? {
             user: {
-              email: { contains: filters.q, mode: 'insensitive' },
+              is: {
+                email: { contains: filters.q },
+              },
             },
           }
         : {}),
