@@ -34,6 +34,8 @@ export default function AdminSettings() {
     fromName: '',
   });
 
+  const [testTo, setTestTo] = useState('');
+
   const fetchSettings = async () => {
     setLoading(true);
     setErr(null);
@@ -82,6 +84,20 @@ export default function AdminSettings() {
     }
   };
 
+  const sendTest = async () => {
+    if (!testTo.trim()) {
+      toast.show('Enter a recipient email', 'error');
+      return;
+    }
+    try {
+      await api.post('/settings/mail/test', { to: testTo.trim() });
+      toast.show('Test email sent (if SMTP is configured correctly)', 'success');
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || 'Failed to send test email';
+      toast.show(msg, 'error');
+    }
+  };
+
   return (
     <>
       <Head>
@@ -118,46 +134,52 @@ export default function AdminSettings() {
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 md:grid-cols-2">
-              <label className="block">
-                <div className="text-sm mb-1">Host</div>
-                <input className="input" value={mail.host} onChange={e => setMail(m => ({ ...m, host: e.target.value }))} placeholder="mail.example.com" />
-              </label>
-              <label className="block">
-                <div className="text-sm mb-1">Port</div>
-                <input className="input" type="number" value={mail.port} onChange={e => setMail(m => ({ ...m, port: Number(e.target.value) }))} placeholder="587" />
-              </label>
-              <label className="block">
-                <div className="text-sm mb-1">Secure (TLS)</div>
-                <select className="input" value={mail.secure ? '1' : '0'} onChange={e => setMail(m => ({ ...m, secure: e.target.value === '1' }))}>
-                  <option value="0">No</option>
-                  <option value="1">Yes</option>
-                </select>
-              </label>
-              <div />
-              <label className="block">
-                <div className="text-sm mb-1">Username</div>
-                <input className="input" value={mail.user || ''} onChange={e => setMail(m => ({ ...m, user: e.target.value }))} placeholder="user@example.com" />
-              </label>
-              <label className="block">
-                <div className="text-sm mb-1">Password</div>
-                <input className="input" type="password" value={mail.pass || ''} onChange={e => setMail(m => ({ ...m, pass: e.target.value }))} placeholder="••••••••" />
-              </label>
-              <label className="block">
-                <div className="text-sm mb-1">From email</div>
-                <input className="input" value={mail.fromEmail} onChange={e => setMail(m => ({ ...m, fromEmail: e.target.value }))} placeholder="no-reply@example.com" />
-              </label>
-              <label className="block">
-                <div className="text-sm mb-1">From name (optional)</div>
-                <input className="input" value={mail.fromName || ''} onChange={e => setMail(m => ({ ...m, fromName: e.target.value }))} placeholder="VelvaCloud" />
-              </label>
+            <>
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="block">
+                  <div className="text-sm mb-1">Host</div>
+                  <input className="input" value={mail.host} onChange={e => setMail(m => ({ ...m, host: e.target.value }))} placeholder="mail.example.com" />
+                </label>
+                <label className="block">
+                  <div className="text-sm mb-1">Port</div>
+                  <input className="input" type="number" value={mail.port} onChange={e => setMail(m => ({ ...m, port: Number(e.target.value) }))} placeholder="587" />
+                </label>
+                <label className="block">
+                  <div className="text-sm mb-1">Secure (TLS)</div>
+                  <select className="input" value={mail.secure ? '1' : '0'} onChange={e => setMail(m => ({ ...m, secure: e.target.value === '1' }))}>
+                    <option value="0">No</option>
+                    <option value="1">Yes</option>
+                  </select>
+                </label>
+                <div />
+                <label className="block">
+                  <div className="text-sm mb-1">Username</div>
+                  <input className="input" value={mail.user || ''} onChange={e => setMail(m => ({ ...m, user: e.target.value }))} placeholder="user@example.com" />
+                </label>
+                <label className="block">
+                  <div className="text-sm mb-1">Password</div>
+                  <input className="input" type="password" value={mail.pass || ''} onChange={e => setMail(m => ({ ...m, pass: e.target.value }))} placeholder="••••••••" />
+                </label>
+                <label className="block">
+                  <div className="text-sm mb-1">From email</div>
+                  <input className="input" value={mail.fromEmail} onChange={e => setMail(m => ({ ...m, fromEmail: e.target.value }))} placeholder="no-reply@example.com" />
+                </label>
+                <label className="block">
+                  <div className="text-sm mb-1">From name (optional)</div>
+                  <input className="input" value={mail.fromName || ''} onChange={e => setMail(m => ({ ...m, fromName: e.target.value }))} placeholder="VelvaCloud" />
+                </label>
 
-              <div className="md:col-span-2 mt-2">
-                <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>
-                  {saving ? 'Saving…' : 'Save'}
-                </button>
+                <div className="md:col-span-2 mt-2 flex flex-wrap items-center gap-2">
+                  <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>
+                    {saving ? 'Saving…' : 'Save'}
+                  </button>
+                  <div className="flex items-center gap-2">
+                    <input className="input" placeholder="Test recipient" value={testTo} onChange={e => setTestTo(e.target.value)} />
+                    <button onClick={sendTest} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Send test</button>
+                  </div>
+                </div>
               </div>
-            </div>
+            </>
           )}
         </section>
       </main>

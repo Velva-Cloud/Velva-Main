@@ -74,12 +74,31 @@ export class StripeService {
       },
     });
 
+    // Persist customer id when available
+    if (session.customer && typeof session.customer === 'string') {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { stripeCustomerId: session.customer },
+      }).catch(() => undefined);
+    }
+
     return { url: session.url, id: session.id };
   }
 
   async createPortalSession(userEmail: string) {
     this.ensureStripeEnabled();
-    // Try to find a Customer by email
+
+    // Try direct lookup by stored customer id first
+    const user = await this.prisma.user.findUnique({ where: { email: userEmail } });
+    if (user?.stripeCustomerId) {
+      const session = await this.stripe.billingPortal.sessions.create({
+        customer: user.stripeCustomerId,
+        return_url: this.successUrl,
+      });
+      return { url: session.url };
+    }
+
+    // Fallback: find customer by email
     const customers = await this.stripe.customers.list({ email: userEmail, limit: 1 });
     if (!customers.data.length) {
       throw new BadRequestException('No Stripe customer exists for this user yet.');
@@ -108,7 +127,14 @@ export class StripeService {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
-        // Subscription created; invoice will arrive separately
+        // Persist customer id if available
+        const userId = session.metadata?.userId ? Number(session.metadata.userId) : undefined;
+        if (userId && session.customer && typeof session.customer === 'string') {
+          await this.prisma.user.update({
+            where: { id: userId },
+            data: { stripeCustomerId: session.customer },
+          }).catch(() => undefined);
+        }
         this.logger.log(`Checkout completed: ${session.id}`);
         break;
       }
@@ -130,6 +156,14 @@ export class StripeService {
         if (!user) {
           this.logger.warn(`User not found for email ${customerEmail}`);
           return { ok: true };
+        }
+
+        // Store customer id on user
+        if (invoice.customer && typeof invoice.customer === 'string') {
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: { stripeCustomerId: invoice.customer },
+          }).catch(() => undefined);
         }
 
         // Cancel existing and create new active subscription
