@@ -60,9 +60,11 @@ export default function Dashboard() {
   useEffect(() => {
     api.get('/plans')
       .then(res => {
-        const list = res.data as any[];
-        setPlans(list.map(p => ({ id: p.id, name: p.name })));
-        if (list.length > 0) setPlanId(list[0].id);
+        const data = res.data as any;
+        const list: any[] = Array.isArray(data) ? data : (data?.items ?? []);
+        const normalized = list.map(p => ({ id: p.id, name: p.name })).filter(p => p.id !== undefined);
+        setPlans(normalized);
+        if (normalized.length > 0) setPlanId(normalized[0].id);
       })
       .catch(() => setPlans([]));
   }, []);
