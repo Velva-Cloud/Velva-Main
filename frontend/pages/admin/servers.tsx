@@ -16,6 +16,9 @@ type Server = {
   createdAt: string;
 };
 
+type PlanLite = { id: number; name: string };
+type NodeLite = { id: number; name: string };
+
 type Paged<T> = {
   items: T[];
   total: number;
@@ -30,6 +33,8 @@ export default function AdminServers() {
   const toast = useToast();
 
   const [servers, setServers] = useState<Server[]>([]);
+  const [plans, setPlans] = useState<PlanLite[]>([]);
+  const [nodes, setNodes] = useState<NodeLite[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
@@ -45,8 +50,15 @@ export default function AdminServers() {
   const [editPlanId, setEditPlanId] = useState<number | ''>('');
   const [editNodeId, setEditNodeId] = useState<number | ''>('');
   const [editUserId, setEditUserId] = useState<number | ''>('');
+  const [chosenUserEmail, setChosenUserEmail] = useState<string>('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+
+  // user search
+  const [userQuery, setUserQuery] = useState('');
+  const debouncedUserQuery = useDebounce(userQuery, 300);
+  const [userOpts, setUserOpts] = useState<{ id: number; email: string }[]>([]);
+  const [userLoading, setUserLoading] = useState(false);
 
   const nameError = useMemo(() => {
     if (editingId === null) return null;
@@ -71,9 +83,46 @@ export default function AdminServers() {
     }
   };
 
+  const fetchPlansAndNodes = async () => {
+    try {
+      const [plansRes, nodesRes] = await Promise.all([
+        api.get('/plans/admin', { params: { page: 1, pageSize: 1000 } }),
+        api.get('/nodes', { params: { page: 1, pageSize: 1000 } }),
+      ]);
+      const planItems = (plansRes.data?.items || plansRes.data || []) as any[];
+      const nodeItems = (nodesRes.data?.items || nodesRes.data || []) as any[];
+      setPlans(planItems.map((p) => ({ id: p.id, name: p.name })));
+      setNodes(nodeItems.map((n) => ({ id: n.id, name: n.name })));
+    } catch {
+      // non-fatal
+    }
+  };
+
   useEffect(() => {
     fetchServers();
   }, [page]);
+
+  useEffect(() => {
+    fetchPlansAndNodes();
+  }, []);
+
+  useEffect(() => {
+    // user email search
+    if (debouncedUserQuery && debouncedUserQuery.length >= 3) {
+      setUserLoading(true);
+      api
+        .get('/users', { params: { search: debouncedUserQuery, page: 1, pageSize: 10 } })
+        .then((res) => {
+          const data = res.data as Paged<{ id: number; email: string }>;
+          setUserOpts(data.items || []);
+        })
+        .catch(() => setUserOpts([]))
+        .finally(() => setUserLoading(false));
+    } else {
+      setUserOpts([]);
+      setUserLoading(false);
+    }
+  }, [debouncedUserQuery]);
 
   const beginEdit = (s: Server) => {
     setEditingId(s.id);
@@ -82,6 +131,9 @@ export default function AdminServers() {
     setEditPlanId(s.planId);
     setEditNodeId(s.nodeId ?? '');
     setEditUserId(s.userId);
+    setChosenUserEmail('');
+    setUserQuery('');
+    setUserOpts([]);
   };
 
   const cancelEdit = () => {
@@ -91,8 +143,11 @@ export default function AdminServers() {
     setEditPlanId('');
     setEditNodeId('');
     setEditUserId('');
+    setChosenUserEmail('');
+    setUserQuery('');
+    setUserOpts([]);
     setSaving(false);
- 
+  };
 
   const saveEdit = async (s: Server) => {
     if (nameError) {
@@ -238,35 +293,89 @@ export default function AdminServers() {
                             </select>
                           </label>
                           <label className="block">
-                            <div className="text-sm mb-1">Plan ID</div>
-                            <input
-                              type="number"
-                              value={editPlanId}
+                            <div className="text-sm mb-1">Plan</div>
+                            <select
+                              value={editPlanId === '' ? '' : Number(editPlanId)}
                               onChange={(e) => setEditPlanId(e.target.value === '' ? '' : Number(e.target.value))}
                               className="input"
-                              placeholder="e.g. 1"
-                            />
+                            >
+                              <option value="">Keep unchanged</option>
+                              {plans.map((p) => (
+                                <option key={p.id} value={p.id}>
+                                  {p.name} (#{p.id})
+                                </option>
+                              ))}
+                            </select>
                           </label>
                           <label className="block">
-                            <div className="text-sm mb-1">Node ID</div>
-                            <input
-                              type="number"
-                              value={editNodeId}
+                            <div className="text-sm mb-1">Node</div>
+                            <select
+                              value={editNodeId === '' ? '' : Number(editNodeId)}
                               onChange={(e) => setEditNodeId(e.target.value === '' ? '' : Number(e.target.value))}
                               className="input"
-                              placeholder="e.g. 1"
-                            />
+                            >
+                              <option value="">Keep unchanged</option>
+                              {nodes.map((n) => (
+                                <option key={n.id} value={n.id}>
+                                  {n.name} (#{n.id})
+                                </option>
+                              ))}
+                            </select>
                           </label>
-                          <label className="block">
-                            <div className="text-sm mb-1">User ID (transfer ownership)</div>
-                            <input
-                              type="number"
-                              value={editUserId}
-                              onChange={(e) => setEditUserId(e.target.value === '' ? '' : Number(e.target.value))}
-                              className="input"
-                              placeholder="e.g. 42"
-                            />
-                          </label>
+                          <div className="md:col-span-3">
+                            <div className="grid md:grid-cols-3 gap-3">
+                              <label className="block md:col-span-2">
+                                <div className="text-sm mb-1">Transfer to user (search email)</div>
+                                <input
+                                  value={chosenUserEmail || userQuery}
+                                  onChange={(e) => {
+                                    setChosenUserEmail('');
+                                    setUserQuery(e.target.value);
+                                  }}
+                                  className="input"
+                                  placeholder="Type at least 3 characters"
+                                />
+                                {userLoading ? (
+                                  <div className="text-xs text-slate-400 mt-1">Searching…</div>
+                                ) : userOpts.length > 0 ? (
+                                  <div className="mt-1 max-h-40 overflow-auto rounded border border-slate-800 bg-slate-900/70">
+                                    {userOpts.map((u) => (
+                                      <button
+                                        type="button"
+                                        key={u.id}
+                                        onClick={() => {
+                                          setEditUserId(u.id);
+                                          setChosenUserEmail(u.email);
+                                          setUserOpts([]);
+                                          setUserQuery('');
+                                        }}
+                                        className="w-full text-left px-3 py-1 hover:bg-slate-800 text-sm"
+                                      >
+                                        {u.email} (#{u.id})
+                                      </button>
+                                    ))}
+                                  </div>
+                                ) : null}
+                                {editUserId !== '' && chosenUserEmail && (
+                                  <div className="text-xs text-slate-400 mt-1">Selected: {chosenUserEmail} (ID {editUserId})</div>
+                                )}
+                              </label>
+                              <div className="flex items-end">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setEditUserId('');
+                                    setChosenUserEmail('');
+                                    setUserQuery('');
+                                    setUserOpts([]);
+                                  }}
+                                  className="px-3 py-2 rounded border border-slate-800 hover:bg-slate-800"
+                                >
+                                  Clear selection
+                                </button>
+                              </div>
+                            </div>
+                          </div>
                           <div className="md:col-span-3">
                             <button
                               onClick={() => saveEdit(s)}
@@ -308,4 +417,13 @@ export default function AdminServers() {
       </main>
     </>
   );
+}
+
+function useDebounce<T>(value: T, delay = 300) {
+  const [v, setV] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setV(value), delay);
+    return () => clearTimeout(id);
+  }, [value, delay]);
+  return v;
 }
