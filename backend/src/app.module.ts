@@ -10,6 +10,7 @@ import { LogsModule } from './logs/logs.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { StatusModule } from './status/status.module';
+import { TransactionsModule } from './transactions/transactions.module';
 
 @Module({
   imports: [
@@ -27,6 +28,7 @@ import { StatusModule } from './status/status.module';
     NodesModule,
     LogsModule,
     StatusModule,
+    TransactionsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

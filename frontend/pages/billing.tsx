@@ -94,7 +94,10 @@ export default function Billing() {
       </Head>
       <NavBar />
       <main className="max-w-4xl mx-auto px-6 py-10">
-        <h1 className="text-2xl font-semibold mb-6">Billing &amp; Subscription</h1>
+        <div className="flex items-center justify-between mb-6">
+          <h1 className="text-2xl font-semibold">Billing &amp; Subscription</h1>
+          <a href="/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
+        </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
