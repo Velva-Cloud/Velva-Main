@@ -180,6 +180,7 @@ export class StripeService {
             startDate: new Date(),
             status: 'active',
           },
+          select: { id: true, planId: true },
         });
 
         await this.prisma.transaction.create({

@@ -55,6 +55,7 @@ export class SubscriptionsService {
         startDate: new Date(),
         status: 'active',
       },
+      select: { id: true, planId: true, startDate: true, status: true },
     });
 
     // Record a mock successful transaction for this subscription

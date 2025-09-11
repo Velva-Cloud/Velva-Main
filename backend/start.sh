@@ -2,8 +2,14 @@
 set -e
 
 # Ensure Prisma client is ready (already generated in build)
-# Run migrations (safe for prod with migrate deploy); fallback to db push if no migrations exist
-npx prisma migrate deploy || npx prisma db push
+# If there are migration files, deploy them; otherwise push schema changes.
+if [ -d "prisma/migrations" ] && [ "$(ls -A prisma/migrations 2>/dev/null)" ]; then
+  echo "Applying Prisma migrations (deploy)..."
+  npx prisma migrate deploy
+else
+  echo "No migrations found. Pushing Prisma schema to database..."
+  npx prisma db push
+fi
 
 # Optional seed on boot (idempotent)
 if [ "${SEED_ON_BOOT:-true}" = "true" ]; then
