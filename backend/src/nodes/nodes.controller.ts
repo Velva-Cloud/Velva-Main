@@ -18,8 +18,10 @@ export class NodesController {
   constructor(private service: NodesService, private prisma: PrismaService) {}
 
   @Get()
-  async list() {
-    return this.service.list();
+  async list(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+    const p = page ? Number(page) : 1;
+    const ps = pageSize ? Number(pageSize) : 20;
+    return this.service.list(p, ps);
   }
 
   // Admin: create node

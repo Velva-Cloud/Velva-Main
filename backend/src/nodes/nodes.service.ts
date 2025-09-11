@@ -5,12 +5,22 @@ import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import * as net from 'net';
 
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
 @Injectable()
 export class NodesService {
   constructor(private prisma: PrismaService) {}
 
-  async list() {
-    return this.prisma.node.findMany({ orderBy: { id: 'asc' } });
+  async list(page = 1, pageSize = 20) {
+    const p = clamp(page, 1, 100000);
+    const ps = clamp(pageSize, 1, 100);
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.node.count(),
+      this.prisma.node.findMany({ orderBy: { id: 'asc' }, skip: (p - 1) * ps, take: ps }),
+    ]);
+    return { items, total, page: p, pageSize: ps };
   }
 
   async create(dto: CreateNodeDto) {

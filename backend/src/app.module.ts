@@ -10,6 +10,12 @@ import { LogsModule } from './logs/logs.module';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { APP_GUARD } from '@nestjs/core';
 import { StatusModule } from './status/status.module';
+import { TransactionsModule } from './transactions/transactions.module';
+import { StripeModule } from './billing/stripe.module';
+import { MailModule } from './mail/mail.module';
+import { DunningModule } from './dunning/dunning.module';
+import { FinanceModule } from './finance/finance.module';
+import { SettingsModule } from './settings/settings.module';
 
 @Module({
   imports: [
@@ -27,6 +33,12 @@ import { StatusModule } from './status/status.module';
     NodesModule,
     LogsModule,
     StatusModule,
+    TransactionsModule,
+    StripeModule,
+    MailModule,
+    DunningModule,
+    FinanceModule,
+    SettingsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

@@ -29,8 +29,18 @@ export class UsersController {
 
   @Get()
   @Roles(Role.ADMIN, Role.OWNER)
-  async list(@Query('search') search?: string, @Query('role') role?: Role | 'ALL') {
-    return this.users.findAll({ search: search || undefined, role: role || undefined });
+  async list(
+    @Query('search') search?: string,
+    @Query('role') role?: Role | 'ALL',
+    @Query('page') page?: string,
+    @Query('pageSize') pageSize?: string,
+  ) {
+    return this.users.findAll({
+      search: search || undefined,
+      role: role || undefined,
+      page: page ? Number(page) : 1,
+      pageSize: pageSize ? Number(pageSize) : 20,
+    });
   }
 
   @Patch(':id/role')

@@ -1,0 +1,374 @@
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import Stripe from 'stripe';
+import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
+import { SettingsService } from '../settings/settings.service';
+
+@Injectable()
+export class StripeService {
+  private readonly logger = new Logger(StripeService.name);
+  private readonly stripe: Stripe;
+  private readonly successUrl = process.env.STRIPE_SUCCESS_URL || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing?success=1`;
+  private readonly cancelUrl = process.env.STRIPE_CANCEL_URL || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing?canceled=1`;
+
+  constructor(private prisma: PrismaService, private mail: MailService, private settings: SettingsService) {
+    const key = process.env.STRIPE_SECRET_KEY;
+    if (!key) {
+      this.logger.warn('STRIPE_SECRET_KEY not set. Stripe features will not work.');
+    }
+    // Use a supported API version for the installed stripe types
+    this.stripe = new Stripe(key || 'sk_test_x', { apiVersion: '2023-10-16' });
+  }
+
+  private ensureStripeEnabled() {
+    if (!process.env.STRIPE_SECRET_KEY) {
+      throw new BadRequestException('Stripe is not configured');
+    }
+  }
+
+  async ensureStripePrice(planId: number) {
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    if (!plan || !plan.isActive) throw new BadRequestException('Invalid or inactive plan');
+
+    let productId = (plan.resources as any)?.stripeProductId as string | undefined;
+    let priceId = (plan.resources as any)?.stripePriceId as string | undefined;
+
+    if (!productId) {
+      const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
+      productId = product.id;
+    }
+
+    // Detect custom plan (per-GB pricing)
+    const resources: any = plan.resources || {};
+    const ramRange = resources?.ramRange;
+    const perGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
+    let perGBPriceId = resources?.stripePerGBPriceId as string | undefined;
+
+    if (ramRange && perGB) {
+      if (!perGBPriceId) {
+        const unitAmount = Math.round(perGB * 100); // pennies per GB
+        const price = await this.stripe.prices.create({
+          product: productId,
+          unit_amount: unitAmount,
+          currency: 'gbp',
+          recurring: { interval: 'month' },
+          metadata: { planId: String(plan.id), perGB: '1' },
+        });
+        perGBPriceId = price.id;
+      }
+      // For custom plans, always use per-GB price id
+      priceId = perGBPriceId;
+    }
+
+    // Fixed monthly price fallback
+    if (!priceId) {
+      const unitAmount = Math.round(Number(plan.pricePerMonth) * 100);
+      const price = await this.stripe.prices.create({
+        product: productId,
+        unit_amount: unitAmount,
+        currency: 'gbp',
+        recurring: { interval: 'month' },
+        metadata: { planId: String(plan.id) },
+      });
+      priceId = price.id;
+    }
+
+    // Persist back into resources JSON
+    const nextResources = { ...resources, stripeProductId: productId, stripePriceId: priceId, ...(perGBPriceId ? { stripePerGBPriceId: perGBPriceId } : {}) };
+    if (JSON.stringify(nextResources) !== JSON.stringify(resources)) {
+      await this.prisma.plan.update({ where: { id: plan.id }, data: { resources: nextResources } });
+    }
+
+    return { plan: { ...plan, resources: nextResources }, productId, priceId };
+  }
+
+  async createCheckoutSession(userId: number, planId: number, successUrl?: string, cancelUrl?: string, customRamGB?: number) {
+    this.ensureStripeEnabled();
+    const { plan, priceId } = await this.ensureStripePrice(planId);
+    const user = await this.prisma.user.findUnique({ where: { id: userId } });
+    if (!user) throw new BadRequestException('User not found');
+
+    const resources: any = (plan as any).resources || {};
+    const ramRange = resources?.ramRange;
+    const perGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
+
+    // Validate custom quantity if plan is custom
+    let quantity = 1;
+    if (ramRange && perGB) {
+      const minGB = Math.round((ramRange.minMB || 0) / 1024);
+      const maxGB = Math.round((ramRange.maxMB || 0) / 1024);
+      const q = Number(customRamGB);
+      if (!q || q < minGB || q > maxGB) {
+        throw new BadRequestException(`Please choose a RAM size between ${minGB} and ${maxGB} GB`);
+      }
+      quantity = q;
+    }
+
+    const session = await this.stripe.checkout.sessions.create({
+      mode: 'subscription',
+      payment_method_types: ['card'],
+      line_items: [{ price: priceId, quantity }],
+      customer_email: user.email,
+      success_url: successUrl || this.successUrl,
+      cancel_url: cancelUrl || this.cancelUrl,
+      metadata: {
+        userId: String(userId),
+        planId: String(planId),
+        ...(ramRange && perGB ? { customRamGB: String(quantity) } : {}),
+      },
+    });
+
+    // Persist customer id when available
+    if (session.customer && typeof session.customer === 'string') {
+      await this.prisma.user.update({
+        where: { id: userId },
+        data: { stripeCustomerId: session.customer },
+      }).catch(() => undefined);
+    }
+
+    return { url: session.url, id: session.id };
+  }
+
+  // Admin: set per-GB price and rotate Stripe Price
+  async setPerGBPrice(planId: number, perGB: number, deactivateOld = false) {
+    this.ensureStripeEnabled();
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    if (!plan) throw new BadRequestException('Plan not found');
+
+    // Ensure product exists
+    let productId = (plan.resources as any)?.stripeProductId as string | undefined;
+    if (!productId) {
+      const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
+      productId = product.id;
+    }
+
+    const resources: any = plan.resources || {};
+    const oldPerGBPriceId = resources?.stripePerGBPriceId as string | undefined;
+
+    const unitAmount = Math.round(perGB * 100); // pennies/GB
+    const price = await this.stripe.prices.create({
+      product: productId,
+      unit_amount: unitAmount,
+      currency: 'gbp',
+      recurring: { interval: 'month' },
+      metadata: { planId: String(plan.id), perGB: '1' },
+    });
+
+    // Optionally deactivate old price
+    if (deactivateOld && oldPerGBPriceId && oldPerGBPriceId !== price.id) {
+      try {
+        await this.stripe.prices.update(oldPerGBPriceId, { active: false });
+      } catch (e) {
+        this.logger.warn(`Failed to deactivate old per-GB price ${oldPerGBPriceId}: ${(e as any)?.message || e}`);
+      }
+    }
+
+    const nextResources = {
+      ...resources,
+      pricePerGB: perGB,
+      stripeProductId: productId,
+      stripePerGBPriceId: price.id,
+      // point main price id to per-GB for custom plan checkout usage
+      stripePriceId: price.id,
+    };
+
+    const updated = await this.prisma.plan.update({
+      where: { id: plan.id },
+      data: { resources: nextResources },
+    });
+
+    return updated;
+  }
+
+  async createPortalSession(userEmail: string) {
+    this.ensureStripeEnabled();
+
+    // Try direct lookup by stored customer id first
+    const user = await this.prisma.user.findUnique({ where: { email: userEmail } });
+    if (user?.stripeCustomerId) {
+      const session = await this.stripe.billingPortal.sessions.create({
+        customer: user.stripeCustomerId,
+        return_url: this.successUrl,
+      });
+      return { url: session.url };
+    }
+
+    // Fallback: find customer by email
+    const customers = await this.stripe.customers.list({ email: userEmail, limit: 1 });
+    if (!customers.data.length) {
+      throw new BadRequestException('No Stripe customer exists for this user yet.');
+    }
+    const session = await this.stripe.billingPortal.sessions.create({
+      customer: customers.data[0].id,
+      return_url: this.successUrl,
+    });
+    return { url: session.url };
+  }
+
+  verifyAndConstructEvent(signature: string | undefined, payload: Buffer | string) {
+    this.ensureStripeEnabled();
+    if (!signature) throw new BadRequestException('Missing Stripe-Signature header');
+    const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
+    if (!webhookSecret) throw new BadRequestException('STRIPE_WEBHOOK_SECRET not configured');
+    try {
+      return this.stripe.webhooks.constructEvent(payload, signature, webhookSecret);
+    } catch (err: any) {
+      this.logger.error('Stripe webhook signature verification failed', err?.message);
+      throw new BadRequestException('Invalid signature');
+    }
+  }
+
+  async handleEvent(event: Stripe.Event) {
+    switch (event.type) {
+      case 'checkout.session.completed': {
+        const session = event.data.object as Stripe.Checkout.Session;
+        // Persist customer id if available
+        const userId = session.metadata?.userId ? Number(session.metadata.userId) : undefined;
+        if (userId && session.customer && typeof session.customer === 'string') {
+          await this.prisma.user.update({
+            where: { id: userId },
+            data: { stripeCustomerId: session.customer },
+          }).catch(() => undefined);
+        }
+        this.logger.log(`Checkout completed: ${session.id}`);
+        break;
+      }
+      case 'invoice.paid': {
+        const invoice = event.data.object as Stripe.Invoice;
+        const sub = invoice.subscription;
+        const totalCents = invoice.total || 0;
+        const customerEmail = (invoice.customer_email || (invoice.customer as any)?.email) as string | undefined;
+
+        const planIdMeta = invoice.lines?.data?.[0]?.price?.metadata?.planId;
+        const planId = planIdMeta ? Number(planIdMeta) : undefined;
+
+        if (!customerEmail || !planId) {
+          this.logger.warn('Missing email or planId in invoice; skipping subscription activation');
+          return { ok: true };
+        }
+
+        const user = await this.prisma.user.findUnique({ where: { email: customerEmail } });
+        if (!user) {
+          this.logger.warn(`User not found for email ${customerEmail}`);
+          return { ok: true };
+        }
+
+        // Store customer id on user
+        if (invoice.customer && typeof invoice.customer === 'string') {
+          await this.prisma.user.update({
+            where: { id: user.id },
+            data: { stripeCustomerId: invoice.customer },
+          }).catch(() => undefined);
+        }
+
+        // Cancel existing and create new active subscription
+        await this.prisma.subscription.updateMany({
+          where: { userId: user.id, status: 'active' },
+          data: { status: 'canceled', endDate: new Date() },
+        });
+        const newSub = await this.prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId,
+            startDate: new Date(),
+            status: 'active',
+          },
+          select: { id: true, planId: true },
+        });
+
+        const firstLine = invoice.lines?.data?.[0];
+        const ramGB = firstLine?.quantity || undefined;
+
+        await this.prisma.transaction.create({
+          data: {
+            userId: user.id,
+            subscriptionId: newSub.id,
+            planId,
+            amount: (totalCents / 100).toFixed(2) as any,
+            currency: (invoice.currency || 'gbp').toUpperCase(),
+            gateway: 'stripe',
+            status: 'success',
+            metadata: {
+              invoiceId: invoice.id,
+              subscriptionId: typeof sub === 'string' ? sub : sub?.id ?? null,
+              customerId: typeof invoice.customer === 'string' ? invoice.customer : (invoice.customer as any)?.id ?? null,
+              hostedInvoiceUrl: invoice.hosted_invoice_url,
+              ramGB: ramGB ?? null,
+            },
+          },
+        });
+
+        await this.prisma.log.create({
+          data: { userId: user.id, action: 'plan_change', metadata: { event: 'stripe_invoice_paid', planId, invoiceId: invoice.id } },
+        });
+
+        // Email receipt
+        await this.mail.sendPaymentSuccess(
+          user.email,
+          (totalCents / 100).toFixed(2),
+          (invoice.currency || 'gbp').toUpperCase(),
+          (invoice.lines?.data?.[0]?.price?.product as any)?.name,
+          invoice.hosted_invoice_url || undefined,
+        );
+
+        break;
+      }
+      case 'invoice.payment_failed': {
+        const invoice = event.data.object as Stripe.Invoice;
+        const customerEmail = (invoice.customer_email || (invoice.customer as any)?.email) as string | undefined;
+        const planIdMeta = invoice.lines?.data?.[0]?.price?.metadata?.planId;
+        const planId = planIdMeta ? Number(planIdMeta) : undefined;
+        const user = customerEmail ? await this.prisma.user.findUnique({ where: { email: customerEmail } }) : null;
+
+        if (user && planId) {
+          await this.prisma.transaction.create({
+            data: {
+              userId: user.id,
+              planId,
+              amount: ((invoice.total || 0) / 100).toFixed(2) as any,
+              currency: (invoice.currency || 'gbp').toUpperCase(),
+              gateway: 'stripe',
+              status: 'failed',
+              metadata: { invoiceId: invoice.id, reason: 'payment_failed' },
+            },
+          });
+          await this.prisma.log.create({
+            data: { userId: user.id, action: 'plan_change', metadata: { event: 'stripe_invoice_failed', planId, invoiceId: invoice.id } },
+          });
+
+          // Mark current subscription as past_due and set graceUntil based on settings
+          const active = await this.prisma.subscription.findFirst({
+            where: { userId: user.id, status: 'active' },
+            orderBy: { id: 'desc' },
+          });
+          if (active) {
+            const billing = await this.settings.getBilling();
+            const graceDays = billing?.graceDays ?? 3;
+            const until = new Date();
+            until.setDate(until.getDate() + graceDays);
+            await this.prisma.subscription.update({
+              where: { id: active.id },
+              data: { status: 'past_due', graceUntil: until },
+            });
+            await this.prisma.log.create({
+              data: {
+                userId: user.id,
+                action: 'plan_change',
+                metadata: { event: 'mark_past_due', subscriptionId: active.id, planId: active.planId, graceUntil: until.toISOString() },
+              },
+            });
+          }
+
+          await this.mail.sendPaymentFailed(
+            user.email,
+            (invoice.lines?.data?.[0]?.price?.product as any)?.name,
+          );
+        }
+        break;
+      }
+      default:
+        this.logger.debug(`Unhandled Stripe event ${event.type}`);
+    }
+    return { received: true };
+  }
+}

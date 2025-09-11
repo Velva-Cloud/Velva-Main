@@ -17,6 +17,7 @@ enum Role {
 
 enum SubscriptionStatus {
   active
+  past_due
   canceled
   expired
 }
@@ -38,20 +39,28 @@ enum LogAction {
   plan_change
 }
 
+enum TransactionStatus {
+  success
+  failed
+  pending
+}
+
 model User {
-  id            Int       @id @default(autoincrement())
-  email         String    @unique
-  password      String?
-  oauthProvider String?
-  oauthId       String?
-  role          Role      @default(USER)
-  createdAt     DateTime  @default(now())
-  lastLogin     DateTime?
+  id                 Int       @id @default(autoincrement())
+  email              String    @unique
+  password           String?
+  oauthProvider      String?
+  oauthId            String?
+  role               Role      @default(USER)
+  createdAt          DateTime  @default(now())
+  lastLogin          DateTime?
+  stripeCustomerId   String?
 
   subscriptions Subscription[]
   servers       Server[]
   logs          Log[]
   resetTokens   PasswordResetToken[]
+  transactions  Transaction[]
 }
 
 model Plan {
@@ -63,18 +72,22 @@ model Plan {
 
   subscriptions  Subscription[]
   servers        Server[]
+  transactions   Transaction[]
 }
 
 model Subscription {
-  id        Int                 @id @default(autoincrement())
-  userId    Int
-  planId    Int
-  startDate DateTime
-  endDate   DateTime?
-  status    SubscriptionStatus
+  id         Int                 @id @default(autoincrement())
+  userId     Int
+  planId     Int
+  startDate  DateTime
+  endDate    DateTime?
+  status     SubscriptionStatus
+  graceUntil DateTime?
 
   user User @relation(fields: [userId], references: [id])
   plan Plan @relation(fields: [planId], references: [id])
+
+  transactions Transaction[]
 }
 
 model Node {
@@ -121,4 +134,27 @@ model PasswordResetToken {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
+}
+
+model Transaction {
+  id             Int                @id @default(autoincrement())
+  userId         Int
+  subscriptionId Int?
+  planId         Int?
+  amount         Decimal            @db.Decimal(10, 2)
+  currency       String             @default("GBP")
+  gateway        String             @default("mock")
+  status         TransactionStatus
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  plan         Plan?        @relation(fields: [planId], references: [id])
+}
+
+model Setting {
+  key   String @id
+  value Json
+  updatedAt DateTime @updatedAt
 }

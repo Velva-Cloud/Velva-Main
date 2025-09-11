@@ -5,12 +5,16 @@ import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
 import SystemStatus from '../../components/SystemStatus';
 
-type Log = {
+type Tx = {
   id: number;
-  action: string;
+  amount: string;
+  currency: string;
+  gateway: string;
+  status: 'success' | 'failed' | 'pending';
   metadata?: any;
-  timestamp: string;
+  createdAt: string;
   user?: { id: number; email: string } | null;
+  plan?: { id: number; name: string; pricePerMonth: string } | null;
 };
 
 type Paged<T> = {
@@ -20,74 +24,80 @@ type Paged<T> = {
   pageSize: number;
 };
 
-const ACTIONS = ['login', 'server_create', 'plan_change'] as const;
-type ActionType = (typeof ACTIONS)[number] | '';
+const STATUSES = ['success', 'failed', 'pending'] as const;
+type StatusType = (typeof STATUSES)[number] | '';
 
-export default function AdminLogs() {
+export default function AdminTransactions() {
   useRequireAdmin();
 
-  const [logs, setLogs] = useState<Log[]>([]);
+  const [txs, setTxs] = useState<Tx[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const [action, setAction] = useState<ActionType>('');
+  const [status, setStatus] = useState<StatusType>('');
+  const [gateway, setGateway] = useState('');
   const [q, setQ] = useState('');
+  const [planId, setPlanId] = useState('');
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
 
-  const totalPages = Math.max(1, Math.ceil(total / pageSize));
-
-  const fetchLogs = async () => {
+  const fetchTxs = async () => {
     setLoading(true);
     setErr(null);
     try {
-      const params: any = { page, pageSize };
-      if (action) params.action = action;
+      const params: any = { all: 1, page, pageSize };
+      if (status) params.status = status;
+      if (gateway) params.gateway = gateway;
       if (q) params.q = q;
+      if (planId) params.planId = Number(planId);
       if (from) params.from = from;
       if (to) params.to = to;
-      const res = await api.get('/logs', { params });
-      const data = res.data as Paged<Log>;
-      setLogs(data.items);
+      const res = await api.get('/transactions', { params });
+      const data = res.data as Paged<Tx>;
+      setTxs(data.items);
       setTotal(data.total);
     } catch (e: any) {
-      setErr(e?.response?.data?.message || 'Failed to load logs');
+      setErr(e?.response?.data?.message || 'Failed to load transactions');
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchLogs();
-  }, [page, action, pageSize]);
+    fetchTxs();
+  }, [page, status, pageSize]);
 
   const applyFilters = () => {
     setPage(1);
-    fetchLogs();
+    fetchTxs();
   };
 
   const exportCsv = () => {
     const params = new URLSearchParams();
-    if (action) params.set('action', action);
+    params.set('all', '1');
+    if (status) params.set('status', status);
+    if (gateway) params.set('gateway', gateway);
     if (q) params.set('q', q);
+    if (planId) params.set('planId', String(Number(planId)));
     if (from) params.set('from', from);
     if (to) params.set('to', to);
-    window.location.href = `/api/logs/export?${params.toString()}`;
+    window.location.href = `/api/transactions/export?${params.toString()}`;
   };
 
   return (
     <>
       <Head>
-        <title>Admin • Logs</title>
+        <title>Admin • Transactions</title>
       </Head>
       <NavBar />
       <main className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Admin • Logs</h1>
+          <h1 className="text-2xl font-semibold">Admin • Transactions</h1>
           <div className="w-full max-w-sm ml-4">
             <SystemStatus />
           </div>
@@ -96,23 +106,31 @@ export default function AdminLogs() {
           <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
-          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Logs</a>
-          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
+          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
+          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Transactions</a>
         </div>
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
         <div className="card p-3 mb-4">
           <div className="flex flex-wrap items-end gap-3">
             <label className="block">
-              <div className="text-xs mb-1">Action</div>
-              <select value={action} onChange={e => setAction(e.target.value as ActionType)} className="input">
+              <div className="text-xs mb-1">Status</div>
+              <select value={status} onChange={e => setStatus(e.target.value as StatusType)} className="input">
                 <option value="">All</option>
-                {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
               </select>
+            </label>
+            <label className="block">
+              <div className="text-xs mb-1">Gateway</div>
+              <input value={gateway} onChange={e => setGateway(e.target.value)} placeholder="mock" className="input" />
             </label>
             <label className="block">
               <div className="text-xs mb-1">User email contains</div>
               <input value={q} onChange={e => setQ(e.target.value)} className="input" placeholder="email@domain.com" />
+            </label>
+            <label className="block">
+              <div className="text-xs mb-1">Plan ID</div>
+              <input value={planId} onChange={e => setPlanId(e.target.value)} className="input" placeholder="e.g. 1" />
             </label>
             <label className="block">
               <div className="text-xs mb-1">From</div>
@@ -137,28 +155,39 @@ export default function AdminLogs() {
               </div>
             ))}
           </div>
-        ) : logs.length === 0 ? (
+        ) : txs.length === 0 ? (
           <div className="card p-10 text-center">
-            <h3 className="text-xl font-semibold mb-2">No logs</h3>
-            <p className="text-slate-400">Activity will appear here.</p>
+            <h3 className="text-xl font-semibold mb-2">No transactions</h3>
+            <p className="text-slate-400">Transactions will appear here as users subscribe.</p>
           </div>
         ) : (
           <>
             <div className="space-y-2">
-              {logs.map((l) => (
-                <div key={l.id} className="p-3 card">
-                  <div className="text-sm">
-                    <span className="text-slate-400">{new Date(l.timestamp).toLocaleString()}</span>
-                    <span className="mx-2">•</span>
-                    <span className="font-semibold">{l.action}</span>
-                    {l.user && (
-                      <>
-                        <span className="mx-2">•</span>
-                        <span className="text-slate-300">{l.user.email}</span>
-                      </>
-                    )}
+              {txs.map((t) => (
+                <div key={t.id} className="p-3 card">
+                  <div className="flex flex-wrap items-center gap-2 justify-between">
+                    <div className="text-sm">
+                      <span className="text-slate-400">{new Date(t.createdAt).toLocaleString()}</span>
+                      <span className="mx-2">•</span>
+                      <span className="font-semibold">{t.status.toUpperCase()}</span>
+                      <span className="mx-2">•</span>
+                      <span>{t.gateway}</span>
+                      {t.user && (
+                        <>
+                          <span className="mx-2">•</span>
+                          <span className="text-slate-300">{t.user.email}</span>
+                        </>
+                      )}
+                      {t.plan && (
+                        <>
+                          <span className="mx-2">•</span>
+                          <span className="text-slate-300">Plan: {t.plan.name}</span>
+                        </>
+                      )}
+                    </div>
+                    <div className="font-semibold">${t.amount} {t.currency}</div>
                   </div>
-                  {l.metadata && <pre className="mt-2 text-xs bg-slate-800/70 rounded p-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>}
+                  {t.metadata && <pre className="mt-2 text-xs bg-slate-800/70 rounded p-2 overflow-auto">{JSON.stringify(t.metadata, null, 2)}</pre>}
                 </div>
               ))}
             </div>
