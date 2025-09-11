@@ -145,3 +145,9 @@ model Transaction {
   subscription Subscription? @relation(fields: [subscriptionId], references: [id])
   plan         Plan?        @relation(fields: [planId], references: [id])
 }
+
+model Setting {
+  key   String @id
+  value Json
+  updatedAt DateTime @updatedAt
+}

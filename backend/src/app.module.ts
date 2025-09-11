@@ -12,6 +12,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { StatusModule } from './status/status.module';
 import { TransactionsModule } from './transactions/transactions.module';
 import { StripeModule } from './billing/stripe.module';
+import { MailModule } from './mail/mail.module';
 
 @Module({
   imports: [
@@ -31,6 +32,7 @@ import { StripeModule } from './billing/stripe.module';
     StatusModule,
     TransactionsModule,
     StripeModule,
+    MailModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

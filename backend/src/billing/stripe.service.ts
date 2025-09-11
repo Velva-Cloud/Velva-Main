@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import Stripe from 'stripe';
 import { PrismaService } from '../prisma/prisma.service';
+import { MailService } from '../mail/mail.service';
 
 @Injectable()
 export class StripeService {
@@ -9,7 +10,7 @@ export class StripeService {
   private readonly successUrl = process.env.STRIPE_SUCCESS_URL || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing?success=1`;
   private readonly cancelUrl = process.env.STRIPE_CANCEL_URL || `${process.env.FRONTEND_URL || 'http://localhost:3000'}/billing?canceled=1`;
 
-  constructor(private prisma: PrismaService) {
+  constructor(private prisma: PrismaService, private mail: MailService) {
     const key = process.env.STRIPE_SECRET_KEY;
     if (!key) {
       this.logger.warn('STRIPE_SECRET_KEY not set. Stripe features will not work.');
@@ -167,6 +168,15 @@ export class StripeService {
           data: { userId: user.id, action: 'plan_change', metadata: { event: 'stripe_invoice_paid', planId, invoiceId: invoice.id } },
         });
 
+        // Email receipt
+        await this.mail.sendPaymentSuccess(
+          user.email,
+          (totalCents / 100).toFixed(2),
+          (invoice.currency || 'usd').toUpperCase(),
+          (invoice.lines?.data?.[0]?.price?.product as any)?.name,
+          invoice.hosted_invoice_url || undefined,
+        );
+
         break;
       }
       case 'invoice.payment_failed': {
@@ -191,6 +201,11 @@ export class StripeService {
           await this.prisma.log.create({
             data: { userId: user.id, action: 'plan_change', metadata: { event: 'stripe_invoice_failed', planId, invoiceId: invoice.id } },
           });
+
+          await this.mail.sendPaymentFailed(
+            user.email,
+            (invoice.lines?.data?.[0]?.price?.product as any)?.name,
+          );
         }
         break;
       }
