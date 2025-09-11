@@ -1,4 +1,4 @@
-import { Controller, Get, Header, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Header, Query, Req, UseGuards, ForbiddenException } from '@nestjs/common';
 import { LogsService } from './logs.service';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/roles.guard';
@@ -25,6 +25,33 @@ export class LogsController {
       pageSize: Math.max(1, Math.min(100, Number(query.pageSize || 20))),
     };
     return this.service.listAll(filters);
+  }
+
+  // Support-limited logs (requires serverId or userId)
+  @Get('support')
+  async support(@Req() req: any, @Query() query: any) {
+    const role = req.user?.role as Role | undefined;
+    if (!(role === Role.SUPPORT || role === Role.ADMIN || role === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
+    const userId = query.userId ? Number(query.userId) : undefined;
+    const serverId = query.serverId ? Number(query.serverId) : undefined;
+    const action = query.action;
+    const from = query.from;
+    const to = query.to;
+    const page = Math.max(1, Math.min(100000, Number(query.page || 1)));
+    const pageSize = Math.max(1, Math.min(100, Number(query.pageSize || 20)));
+    // optional: require at least one filter to avoid dumping all logs
+    // if (!userId && !serverId) throw new BadRequestException('Provide userId or serverId');
+    return this.service.listSupport({
+      userId,
+      serverId,
+      action,
+      from,
+      to,
+      page,
+      pageSize,
+    });
   }
 
   @Get('export')

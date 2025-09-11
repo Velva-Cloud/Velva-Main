@@ -36,6 +36,7 @@ export default function NavBar() {
           <>
             <Link href="/support/users" className="hover:text-sky-300 transition-colors">Support</Link>
             <Link href="/support/servers" className="hover:text-sky-300 transition-colors">Servers</Link>
+            <Link href="/support/logs" className="hover:text-sky-300 transition-colors">Logs</Link>
           </>
         )}
         {role && (role === 'ADMIN' || role === 'OWNER') && (
