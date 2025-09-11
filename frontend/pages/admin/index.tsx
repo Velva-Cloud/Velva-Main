@@ -45,6 +45,10 @@ export default function AdminIndex() {
             <h3 className="font-semibold">Settings</h3>
             <p className="text-slate-400 text-sm">Configure email (SMTP) and more.</p>
           </a>
+          <a href="/admin/finance" className="card p-5 hover:bg-slate-800/60">
+            <h3 className="font-semibold">Finance</h3>
+            <p className="text-slate-400 text-sm">MRR, ARR, churn and plan distribution.</p>
+          </a>
         </section>
       </main>
     </>

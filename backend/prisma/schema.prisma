@@ -17,6 +17,7 @@ enum Role {
 
 enum SubscriptionStatus {
   active
+  past_due
   canceled
   expired
 }
@@ -73,12 +74,13 @@ model Plan {
 }
 
 model Subscription {
-  id        Int                 @id @default(autoincrement())
-  userId    Int
-  planId    Int
-  startDate DateTime
-  endDate   DateTime?
-  status    SubscriptionStatus
+  id         Int                 @id @default(autoincrement())
+  userId     Int
+  planId     Int
+  startDate  DateTime
+  endDate    DateTime?
+  status     SubscriptionStatus
+  graceUntil DateTime?
 
   user User @relation(fields: [userId], references: [id])
   plan Plan @relation(fields: [planId], references: [id])

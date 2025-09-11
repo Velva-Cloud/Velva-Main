@@ -236,6 +236,27 @@ export class StripeService {
             data: { userId: user.id, action: 'plan_change', metadata: { event: 'stripe_invoice_failed', planId, invoiceId: invoice.id } },
           });
 
+          // Mark current subscription as past_due and set graceUntil
+          const active = await this.prisma.subscription.findFirst({
+            where: { userId: user.id, status: 'active' },
+            orderBy: { id: 'desc' },
+          });
+          if (active) {
+            const until = new Date();
+            until.setDate(until.getDate() + 3);
+            await this.prisma.subscription.update({
+              where: { id: active.id },
+              data: { status: 'past_due', graceUntil: until },
+            });
+            await this.prisma.log.create({
+              data: {
+                userId: user.id,
+                action: 'plan_change',
+                metadata: { event: 'mark_past_due', subscriptionId: active.id, planId: active.planId, graceUntil: until.toISOString() },
+              },
+            });
+          }
+
           await this.mail.sendPaymentFailed(
             user.email,
             (invoice.lines?.data?.[0]?.price?.product as any)?.name,
