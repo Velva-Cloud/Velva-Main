@@ -3,19 +3,26 @@ import { INestApplication } from '@nestjs/common';
 import * as request from 'supertest';
 import { ServersModule } from '../src/servers/servers.module';
 import { PrismaService } from '../src/prisma/prisma.service';
+import * as jwt from 'jsonwebtoken';
 
 // Minimal Prisma mock to satisfy ServersService methods used by controller actions
 function createPrismaMock() {
   const servers: any[] = [
-    { id: 1, userId: 1, planId: 1, nodeId: null, name: 'srv-1', status: 'stopped', createdAt: new Date() },
+    { id: 1, userId: 2, planId: 1, nodeId: null, name: 'srv-1', status: 'stopped', createdAt: new Date() },
   ];
-  const plans: any[] = [{ id: 1, name: 'Plan 1', isActive: true, resources: { maxServers: 1 }, pricePerMonth: '10.00' }];
-  const users: any[] = [{ id: 1, email: 'u1@example.com', role: 'USER', suspended: false }];
-  const subs: any[] = [{ id: 1, userId: 1, planId: 1, startDate: new Date(), status: 'active' }];
+  const plans: any[] = [{ id: 1, name: 'Plan 1', isActive: true, resources: { maxServers: 3 }, pricePerMonth: '10.00' }];
+  const users: any[] = [
+    { id: 1, email: 'owner@example.com', role: 'OWNER', suspended: false },
+    { id: 2, email: 'admin@example.com', role: 'ADMIN', suspended: false },
+    { id: 3, email: 'support@example.com', role: 'SUPPORT', suspended: false },
+  ];
+  const subs: any[] = [
+    { id: 1, userId: 2, planId: 1, startDate: new Date(), status: 'active', plan: plans[0] },
+  ];
 
   return {
     server: {
-      findMany: jest.fn(async (args) => servers),
+      findMany: jest.fn(async () => servers),
       findUnique: jest.fn(async ({ where }: any) => servers.find((s) => s.id === where.id) || null),
       count: jest.fn(async () => servers.length),
       create: jest.fn(async ({ data }: any) => {
@@ -46,6 +53,7 @@ function createPrismaMock() {
         users[idx] = { ...users[idx], ...data };
         return users[idx];
       }),
+      count: jest.fn(async () => users.length),
     },
     subscription: {
       findFirst: jest.fn(async ({ where }: any) => subs.find((s) => s.userId === where.userId && s.status === where.status) || null),
@@ -69,6 +77,12 @@ function createPrismaMock() {
   } as unknown as PrismaService;
 }
 
+function sign(role: 'SUPPORT' | 'ADMIN' | 'OWNER' | 'USER', sub = 2) {
+  const payload = { sub, email: `${role.toLowerCase()}@example.com`, role };
+  const secret = process.env.JWT_SECRET || 'change_this_in_production';
+  return jwt.sign(payload, secret, { expiresIn: '1h' });
+}
+
 describe('Servers e2e (mocked Prisma)', () => {
   let app: INestApplication;
 
@@ -88,20 +102,19 @@ describe('Servers e2e (mocked Prisma)', () => {
     await app?.close();
   });
 
-  it('GET /servers should require auth (handled by guard in real app)', async () => {
-    // We don't have auth middleware here, just ensure route exists
-    const res = await request(app.getHttpServer()).get('/servers');
-    expect([200, 401, 403]).toContain(res.status);
+  it('GET /servers with token responds', async () => {
+    const token = sign('ADMIN', 2);
+    const res = await request(app.getHttpServer()).get('/servers?all=1').set('Authorization', `Bearer ${token}`);
+    expect([200, 403]).toContain(res.status);
   });
 
-  it('Server lifecycle: start -> stop -> restart (status transitions)', async () => {
-    // Pretend authentication by bypassing guard in test env (not set here)
-    // Assert service endpoints exist and return something
+  it('Server lifecycle: start -> stop -> restart (status transitions) with auth', async () => {
     const sid = 1;
-    await request(app.getHttpServer()).patch(`/servers/${sid}/status`).send({ status: 'running', reason: 'test' });
-    await request(app.getHttpServer()).post(`/servers/${sid}/stop`).send({ reason: 'test' });
-    await request(app.getHttpServer()).post(`/servers/${sid}/restart`).send({ reason: 'test' });
-    const res = await request(app.getHttpServer()).get(`/servers/${sid}`);
-    expect([200, 401, 403]).toContain(res.status);
+    const token = sign('SUPPORT', 3);
+    await request(app.getHttpServer()).patch(`/servers/${sid}/status`).set('Authorization', `Bearer ${token}`).send({ status: 'running', reason: 'test' });
+    await request(app.getHttpServer()).post(`/servers/${sid}/stop`).set('Authorization', `Bearer ${token}`).send({ reason: 'test' });
+    await request(app.getHttpServer()).post(`/servers/${sid}/restart`).set('Authorization', `Bearer ${token}`).send({ reason: 'test' });
+    const res = await request(app.getHttpServer()).get(`/servers/${sid}`).set('Authorization', `Bearer ${token}`);
+    expect([200, 403]).toContain(res.status);
   });
 });
