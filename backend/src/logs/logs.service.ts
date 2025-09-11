@@ -1,18 +1,64 @@
 import { Injectable } from '@nestjs/common';
+import { Prisma, LogAction } from '@prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
+
+type LogFilters = {
+  page?: number;
+  pageSize?: number;
+  action?: LogAction | string;
+  q?: string; // search user email
+  from?: Date;
+  to?: Date;
+};
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function endOfDay(d: Date) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
 
 @Injectable()
 export class LogsService {
   constructor(private prisma: PrismaService) {}
 
-  async listAll() {
-    return this.prisma.log.findMany({
-      orderBy: { id: 'desc' },
-      include: {
-        user: { select: { id: true, email: true } },
-      },
-      take: 500,
-    });
+  async listAll(filters: LogFilters = {}) {
+    const page = clamp(filters.page ?? 1, 1, 100000);
+    const pageSize = clamp(filters.pageSize ?? 20, 1, 100);
+    const where: Prisma.LogWhereInput = {
+      ...(filters.action ? { action: filters.action as LogAction } : {}),
+      ...(filters.from || filters.to
+        ? {
+            timestamp: {
+              ...(filters.from ? { gte: filters.from } : {}),
+              ...(filters.to ? { lte: endOfDay(filters.to) } : {}),
+            },
+          }
+        : {}),
+      ...(filters.q
+        ? {
+            user: {
+              email: { contains: filters.q, mode: 'insensitive' },
+            },
+          }
+        : {}),
+    };
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.log.count({ where }),
+      this.prisma.log.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        include: {
+          user: { select: { id: true, email: true } },
+        },
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return { items, total, page, pageSize };
   }
 
   async log(userId: number | null, action: 'login' | 'server_create' | 'plan_change', metadata?: any) {

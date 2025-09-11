@@ -13,6 +13,16 @@ type Log = {
   user?: { id: number; email: string } | null;
 };
 
+type Paged<T> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+};
+
+const ACTIONS = ['login', 'server_create', 'plan_change'] as const;
+type ActionType = (typeof ACTIONS)[number] | '';
+
 export default function AdminLogs() {
   useRequireAdmin();
 
@@ -20,12 +30,30 @@ export default function AdminLogs() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
+  const [total, setTotal] = useState(0);
+
+  const [action, setAction] = useState<ActionType>('');
+  const [q, setQ] = useState('');
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
   const fetchLogs = async () => {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get('/logs');
-      setLogs(res.data);
+      const params: any = { page, pageSize };
+      if (action) params.action = action;
+      if (q) params.q = q;
+      if (from) params.from = from;
+      if (to) params.to = to;
+      const res = await api.get('/logs', { params });
+      const data = res.data as Paged<Log>;
+      setLogs(data.items);
+      setTotal(data.total);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load logs');
     } finally {
@@ -35,7 +63,12 @@ export default function AdminLogs() {
 
   useEffect(() => {
     fetchLogs();
-  }, []);
+  }, [page, action]);
+
+  const applyFilters = () => {
+    setPage(1);
+    fetchLogs();
+  };
 
   return (
     <>
@@ -55,8 +88,34 @@ export default function AdminLogs() {
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
           <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Logs</a>
+          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
         </div>
         {err && <div className="mb-4 text-red-400">{err}</div>}
+
+        <div className="card p-3 mb-4">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <div className="text-xs mb-1">Action</div>
+              <select value={action} onChange={e => setAction(e.target.value as ActionType)} className="input">
+                <option value="">All</option>
+                {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+              </select>
+            </label>
+            <label className="block">
+              <div className="text-xs mb-1">User email contains</div>
+              <input value={q} onChange={e => setQ(e.target.value)} className="input" placeholder="email@domain.com" />
+            </label>
+            <label className="block">
+              <div className="text-xs mb-1">From</div>
+              <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input" />
+            </label>
+            <label className="block">
+              <div className="text-xs mb-1">To</div>
+              <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
+            </label>
+            <button onClick={applyFilters} className="btn btn-primary">Apply</button>
+          </div>
+        </div>
 
         {loading ? (
           <div className="space-y-3">
@@ -72,24 +131,35 @@ export default function AdminLogs() {
             <p className="text-slate-400">Activity will appear here.</p>
           </div>
         ) : (
-          <div className="space-y-2">
-            {logs.map((l) => (
-              <div key={l.id} className="p-3 card">
-                <div className="text-sm">
-                  <span className="text-slate-400">{new Date(l.timestamp).toLocaleString()}</span>
-                  <span className="mx-2">•</span>
-                  <span className="font-semibold">{l.action}</span>
-                  {l.user && (
-                    <>
-                      <span className="mx-2">•</span>
-                      <span className="text-slate-300">{l.user.email}</span>
-                    </>
-                  )}
+          <>
+            <div className="space-y-2">
+              {logs.map((l) => (
+                <div key={l.id} className="p-3 card">
+                  <div className="text-sm">
+                    <span className="text-slate-400">{new Date(l.timestamp).toLocaleString()}</span>
+                    <span className="mx-2">•</span>
+                    <span className="font-semibold">{l.action}</span>
+                    {l.user && (
+                      <>
+                        <span className="mx-2">•</span>
+                        <span className="text-slate-300">{l.user.email}</span>
+                      </>
+                    )}
+                  </div>
+                  {l.metadata && <pre className="mt-2 text-xs bg-slate-800/70 rounded p-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>}
                 </div>
-                {l.metadata && <pre className="mt-2 text-xs bg-slate-800/70 rounded p-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>}
+              ))}
+            </div>
+            <div className="flex items-center justify-between mt-4">
+              <div className="text-sm text-slate-400">
+                Page {page} of {totalPages} • {total} total
               </div>
-            ))}
-          </div>
+              <div className="flex items-center gap-2">
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+              </div>
+            </div>
+          </>
         )}
       </main>
     </>
