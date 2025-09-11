@@ -125,4 +125,17 @@ export class MailService {
     `;
     return this.send(to, subj, html);
   }
+
+  async sendPastDueReminder(to: string, planName: string | undefined, graceUntil: Date) {
+    const subj = `Payment required${planName ? ` - ${planName}` : ''}`;
+    const leftHours = Math.max(1, Math.round((graceUntil.getTime() - Date.now()) / 3600000));
+    const html = `
+      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+        <h2>Your subscription is past due</h2>
+        <p>${planName ? `For plan <strong>${planName}</strong>, ` : ''}your subscription is currently past due.</p>
+        <p>Please update your payment method to avoid cancellation. Approximately <strong>${leftHours} hour(s)</strong> remain before cancellation.</p>
+      </div>
+    `;
+    return this.send(to, subj, html);
+  }
 }

@@ -18,9 +18,10 @@ type Subscription = {
   planId: number;
   startDate: string;
   endDate?: string | null;
-  status: 'active' | 'canceled' | 'expired';
+  status: 'active' | 'past_due' | 'canceled' | 'expired';
   plan?: Plan;
   nextRenewalDate?: string | Date;
+  graceUntil?: string | Date | null;
 };
 
 export default function Billing() {
@@ -32,6 +33,7 @@ export default function Billing() {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState<string>('');
 
   const refresh = async () => {
     setLoading(true);
@@ -53,6 +55,31 @@ export default function Billing() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    let timer: any;
+    const updateCountdown = () => {
+      if (sub?.status === 'past_due' && sub.graceUntil) {
+        const end = new Date(sub.graceUntil).getTime();
+        const now = Date.now();
+        const ms = end - now;
+        if (ms <= 0) {
+          setCountdown('0d 0h 0m');
+          return;
+        }
+        const totalMinutes = Math.floor(ms / 60000);
+        const days = Math.floor(totalMinutes / (60 * 24));
+        const hours = Math.floor((totalMinutes % (60 * 24)) / 60);
+        const minutes = totalMinutes % 60;
+        setCountdown(`${days}d ${hours}h ${minutes}m`);
+      } else {
+        setCountdown('');
+      }
+    };
+    updateCountdown();
+    timer = setInterval(updateCountdown, 30000);
+    return () => clearInterval(timer);
+  }, [sub?.status, sub?.graceUntil]);
 
   const onSubscribe = async (planId: number) => {
     setBusy(true);
@@ -114,7 +141,12 @@ export default function Billing() {
         ) : (
           <>
             <section className="mb-8 p-4 card">
-              <h2 className="font-semibold mb-3">Current Subscription</h2>
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold mb-3">Current Subscription</h2>
+                {sub?.status === 'past_due' && (
+                  <span className="px-3 py-1 rounded bg-amber-700 text-white">Past due</span>
+                )}
+              </div>
               {!sub ? (
                 <div className="text-slate-400">You are not subscribed yet.</div>
               ) : (
@@ -137,6 +169,37 @@ export default function Billing() {
                       </div>
                     )}
                   </div>
+                  {sub.status === 'past_due' && sub.graceUntil && (
+                    <div className="mt-2 p-3 rounded bg-amber-900/40 border border-amber-800">
+                      <div className="text-sm text-amber-300">
+                        Payment required. Your subscription will be canceled on{' '}
+                        <strong>{new Date(sub.graceUntil).toLocaleString()}</strong>.
+                      </div>
+                      {countdown && (
+                        <div className="text-xs text-amber-200 mt-1">Time remaining: {countdown}</div>
+                      )}
+                      <div className="mt-2">
+                        <button
+                          onClick={async () => {
+                            try {
+                              setBusy(true);
+                              const res = await api.post('/billing/stripe/portal');
+                              window.location.href = res.data.url;
+                            } catch (e: any) {
+                              const msg = e?.response?.data?.message || 'Failed to open Stripe portal';
+                              toast.show(msg, 'error');
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                          className="px-3 py-1 rounded bg-purple-600 hover:bg-purple-500"
+                          disabled={busy}
+                        >
+                          Update payment method
+                        </button>
+                      </div>
+                    </div>
+                  )}
                   <div className="mt-2">
                     <button onClick={onCancel} disabled={busy} className={`px-3 py-1 rounded bg-red-600 hover:bg-red-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>
                       Cancel subscription

@@ -10,12 +10,13 @@ export class DunningService {
 
   constructor(private prisma: PrismaService, private mail: MailService, private settings: SettingsService) {}
 
-  // Runs hourly to enforce grace period expiry
+  // Runs hourly to enforce grace period expiry and send reminders
   @Cron(CronExpression.EVERY_HOUR)
   async run() {
     const now = new Date();
-    // Find subscriptions that are past_due and graceUntil has passed
-    const pastDue = await this.prisma.subscription.findMany({
+
+    // 1) Cancel subscriptions whose grace period has elapsed
+    const toCancel = await this.prisma.subscription.findMany({
       where: {
         status: 'past_due',
         graceUntil: { lte: now },
@@ -23,7 +24,7 @@ export class DunningService {
       include: { user: true, plan: true },
     });
 
-    for (const s of pastDue) {
+    for (const s of toCancel) {
       await this.prisma.subscription.update({
         where: { id: s.id },
         data: { status: 'canceled', endDate: now },
@@ -39,6 +40,47 @@ export class DunningService {
 
       // Email notice
       await this.mail.sendCanceled(s.user.email, s.plan?.name || undefined);
+    }
+
+    // 2) Send reminder emails for subscriptions whose grace window ends within the next 24 hours and no reminder sent yet
+    const soon = new Date(now.getTime() + 24 * 3600 * 1000);
+    const remindList = await this.prisma.subscription.findMany({
+      where: {
+        status: 'past_due',
+        graceUntil: { gt: now, lte: soon },
+      },
+      include: { user: true, plan: true },
+    });
+
+    for (const s of remindList) {
+      // Check if reminder already sent for this subscription
+      const since = new Date(now.getTime() - 7 * 24 * 3600 * 1000);
+      const recentLogs = await this.prisma.log.findMany({
+        where: {
+          userId: s.userId,
+          action: 'plan_change',
+          timestamp: { gte: since },
+        },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+
+      const alreadyReminded = recentLogs.some((l) => {
+        const ev = (l.metadata as any)?.event;
+        const sid = (l.metadata as any)?.subscriptionId;
+        return ev === 'dunning_reminder' && sid === s.id;
+      });
+
+      if (alreadyReminded) continue;
+
+      await this.mail.sendPastDueReminder(s.user.email, s.plan?.name, s.graceUntil!);
+      await this.prisma.log.create({
+        data: {
+          userId: s.userId,
+          action: 'plan_change',
+          metadata: { event: 'dunning_reminder', subscriptionId: s.id, planId: s.planId, graceUntil: s.graceUntil },
+        },
+      });
     }
   }
 
