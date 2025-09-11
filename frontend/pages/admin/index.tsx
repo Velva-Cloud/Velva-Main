@@ -29,6 +29,10 @@ export default function AdminIndex() {
             <h3 className="font-semibold">Nodes</h3>
             <p className="text-slate-400 text-sm">Manage nodes and capacity.</p>
           </a>
+          <a href="/admin/servers" className="card p-5 hover:bg-slate-800/60">
+            <h3 className="font-semibold">Servers</h3>
+            <p className="text-slate-400 text-sm">Edit, reassign, or delete servers.</p>
+          </a>
           <a href="/admin/users" className="card p-5 hover:bg-slate-800/60">
             <h3 className="font-semibold">Users</h3>
             <p className="text-slate-400 text-sm">Search, update, and delete users.</p>

@@ -103,7 +103,10 @@ export class ServersService {
     return server;
   }
 
-  async update(id: number, data: Partial<{ name: string; status: 'running' | 'stopped' | 'suspended' }>) {
+  async update(
+    id: number,
+    data: Partial<{ name: string; status: 'running' | 'stopped' | 'suspended'; planId: number; nodeId: number; userId: number }>,
+  ) {
     // Validate fields if provided
     if (data.name !== undefined) {
       const n = (data.name || '').trim();
@@ -117,11 +120,29 @@ export class ServersService {
     if (data.status !== undefined && !['running', 'stopped', 'suspended'].includes(data.status)) {
       throw new BadRequestException('Invalid status');
     }
+
+    // Validate foreign keys if provided
+    if (data.planId !== undefined) {
+      const plan = await this.prisma.plan.findUnique({ where: { id: Number(data.planId) } });
+      if (!plan) throw new BadRequestException('Plan not found');
+    }
+    if (data.nodeId !== undefined) {
+      const node = await this.prisma.node.findUnique({ where: { id: Number(data.nodeId) } });
+      if (!node) throw new BadRequestException('Node not found');
+    }
+    if (data.userId !== undefined) {
+      const user = await this.prisma.user.findUnique({ where: { id: Number(data.userId) } });
+      if (!user) throw new BadRequestException('User not found');
+    }
+
     return this.prisma.server.update({
       where: { id },
       data: {
         ...(data.name !== undefined ? { name: data.name } : {}),
         ...(data.status !== undefined ? { status: data.status } : {}),
+        ...(data.planId !== undefined ? { planId: Number(data.planId) } : {}),
+        ...(data.nodeId !== undefined ? { nodeId: Number(data.nodeId) } : {}),
+        ...(data.userId !== undefined ? { userId: Number(data.userId) } : {}),
       },
     });
   }

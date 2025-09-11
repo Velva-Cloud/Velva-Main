@@ -40,7 +40,13 @@ export class ServersController {
   @Patch(':id')
   @Roles(Role.ADMIN, Role.OWNER)
   async update(@Param('id', ParseIntPipe) id: number, @Body() body: UpdateServerDto) {
-    return this.service.update(id, { name: body.name, status: body.status });
+    return this.service.update(id, {
+      name: body.name,
+      status: body.status,
+      planId: body.planId,
+      nodeId: body.nodeId,
+      userId: body.userId,
+    });
   }
 
   // Admin-only delete

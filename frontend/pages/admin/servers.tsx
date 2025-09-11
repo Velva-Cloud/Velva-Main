@@ -42,6 +42,9 @@ export default function AdminServers() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [editName, setEditName] = useState('');
   const [editStatus, setEditStatus] = useState<Server['status']>('stopped');
+  const [editPlanId, setEditPlanId] = useState<number | ''>('');
+  const [editNodeId, setEditNodeId] = useState<number | ''>('');
+  const [editUserId, setEditUserId] = useState<number | ''>('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
 
@@ -76,14 +79,20 @@ export default function AdminServers() {
     setEditingId(s.id);
     setEditName(s.name);
     setEditStatus(s.status);
+    setEditPlanId(s.planId);
+    setEditNodeId(s.nodeId ?? '');
+    setEditUserId(s.userId);
   };
 
   const cancelEdit = () => {
     setEditingId(null);
     setEditName('');
     setEditStatus('stopped');
+    setEditPlanId('');
+    setEditNodeId('');
+    setEditUserId('');
     setSaving(false);
-  };
+ 
 
   const saveEdit = async (s: Server) => {
     if (nameError) {
@@ -92,7 +101,11 @@ export default function AdminServers() {
     }
     setSaving(true);
     try {
-      const res = await api.patch(`/servers/${s.id}`, { name: editName.trim(), status: editStatus });
+      const payload: any = { name: editName.trim(), status: editStatus };
+      if (editPlanId !== '') payload.planId = Number(editPlanId);
+      if (editNodeId !== '') payload.nodeId = Number(editNodeId);
+      if (editUserId !== '') payload.userId = Number(editUserId);
+      const res = await api.patch(`/servers/${s.id}`, payload);
       setServers((list) => list.map((it) => (it.id === s.id ? res.data : it)));
       toast.show('Server updated', 'success');
       cancelEdit();
@@ -223,6 +236,36 @@ export default function AdminServers() {
                                 </option>
                               ))}
                             </select>
+                          </label>
+                          <label className="block">
+                            <div className="text-sm mb-1">Plan ID</div>
+                            <input
+                              type="number"
+                              value={editPlanId}
+                              onChange={(e) => setEditPlanId(e.target.value === '' ? '' : Number(e.target.value))}
+                              className="input"
+                              placeholder="e.g. 1"
+                            />
+                          </label>
+                          <label className="block">
+                            <div className="text-sm mb-1">Node ID</div>
+                            <input
+                              type="number"
+                              value={editNodeId}
+                              onChange={(e) => setEditNodeId(e.target.value === '' ? '' : Number(e.target.value))}
+                              className="input"
+                              placeholder="e.g. 1"
+                            />
+                          </label>
+                          <label className="block">
+                            <div className="text-sm mb-1">User ID (transfer ownership)</div>
+                            <input
+                              type="number"
+                              value={editUserId}
+                              onChange={(e) => setEditUserId(e.target.value === '' ? '' : Number(e.target.value))}
+                              className="input"
+                              placeholder="e.g. 42"
+                            />
                           </label>
                           <div className="md:col-span-3">
                             <button
