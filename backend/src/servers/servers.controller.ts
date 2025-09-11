@@ -30,6 +30,19 @@ export class ServersController {
     return this.service.listForUser(user.userId, page, pageSize);
   }
 
+  @Get(':id')
+  async getOne(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) return null;
+    // Authorization: user can view own; support/admin/owner can view any
+    if (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      // hide existence
+      return null;
+    }
+    return s;
+  }
+
   @Post()
   async create(@Request() req: any, @Body() body: CreateServerDto) {
     const user = req.user as { userId: number };
@@ -49,10 +62,65 @@ export class ServersController {
     });
   }
 
+  // Support/Admin/Owner: set status running/stopped with optional reason
+  @Patch(':id/status')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async setStatus(
+    @Request() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { status: 'running' | 'stopped'; reason?: string },
+  ) {
+    const actor = req.user as { userId: number; role: Role };
+    const reason = actor.role === Role.SUPPORT ? body.reason : body.reason;
+    // For support, require reason
+    if (actor.role === Role.SUPPORT && (!reason || !reason.trim())) {
+      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    }
+    return this.service.setStatus(id, body.status, actor.userId, reason);
+  }
+
   // Admin-only delete
   @Delete(':id')
   @Roles(Role.ADMIN, Role.OWNER)
   async remove(@Param('id', ParseIntPipe) id: number) {
     return this.service.delete(id);
+  }
+
+  // Future daemon hooks (stubs)
+  @Post(':id/provision')
+  @Roles(Role.ADMIN, Role.OWNER)
+  async provision(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const actor = req.user as { userId: number };
+    return this.service.provision(id, actor.userId);
+  }
+
+  @Post(':id/start')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async start(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
+    const actor = req.user as { userId: number; role: Role };
+    if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
+      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    }
+    return this.service.start(id, actor.userId, body.reason);
+  }
+
+  @Post(':id/stop')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async stop(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
+    const actor = req.user as { userId: number; role: Role };
+    if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
+      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    }
+    return this.service.stop(id, actor.userId, body.reason);
+  }
+
+  @Post(':id/restart')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async restart(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
+    const actor = req.user as { userId: number; role: Role };
+    if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
+      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    }
+    return this.service.restart(id, actor.userId, body.reason);
   }
 }

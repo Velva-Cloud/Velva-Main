@@ -224,7 +224,7 @@ export default function Dashboard() {
             <ul className="space-y-3">
               {servers.map(s => (
                 <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
-                  <div className="font-semibold">{s.name}</div>
+                  <div className="font-semibold"><a className="hover:underline" href={`/servers/${s.id}`}>{s.name}</a></div>
                   <div className="text-sm text-slate-300">Status: {s.status} • Plan #{s.planId}</div>
                 </li>
               ))}

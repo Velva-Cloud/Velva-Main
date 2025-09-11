@@ -5,6 +5,27 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function mockIpWithPort(serverId: number) {
+  // Deterministic private IP/port combo based on server id
+  const a = 10;
+  const b = (serverId % 200) + 1;
+  const c = (Math.floor(serverId / 200) % 200) + 1;
+  const d = (Math.floor(serverId / 40000) % 200) + 10;
+  // Common game ports like 25565 (Minecraft) or 27015 (Source)
+  const port = 25000 + ((serverId * 17) % 10000);
+  return `${a}.${b}.${c}.${d}:${port}`;
+}
+
+function mockConsoleOutput(serverName: string, status: string) {
+  return [
+    `[INFO] Bootstrapping service for ${serverName}`,
+    `[INFO] Environment: production`,
+    status === 'running' ? `[INFO] Server started successfully` : `[INFO] Server is currently ${status}`,
+    `[INFO] Listening for connections...`,
+    `[OK] Ready.`,
+  ].join('\n');
+}
+
 @Injectable()
 export class ServersService {
   constructor(private prisma: PrismaService) {}
@@ -33,6 +54,14 @@ export class ServersService {
       this.prisma.server.findMany({ orderBy: { id: 'desc' }, skip: (p - 1) * ps, take: ps }),
     ]);
     return { items, total, page: p, pageSize: ps };
+  }
+
+  async getById(id: number) {
+    const s = await this.prisma.server.findUnique({ where: { id } });
+    if (!s) return null;
+    const ip = mockIpWithPort(s.id);
+    const consoleOut = mockConsoleOutput(s.name, s.status);
+    return { ...s, mockIp: ip, consoleOutput: consoleOut };
   }
 
   async create(userId: number, planId: number, name: string) {
@@ -147,7 +176,47 @@ export class ServersService {
     });
   }
 
+  async setStatus(id: number, status: 'running' | 'stopped', actorUserId?: number, reason?: string) {
+    if (!['running', 'stopped'].includes(status)) {
+      throw new BadRequestException('Invalid status for this operation');
+    }
+    const updated = await this.prisma.server.update({
+      where: { id },
+      data: { status },
+    });
+    await this.prisma.log.create({
+      data: {
+        userId: actorUserId || null,
+        action: 'plan_change',
+        metadata: { event: 'server_status_change', serverId: id, status, reason: reason || null },
+      },
+    });
+    return updated;
+  }
+
   async delete(id: number) {
     return this.prisma.server.delete({ where: { id } });
+  }
+
+  // Stubs for provisioning daemon integration
+  async provision(id: number, actorUserId?: number) {
+    await this.prisma.log.create({
+      data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'provision_request', serverId: id } },
+    });
+    return this.getById(id);
+  }
+
+  async start(id: number, actorUserId?: number, reason?: string) {
+    return this.setStatus(id, 'running', actorUserId, reason);
+  }
+
+  async stop(id: number, actorUserId?: number, reason?: string) {
+    return this.setStatus(id, 'stopped', actorUserId, reason);
+  }
+
+  async restart(id: number, actorUserId?: number, reason?: string) {
+    // For mock: stop then start
+    await this.setStatus(id, 'stopped', actorUserId, reason);
+    return this.setStatus(id, 'running', actorUserId, reason);
   }
 }
