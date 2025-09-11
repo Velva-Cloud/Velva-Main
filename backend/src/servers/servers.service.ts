@@ -52,9 +52,30 @@ export class ServersService {
     }
 
     // Validate user exists to avoid FK violation (e.g., stale session after DB reset)
-    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
     if (!user) {
       throw new BadRequestException('User not found. Please sign out and sign in again.');
+    }
+
+    // Enforce subscription plan and limits:
+    // - Require an active subscription
+    // - Only allow creating servers that match the subscribed plan
+    // - Enforce maxServers (default 1) per plan
+    const activeSub = await this.prisma.subscription.findFirst({
+      where: { userId, status: 'active' },
+      include: { plan: true },
+      orderBy: { id: 'desc' },
+    });
+    if (!activeSub) {
+      throw new BadRequestException('You need an active subscription to create a server.');
+    }
+    if (activeSub.planId !== plan.id) {
+      throw new BadRequestException('Selected server size does not match your subscription.');
+    }
+    const maxServers = Number((activeSub.plan?.resources as any)?.maxServers ?? 1);
+    const existingCount = await this.prisma.server.count({ where: { userId } });
+    if (existingCount >= maxServers) {
+      throw new BadRequestException(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}. You already have ${existingCount}.`);
     }
 
     // Optional uniqueness by user to avoid confusion
