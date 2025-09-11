@@ -102,4 +102,31 @@ export class ServersService {
 
     return server;
   }
+
+  async update(id: number, data: Partial<{ name: string; status: 'running' | 'stopped' | 'suspended' }>) {
+    // Validate fields if provided
+    if (data.name !== undefined) {
+      const n = (data.name || '').trim();
+      if (n.length < 3 || n.length > 32) {
+        throw new BadRequestException('Name must be between 3 and 32 characters');
+      }
+      if (!/^[A-Za-z0-9_-]+$/.test(n)) {
+        throw new BadRequestException('Name can only contain letters, numbers, dash and underscore');
+      }
+    }
+    if (data.status !== undefined && !['running', 'stopped', 'suspended'].includes(data.status)) {
+      throw new BadRequestException('Invalid status');
+    }
+    return this.prisma.server.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.status !== undefined ? { status: data.status } : {}),
+      },
+    });
+  }
+
+  async delete(id: number) {
+    return this.prisma.server.delete({ where: { id } });
+  }
 }
