@@ -51,6 +51,12 @@ export class ServersService {
       throw new BadRequestException('Invalid or inactive plan');
     }
 
+    // Validate user exists to avoid FK violation (e.g., stale session after DB reset)
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!user) {
+      throw new BadRequestException('User not found. Please sign out and sign in again.');
+    }
+
     // Optional uniqueness by user to avoid confusion
     const existsByName = await this.prisma.server.findFirst({
       where: { userId, name: n },
