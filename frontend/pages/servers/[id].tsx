@@ -119,7 +119,11 @@ export default function ServerPage() {
                 </div>
                 <div>
                   <div className="text-sm text-slate-400">Plan</div>
-                  <div className="font-semibold">#{srv.planId}</div>
+                  <div className="font-semibold">{(srv as any).planName ? `${(srv as any).planName} (#${srv.planId})` : `#${srv.planId}`}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400">Node</div>
+                  <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
                 </div>
                 <div>
                   <div className="text-sm text-slate-400">Mock IP</div>
@@ -148,6 +152,53 @@ export default function ServerPage() {
                     <button onClick={() => call('start')} disabled={busy} className={`px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
                     <button onClick={() => call('stop')} disabled={busy} className={`px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
                     <button onClick={() => call('restart')} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
+                    {srv.status !== 'suspended' ? (
+                      <button
+                        onClick={async () => {
+                          if (role === 'SUPPORT' && !reason.trim()) {
+                            toast.show('Reason is required for support actions', 'error');
+                            return;
+                          }
+                          setBusy(true);
+                          try {
+                            await api.post(`/servers/${srv.id}/suspend`, role === 'SUPPORT' ? { reason: reason.trim() } : {});
+                            await fetchServer();
+                            toast.show('Server suspended', 'success');
+                            if (role === 'SUPPORT') setReason('');
+                          } catch (e: any) {
+                            toast.show(e?.response?.data?.message || 'Failed to suspend', 'error');
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        Suspend
+                      </button>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          if (role === 'SUPPORT' && !reason.trim()) {
+                            toast.show('Reason is required for support actions', 'error');
+                            return;
+                          }
+                          setBusy(true);
+                          try {
+                            await api.post(`/servers/${srv.id}/unsuspend`, role === 'SUPPORT' ? { reason: reason.trim() } : {});
+                            await fetchServer();
+                            toast.show('Server unsuspended', 'success');
+                            if (role === 'SUPPORT') setReason('');
+                          } catch (e: any) {
+                            toast.show(e?.response?.data?.message || 'Failed to unsuspend', 'error');
+                          } finally {
+                            setBusy(false);
+                          }
+                        }}
+                        className={`px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}
+                      >
+                        Unsuspend
+                      </button>
+                    )}
                   </div>
                 </div>
               )}

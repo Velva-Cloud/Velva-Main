@@ -59,9 +59,19 @@ export class ServersService {
   async getById(id: number) {
     const s = await this.prisma.server.findUnique({ where: { id } });
     if (!s) return null;
+    const [plan, node] = await this.prisma.$transaction([
+      this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true } }),
+      s.nodeId ? this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : Promise.resolve(null),
+    ]);
     const ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
-    return { ...s, mockIp: ip, consoleOutput: consoleOut };
+    return {
+      ...s,
+      mockIp: ip,
+      consoleOutput: consoleOut,
+      planName: plan?.name ?? null,
+      nodeName: node?.name ?? null,
+    };
   }
 
   async create(userId: number, planId: number, name: string) {
@@ -189,6 +199,36 @@ export class ServersService {
         userId: actorUserId || null,
         action: 'plan_change',
         metadata: { event: 'server_status_change', serverId: id, status, reason: reason || null },
+      },
+    });
+    return updated;
+  }
+
+  async suspend(id: number, actorUserId?: number, reason?: string) {
+    const updated = await this.prisma.server.update({
+      where: { id },
+      data: { status: 'suspended' },
+    });
+    await this.prisma.log.create({
+      data: {
+        userId: actorUserId || null,
+        action: 'plan_change',
+        metadata: { event: 'server_suspended', serverId: id, reason: reason || null },
+      },
+    });
+    return updated;
+  }
+
+  async unsuspend(id: number, actorUserId?: number, reason?: string) {
+    const updated = await this.prisma.server.update({
+      where: { id },
+      data: { status: 'stopped' },
+    });
+    await this.prisma.log.create({
+      data: {
+        userId: actorUserId || null,
+        action: 'plan_change',
+        metadata: { event: 'server_unsuspended', serverId: id, reason: reason || null },
       },
     });
     return updated;

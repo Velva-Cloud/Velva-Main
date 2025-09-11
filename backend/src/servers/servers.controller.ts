@@ -123,4 +123,24 @@ export class ServersController {
     }
     return this.service.restart(id, actor.userId, body.reason);
   }
+
+  @Post(':id/suspend')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async suspend(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
+    const actor = req.user as { userId: number; role: Role };
+    if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
+      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    }
+    return this.service.suspend(id, actor.userId, body.reason);
+  }
+
+  @Post(':id/unsuspend')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async unsuspend(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
+    const actor = req.user as { userId: number; role: Role };
+    if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
+      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    }
+    return this.service.unsuspend(id, actor.userId, body.reason);
+  }
 }
