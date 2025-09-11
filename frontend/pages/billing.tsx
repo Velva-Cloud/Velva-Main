@@ -122,7 +122,7 @@ export default function Billing() {
       <NavBar />
       <main className="max-w-4xl mx-auto px-6 py-10">
         <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-semibold">Billing &amp; Subscription</h1>
+          <h1 className="text-2xl font-semibold">Billing • Choose your server size</h1>
           <a href="/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
         </div>
 
@@ -210,18 +210,24 @@ export default function Billing() {
             </section>
 
             <section>
-              <h2 className="font-semibold mb-3">Available Plans</h2>
+              <h2 className="font-semibold mb-3">Server sizes</h2>
               {plans.length === 0 ? (
                 <div className="text-slate-400">No active plans available.</div>
               ) : (
                 <div className="grid gap-3 md:grid-cols-2">
                   {plans.map((p) => {
                     const isCurrent = sub?.planId === p.id && sub?.status === 'active';
+                    const ramMB = Number(p?.resources?.ramMB) || 0;
+                    const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
+                    const cpu = p?.resources?.cpu;
+                    const disk = p?.resources?.diskGB;
                     return (
                       <div key={p.id} className="p-4 card">
                         <div className="flex items-center justify-between gap-3">
                           <div>
-                            <div className="font-semibold">{p.name}</div>
+                            <div className="font-semibold">
+                              {ramGB ? `${ramGB} GB RAM` : p.name}
+                            </div>
                             <div className="text-sm text-slate-400">${p.pricePerMonth} / mo</div>
                           </div>
                           {isCurrent ? (
@@ -235,6 +241,14 @@ export default function Billing() {
                               {sub ? 'Switch' : 'Subscribe'}
                             </button>
                           )}
+                        </div>
+                        <div className="mt-2 text-sm text-slate-300">
+                          <div className="flex flex-wrap gap-3">
+                            {ramGB ? <span>{ramGB} GB RAM</span> : null}
+                            {cpu ? <span>{cpu} CPU units</span> : null}
+                            {disk ? <span>{disk} GB SSD</span> : null}
+                          </div>
+                          <div className="text-slate-400 mt-1">Install any supported game after creating your server.</div>
                         </div>
                         <div className="flex flex-wrap gap-2 mt-3">
                           <button
@@ -256,9 +270,6 @@ export default function Billing() {
                             Subscribe with Stripe
                           </button>
                         </div>
-                        <pre className="mt-3 bg-slate-800 rounded p-2 text-xs overflow-auto">
-                          {JSON.stringify(p.resources, null, 2)}
-                        </pre>
                       </div>
                     );
                   })}

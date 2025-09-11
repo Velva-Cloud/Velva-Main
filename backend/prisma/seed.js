@@ -18,26 +18,38 @@ async function main() {
     console.log('Seeded default Node');
   }
 
-  // Create a couple of default active plans if none
+  // Seed server-size plans if none exist
   const planCount = await prisma.plan.count();
   if (planCount === 0) {
     await prisma.plan.createMany({
       data: [
         {
-          name: 'Basic',
-          pricePerMonth: '5.00',
-          resources: { cpu: 100, ramMB: 2048, diskGB: 20 },
+          name: 'Server • 4 GB RAM',
+          pricePerMonth: '8.00',
+          resources: { cpu: 200, ramMB: 4096, diskGB: 40 },
           isActive: true,
         },
         {
-          name: 'Pro',
+          name: 'Server • 6 GB RAM',
           pricePerMonth: '12.00',
-          resources: { cpu: 200, ramMB: 4096, diskGB: 50 },
+          resources: { cpu: 300, ramMB: 6144, diskGB: 60 },
+          isActive: true,
+        },
+        {
+          name: 'Server • 8 GB RAM',
+          pricePerMonth: '16.00',
+          resources: { cpu: 400, ramMB: 8192, diskGB: 80 },
+          isActive: true,
+        },
+        {
+          name: 'Server • 16 GB RAM',
+          pricePerMonth: '30.00',
+          resources: { cpu: 800, ramMB: 16384, diskGB: 160 },
           isActive: true,
         },
       ],
     });
-    console.log('Seeded default Plans: Basic, Pro');
+    console.log('Seeded server-size Plans: 4 GB, 6 GB, 8 GB, 16 GB');
   }
 
   console.log('Seed completed');

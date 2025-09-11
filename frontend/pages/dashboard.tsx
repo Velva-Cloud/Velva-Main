@@ -14,6 +14,8 @@ type Server = {
 type Plan = {
   id: number;
   name: string;
+  pricePerMonth?: string;
+  resources?: any;
 };
 
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
@@ -62,7 +64,9 @@ export default function Dashboard() {
       .then(res => {
         const data = res.data as any;
         const list: any[] = Array.isArray(data) ? data : (data?.items ?? []);
-        const normalized = list.map(p => ({ id: p.id, name: p.name })).filter(p => p.id !== undefined);
+        const normalized = list
+          .map(p => ({ id: p.id, name: p.name, pricePerMonth: p.pricePerMonth, resources: p.resources }))
+          .filter(p => p.id !== undefined);
         setPlans(normalized);
         if (normalized.length > 0) setPlanId(normalized[0].id);
       })
@@ -117,12 +121,16 @@ export default function Dashboard() {
             value={planId}
             onChange={e => setPlanId(Number(e.target.value))}
             className="px-3 py-2 rounded bg-slate-800 border border-slate-700"
+            aria-label="Select server size"
           >
-            {plans.map(p => (
-              <option key={p.id} value={p.id}>{p.name}</option>
-            ))}
+            {plans.map(p => {
+              const ramMB = Number((p as any)?.resources?.ramMB) || 0;
+              const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
+              const label = ramGB ? `${ramGB} GB RAM • ${p.pricePerMonth}/mo` : p.name;
+              return <option key={p.id} value={p.id}>{label}</option>;
+            })}
           </select>
-          <button onClick={createServer} disabled={creating} className={`bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded ${creating ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create (mock)'}</button>
+          <button onClick={createServer} disabled={creating} className={`bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded ${creating ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create server'}</button>
           {(err || nameError) && <div className="text-red-400 w-full">{err || nameError}</div>}
         </div>
 
