@@ -4,6 +4,7 @@ import NavBar from '../../components/NavBar';
 import { useRequireSupport } from '../../utils/guards';
 import api from '../../utils/api';
 import SystemStatus from '../../components/SystemStatus';
+import { useToast } from '../../components/Toast';
 
 type Server = {
   id: number;
@@ -18,10 +19,13 @@ type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
 
 export default function SupportServers() {
   useRequireSupport();
+  const toast = useToast();
 
   const [servers, setServers] = useState<Server[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [reason, setReason] = useState('');
 
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -49,6 +53,24 @@ export default function SupportServers() {
     fetchServers();
   }, [page]);
 
+  const act = async (s: Server, action: 'start' | 'stop' | 'restart' | 'suspend' | 'unsuspend') => {
+    if (!reason.trim()) {
+      toast.show('Enter a reason (required for support)', 'error');
+      return;
+    }
+    setBusyId(s.id);
+    try {
+      await api.post(`/servers/${s.id}/${action}`, { reason: reason.trim() });
+      await fetchServers();
+      toast.show(`Server ${action}ed`, 'success');
+      setReason('');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || `Failed to ${action} server`, 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <>
       <Head>
@@ -60,6 +82,16 @@ export default function SupportServers() {
           <h1 className="text-2xl font-semibold">Support • Servers</h1>
           <div className="w-full max-w-sm ml-4">
             <SystemStatus />
+          </div>
+        </div>
+
+        <div className="card p-3 mb-4">
+          <div className="grid gap-3 md:grid-cols-3 items-end">
+            <label className="block md:col-span-2">
+              <div className="text-sm mb-1">Reason (required for actions)</div>
+              <input className="input" value={reason} onChange={e => setReason(e.target.value)} placeholder="Why are you performing this action?" />
+            </label>
+            <div className="text-sm text-slate-400">Click action buttons per-row</div>
           </div>
         </div>
 
@@ -87,7 +119,7 @@ export default function SupportServers() {
                     <div className="font-semibold"><a className="hover:underline" href={`/servers/${s.id}`}>#{s.id} • {s.name}</a></div>
                     <div className="text-sm text-slate-400">user #{s.userId} • plan #{s.planId} • {new Date(s.createdAt).toLocaleString()}</div>
                   </div>
-                  <div className="text-sm">
+                  <div className="flex items-center gap-2">
                     <span className={`inline-block text-xs px-2 py-0.5 rounded-full ${
                         s.status === 'running'
                           ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700'
@@ -95,6 +127,14 @@ export default function SupportServers() {
                           ? 'bg-amber-600/30 text-amber-200 border border-amber-700'
                           : 'bg-slate-600/30 text-slate-300 border border-slate-700'
                       }`}>{s.status}</span>
+                    <button onClick={() => act(s, 'start')} disabled={busyId === s.id} className={`px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 ${busyId === s.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
+                    <button onClick={() => act(s, 'stop')} disabled={busyId === s.id} className={`px-2 py-1 rounded bg-amber-700 hover:bg-amber-600 ${busyId === s.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
+                    <button onClick={() => act(s, 'restart')} disabled={busyId === s.id} className={`px-2 py-1 rounded bg-indigo-700 hover:bg-indigo-600 ${busyId === s.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
+                    {s.status !== 'suspended' ? (
+                      <button onClick={() => act(s, 'suspend')} disabled={busyId === s.id} className={`px-2 py-1 rounded bg-red-700 hover:bg-red-600 ${busyId === s.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Suspend</button>
+                    ) : (
+                      <button onClick={() => act(s, 'unsuspend')} disabled={busyId === s.id} className={`px-2 py-1 rounded bg-emerald-700 hover:bg-emerald-600 ${busyId === s.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Unsuspend</button>
+                    )}
                   </div>
                 </div>
               ))}
