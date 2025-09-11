@@ -55,6 +55,7 @@ model User {
   createdAt          DateTime  @default(now())
   lastLogin          DateTime?
   stripeCustomerId   String?
+  suspended          Boolean   @default(false)
 
   subscriptions Subscription[]
   servers       Server[]

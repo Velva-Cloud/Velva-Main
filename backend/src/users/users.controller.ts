@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -22,7 +22,7 @@ export class UsersController {
     if (!userId) return null;
     const u = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true, email: true, role: true, createdAt: true, lastLogin: true },
+      select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
     });
     return u;
   }
@@ -69,6 +69,36 @@ export class UsersController {
     const actorId = req?.user?.userId ?? null;
     await this.prisma.log.create({
       data: { action: 'plan_change', userId: actorId, metadata: { event: 'user_email_update', targetUserId: id, email: updated.email } },
+    });
+    return updated;
+  }
+
+  @Post(':id/suspend')
+  @Roles(Role.ADMIN, Role.OWNER)
+  async suspend(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const updated = await this.users.suspend(id);
+    const actorId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { action: 'plan_change', userId: actorId, metadata: { event: 'user_suspend', targetUserId: id, reason: body?.reason || null } },
+    });
+    return updated;
+  }
+
+  @Post(':id/unsuspend')
+  @Roles(Role.ADMIN, Role.OWNER)
+  async unsuspend(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { reason?: string },
+    @Req() req: any,
+  ) {
+    const updated = await this.users.unsuspend(id);
+    const actorId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { action: 'plan_change', userId: actorId, metadata: { event: 'user_unsuspend', targetUserId: id, reason: body?.reason || null } },
     });
     return updated;
   }

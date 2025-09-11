@@ -39,6 +39,10 @@ export class ServersService {
       this.prisma.server.findMany({
         where,
         orderBy: { id: 'desc' },
+        include: {
+          plan: { select: { id: true, name: true } },
+          node: { select: { id: true, name: true } },
+        },
         skip: (p - 1) * ps,
         take: ps,
       }),

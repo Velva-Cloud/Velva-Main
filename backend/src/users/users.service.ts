@@ -19,7 +19,7 @@ export class UsersService {
     role?: Role | 'ALL';
     page?: number;
     pageSize?: number;
-  }): Promise<{ items: Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin'>[]; total: number; page: number; pageSize: number }> {
+  }): Promise<{ items: Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin' | 'suspended'>[]; total: number; page: number; pageSize: number }> {
     const where: Prisma.UserWhereInput = {};
     if (params?.search) {
       // Most MySQL collations are case-insensitive by default; drop mode for compatibility
@@ -33,7 +33,7 @@ export class UsersService {
     const [total, items] = await this.prisma.$transaction([
       this.prisma.user.count({ where }),
       this.prisma.user.findMany({
-        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true },
+        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
         where,
         orderBy: { id: 'desc' },
         skip: (p - 1) * ps,
@@ -58,7 +58,7 @@ export class UsersService {
       return await this.prisma.user.update({
         where: { id: userId },
         data: { email: e },
-        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true },
+        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
       });
     } catch (err: any) {
       // P2002 unique constraint failed
@@ -83,5 +83,21 @@ export class UsersService {
 
   async create(data: Prisma.UserCreateInput) {
     return this.prisma.user.create({ data });
+  }
+
+  async suspend(userId: number) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { suspended: true },
+      select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
+    });
+  }
+
+  async unsuspend(userId: number) {
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: { suspended: false },
+      select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
+    });
   }
 }
