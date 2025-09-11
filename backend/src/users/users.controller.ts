@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
+import { Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { UsersService } from './users.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -28,13 +28,17 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async list(
+    @Req() req: any,
     @Query('search') search?: string,
     @Query('role') role?: Role | 'ALL',
     @Query('page') page?: string,
     @Query('pageSize') pageSize?: string,
   ) {
+    const r = req.user?.role as Role | undefined;
+    if (!(r === Role.SUPPORT || r === Role.ADMIN || r === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
     return this.users.findAll({
       search: search || undefined,
       role: role || undefined,

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
 import { ServersService } from './servers.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -64,19 +64,19 @@ export class ServersController {
 
   // Support/Admin/Owner: set status running/stopped with optional reason
   @Patch(':id/status')
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async setStatus(
     @Request() req: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() body: { status: 'running' | 'stopped'; reason?: string },
   ) {
     const actor = req.user as { userId: number; role: Role };
-    const reason = actor.role === Role.SUPPORT ? body.reason : body.reason;
-    // For support, require reason
-    if (actor.role === Role.SUPPORT && (!reason || !reason.trim())) {
-      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+    if (!(actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      throw new ForbiddenException();
     }
-    return this.service.setStatus(id, body.status, actor.userId, reason);
+    if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
+      throw new BadRequestException('Reason is required for support actions');
+    }
+    return this.service.setStatus(id, body.status, actor.userId, body.reason);
   }
 
   // Admin-only delete
@@ -95,51 +95,61 @@ export class ServersController {
   }
 
   @Post(':id/start')
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async start(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
+    if (!(actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
     if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
-      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+      throw new BadRequestException('Reason is required for support actions');
     }
     return this.service.start(id, actor.userId, body.reason);
   }
 
   @Post(':id/stop')
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async stop(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
+    if (!(actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
     if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
-      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+      throw new BadRequestException('Reason is required for support actions');
     }
     return this.service.stop(id, actor.userId, body.reason);
   }
 
   @Post(':id/restart')
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async restart(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
+    if (!(actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
     if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
-      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+      throw new BadRequestException('Reason is required for support actions');
     }
     return this.service.restart(id, actor.userId, body.reason);
   }
 
   @Post(':id/suspend')
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async suspend(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
+    if (!(actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
     if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
-      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+      throw new BadRequestException('Reason is required for support actions');
     }
     return this.service.suspend(id, actor.userId, body.reason);
   }
 
   @Post(':id/unsuspend')
-  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async unsuspend(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
+    if (!(actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      throw new ForbiddenException();
+    }
     if (actor.role === Role.SUPPORT && (!body.reason || !body.reason.trim())) {
-      throw new (require('@nestjs/common').BadRequestException)('Reason is required for support actions');
+      throw new BadRequestException('Reason is required for support actions');
     }
     return this.service.unsuspend(id, actor.userId, body.reason);
   }
