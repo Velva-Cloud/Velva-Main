@@ -50,6 +50,17 @@ export class NodesService {
     });
   }
 
+  async delete(id: number) {
+    const node = await this.prisma.node.findUnique({ where: { id } });
+    if (!node) throw new NotFoundException('Node not found');
+    // Set nodeId to null for servers assigned to this node
+    await this.prisma.$transaction([
+      this.prisma.server.updateMany({ where: { nodeId: id }, data: { nodeId: null } }),
+      this.prisma.node.delete({ where: { id } }),
+    ]);
+    return { ok: true };
+  }
+
   async ping(id: number, port = 80, timeoutMs = 1500) {
     const node = await this.prisma.node.findUnique({ where: { id } });
     if (!node) throw new NotFoundException('Node not found');

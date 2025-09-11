@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { PlansService } from './plans.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -7,11 +7,12 @@ import { RolesGuard } from '../common/roles.guard';
 import { AuthGuard } from '@nestjs/passport';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
+import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('plans')
 @Controller('plans')
 export class PlansController {
-  constructor(private plans: PlansService) {}
+  constructor(private plans: PlansService, private prisma: PrismaService) {}
 
   // Public - list active plans
   @Get()
@@ -32,34 +33,49 @@ export class PlansController {
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(PanelRole.ADMIN, PanelRole.OWNER)
   @Post()
-  async create(@Body() dto: CreatePlanDto) {
+  async create(@Body() dto: CreatePlanDto, @Req() req: any) {
     const resources = dto.resources ? JSON.parse(dto.resources) : {};
-    return this.plans.create({
+    const created = await this.plans.create({
       name: dto.name,
       pricePerMonth: dto.pricePerMonth,
       resources,
       isActive: dto.isActive ?? true,
     });
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'plan_create', planId: created.id } },
+    });
+    return created;
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(PanelRole.ADMIN, PanelRole.OWNER)
   @Patch(':id')
-  async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePlanDto) {
+  async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdatePlanDto, @Req() req: any) {
     const patch: any = {};
     if (dto.name !== undefined) patch.name = dto.name;
     if (dto.pricePerMonth !== undefined) patch.pricePerMonth = dto.pricePerMonth;
     if (dto.resources !== undefined) patch.resources = JSON.parse(dto.resources);
     if (dto.isActive !== undefined) patch.isActive = dto.isActive;
-    return this.plans.update(id, patch);
+    const updated = await this.plans.update(id, patch);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'plan_update', planId: id, patch } },
+    });
+    return updated;
   }
 
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Roles(PanelRole.ADMIN, PanelRole.OWNER)
   @Delete(':id')
-  async remove(@Param('id', ParseIntPipe) id: number) {
-    return this.plans.delete(id);
+  async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const deleted = await this.plans.delete(id);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'plan_delete', planId: id } },
+    });
+    return deleted;
   }
 }

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, ParseIntPipe, Patch, Post, Query, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { NodesService } from './nodes.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
@@ -7,13 +7,15 @@ import { Roles } from '../common/roles.decorator';
 import { Role } from '../common/roles.enum';
 import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
+import { PrismaService } from '../prisma/prisma.service';
+import type { Prisma } from '@prisma/client';
 
 @ApiTags('nodes')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'))
 @Controller('nodes')
 export class NodesController {
-  constructor(private service: NodesService) {}
+  constructor(private service: NodesService, private prisma: PrismaService) {}
 
   @Get()
   async list() {
@@ -24,24 +26,59 @@ export class NodesController {
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN, Role.OWNER)
   @Post()
-  async create(@Body() dto: CreateNodeDto) {
-    return this.service.create(dto);
+  async create(@Body() dto: CreateNodeDto, @Req() req: any) {
+    const node = await this.service.create(dto);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'node_create', nodeId: node.id } },
+    });
+    return node;
   }
 
   // Admin: update node
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN, Role.OWNER)
   @Patch(':id')
-  async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateNodeDto) {
-    return this.service.update(id, dto);
+  async update(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateNodeDto, @Req() req: any) {
+    const updated = await this.service.update(id, dto);
+    const userId = req?.user?.userId ?? null;
+
+    const metaPatch = Object.fromEntries(Object.entries(dto).filter(([, v]) => v !== undefined)) as Prisma.JsonObject;
+
+    await this.prisma.log.create({
+      data: {
+        userId,
+        action: 'plan_change',
+        metadata: { event: 'node_update', nodeId: id, patch: metaPatch } as Prisma.InputJsonValue,
+      },
+    });
+    return updated;
   }
 
   // Admin: toggle status online/offline
   @UseGuards(RolesGuard)
   @Roles(Role.ADMIN, Role.OWNER)
   @Patch(':id/toggle')
-  async toggle(@Param('id', ParseIntPipe) id: number) {
-    return this.service.toggle(id);
+  async toggle(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const toggled = await this.service.toggle(id);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'node_toggle', nodeId: id, status: toggled.status } },
+    });
+    return toggled;
+  }
+
+  // Admin: delete node
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Delete(':id')
+  async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const result = await this.service.delete(id);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'node_delete', nodeId: id } },
+    });
+    return result;
   }
 
   // Admin: ping node

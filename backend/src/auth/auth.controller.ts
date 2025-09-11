@@ -3,32 +3,31 @@ import { AuthService } from './auth.service';
 import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { ApiTags } from '@nestjs/swagger';
-import { PrismaService } from '../prisma/prisma.service';
 import { AuthGuard } from '@nestjs/passport';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
 
+function resolveFrontendBase(req: any): string {
+  const envBase = process.env.FRONTEND_URL;
+  if (envBase) return envBase;
+  const xfProto = (req?.headers?.['x-forwarded-proto'] as string) || req?.protocol || 'http';
+  const xfHost = (req?.headers?.['x-forwarded-host'] as string) || (req?.headers?.host as string) || 'localhost:3000';
+  return `${xfProto}://${xfHost}`;
+}
+
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private auth: AuthService, private prisma: PrismaService) {}
+  constructor(private auth: AuthService) {}
 
   @Post('register')
   async register(@Body() dto: RegisterDto) {
-    const result = await this.auth.register(dto.email, dto.password);
-    await this.prisma.log.create({
-      data: { action: 'login', userId: null, metadata: { event: 'register', email: dto.email } },
-    });
-    return result;
+    return this.auth.register(dto.email, dto.password);
   }
 
   @Post('login')
   async login(@Body() dto: LoginDto) {
-    const result = await this.auth.login(dto.email, dto.password);
-    await this.prisma.log.create({
-      data: { action: 'login', userId: null, metadata: { event: 'login', email: dto.email } },
-    });
-    return result;
+    return this.auth.login(dto.email, dto.password);
   }
 
   @Post('forgot-password')
@@ -54,7 +53,8 @@ export class AuthController {
   async googleCallback(@Req() req: any, @Res() res: any) {
     const { provider, oauthId, email } = req.user as { provider: 'google'; oauthId: string; email?: string };
     const token = await this.auth.handleOAuthLogin(provider, oauthId, email);
-    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?token=${encodeURIComponent(token)}`;
+    const base = resolveFrontendBase(req).replace(/\/$/, '');
+    const redirectUrl = `${base}/auth/callback?token=${encodeURIComponent(token)}`;
     return res.redirect(redirectUrl);
   }
 
@@ -70,7 +70,8 @@ export class AuthController {
   async discordCallback(@Req() req: any, @Res() res: any) {
     const { provider, oauthId, email } = req.user as { provider: 'discord'; oauthId: string; email?: string };
     const token = await this.auth.handleOAuthLogin(provider, oauthId, email);
-    const redirectUrl = `${process.env.FRONTEND_URL || 'http://localhost:3000'}/auth/callback?token=${encodeURIComponent(token)}`;
+    const base = resolveFrontendBase(req).replace(/\/$/, '');
+    const redirectUrl = `${base}/auth/callback?token=${encodeURIComponent(token)}`;
     return res.redirect(redirectUrl);
   }
 }

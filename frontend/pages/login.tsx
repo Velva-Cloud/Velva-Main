@@ -49,6 +49,10 @@ export default function Login() {
             </button>
           </form>
 
+          <div className="mt-3 text-sm">
+            <a href="/forgot-password" className="text-sky-400 hover:underline">Forgot your password?</a>
+          </div>
+
           <div className="mt-6 space-y-3">
             <a href={`${apiBase}/auth/google`} className="btn w-full bg-red-600 hover:bg-red-500">Continue with Google</a>
             <a href={`${apiBase}/auth/discord`} className="btn w-full" style={{ backgroundColor: '#5865F2', color: 'white' }}>Continue with Discord</a>
