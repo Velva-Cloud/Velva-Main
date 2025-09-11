@@ -4,11 +4,14 @@ import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { Role } from '../common/roles.enum';
+import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
+@ApiTags('logs')
+@ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('logs')
 export class LogsController {
-  constructor(private logs: LogsService) {}
+  constructor(private service: LogsService) {}
 
   @Get()
   @Roles(Role.ADMIN, Role.OWNER)
@@ -21,7 +24,7 @@ export class LogsController {
       page: Math.max(1, Math.min(100000, Number(query.page || 1))),
       pageSize: Math.max(1, Math.min(100, Number(query.pageSize || 20))),
     };
-    return this.logs.listAll(filters);
+    return this.service.listAll(filters);
   }
 
   @Get('export')
@@ -36,7 +39,7 @@ export class LogsController {
       page: 1,
       pageSize: 100000,
     };
-    const data = await this.logs.listAll(filters);
+    const data = await this.service.listAll(filters);
     const rows = [
       ['id','userEmail','action','timestamp','metadata'],
       ...data.items.map((l: any) => [
@@ -48,15 +51,5 @@ export class LogsController {
       ]),
     ];
     return rows.map(r => r.map(v => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n');
-  }
-},
-  ) {
-    const page = Number(query.page) || 1;
-    const pageSize = Number(query.pageSize) || 20;
-    const action = query.action || undefined;
-    const q = query.q || undefined;
-    const from = query.from ? new Date(query.from) : undefined;
-    const to = query.to ? new Date(query.to) : undefined;
-    return this.service.listAll({ page, pageSize, action, q, from, to });
   }
 }
