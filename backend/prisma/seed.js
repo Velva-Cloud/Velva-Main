@@ -61,6 +61,21 @@ async function main() {
         data: { name: p.name, pricePerMonth: p.pricePerMonth, resources: p.resources, isActive: true },
       });
       console.log(`Created plan: ${p.name}`);
+    } else {
+      // For the custom plan, backfill missing per-GB price/range if not present
+      if (p.name.includes('Custom') && (!existing.resources?.pricePerGB || !existing.resources?.ramRange)) {
+        await prisma.plan.update({
+          where: { id: existing.id },
+          data: {
+            resources: {
+              ...existing.resources,
+              pricePerGB: existing.resources?.pricePerGB ?? p.resources.pricePerGB,
+              ramRange: existing.resources?.ramRange ?? p.resources.ramRange,
+            },
+          },
+        });
+        console.log('Backfilled custom plan per-GB settings');
+      }
     }
   }
 

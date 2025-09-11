@@ -166,7 +166,23 @@ export default function Billing() {
                   <div>
                     <div className="text-sm text-slate-400">Plan</div>
                     <div className="font-semibold">
-                      {sub.plan?.name || `Plan #${sub.planId}`} • {gbp(sub.plan?.pricePerMonth)} / mo
+                      {(() => {
+                        const resources: any = sub.plan?.resources || {};
+                        const ramRange = resources?.ramRange;
+                        const perGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
+                        if (ramRange && perGB) {
+                          return (
+                            <>
+                              {sub.plan?.name || `Plan #${sub.planId}`} • {gbp(perGB)} per GB / mo
+                            </>
+                          );
+                        }
+                        return (
+                          <>
+                            {sub.plan?.name || `Plan #${sub.planId}`} • {gbp(sub.plan?.pricePerMonth)} / mo
+                          </>
+                        );
+                      })()}
                     </div>
                   </div>
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -349,27 +365,27 @@ export default function Billing() {
                             </button>
                           )}
 
-                          {/* Stripe CTA hidden for custom until per-GB Stripe flow is implemented */}
-                          {!isCustom && (
-                            <button
-                              onClick={async () => {
-                                try {
-                                  setBusy(true);
-                                  const res = await api.post('/billing/stripe/checkout', { planId: p.id });
-                                  window.location.href = res.data.url;
-                                } catch (e: any) {
-                                  const msg = e?.response?.data?.message || 'Failed to create Stripe session';
-                                  toast.show(msg, 'error');
-                                } finally {
-                                  setBusy(false);
-                                }
-                              }}
-                              className="px-4 py-2 rounded border border-indigo-700/40 hover:bg-indigo-900/30 transition shadow"
-                              disabled={busy}
-                            >
-                              Subscribe with Stripe
-                            </button>
-                          )}
+                          {/* Stripe CTA (supports per-GB for custom) */}
+                          <button
+                            onClick={async () => {
+                              try {
+                                setBusy(true);
+                                const payload: any = { planId: p.id };
+                                if (isCustom) payload.customRamGB = selectedGB || minGB || 32;
+                                const res = await api.post('/billing/stripe/checkout', payload);
+                                window.location.href = res.data.url;
+                              } catch (e: any) {
+                                const msg = e?.response?.data?.message || 'Failed to create Stripe session';
+                                toast.show(msg, 'error');
+                              } finally {
+                                setBusy(false);
+                              }
+                            }}
+                            className="px-4 py-2 rounded border border-indigo-700/40 hover:bg-indigo-900/30 transition shadow"
+                            disabled={busy}
+                          >
+                            Subscribe with Stripe
+                          </button>
                         </div>
                       </div>
                     );

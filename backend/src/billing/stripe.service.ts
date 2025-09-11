@@ -33,46 +33,88 @@ export class StripeService {
     let productId = (plan.resources as any)?.stripeProductId as string | undefined;
     let priceId = (plan.resources as any)?.stripePriceId as string | undefined;
 
-    if (productId && priceId) {
-      return { plan, productId, priceId };
+    if (!productId) {
+      const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
+      productId = product.id;
     }
 
-    const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
-    productId = product.id;
+    // Detect custom plan (per-GB pricing)
+    const resources: any = plan.resources || {};
+    const ramRange = resources?.ramRange;
+    const perGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
+    let perGBPriceId = resources?.stripePerGBPriceId as string | undefined;
 
-    const unitAmount = Number(plan.pricePerMonth) * 100;
-    const price = await this.stripe.prices.create({
-      product: productId,
-      unit_amount: Math.round(unitAmount),
-      currency: 'gbp',
-      recurring: { interval: 'month' },
-      metadata: { planId: String(plan.id) },
-    });
-    priceId = price.id;
+    if (ramRange && perGB) {
+      if (!perGBPriceId) {
+        const unitAmount = Math.round(perGB * 100); // pennies per GB
+        const price = await this.stripe.prices.create({
+          product: productId,
+          unit_amount: unitAmount,
+          currency: 'gbp',
+          recurring: { interval: 'month' },
+          metadata: { planId: String(plan.id), perGB: '1' },
+        });
+        perGBPriceId = price.id;
+      }
+      // For custom plans, always use per-GB price id
+      priceId = perGBPriceId;
+    }
+
+    // Fixed monthly price fallback
+    if (!priceId) {
+      const unitAmount = Math.round(Number(plan.pricePerMonth) * 100);
+      const price = await this.stripe.prices.create({
+        product: productId,
+        unit_amount: unitAmount,
+        currency: 'gbp',
+        recurring: { interval: 'month' },
+        metadata: { planId: String(plan.id) },
+      });
+      priceId = price.id;
+    }
 
     // Persist back into resources JSON
-    const resources = { ...(plan.resources as any), stripeProductId: productId, stripePriceId: priceId };
-    await this.prisma.plan.update({ where: { id: plan.id }, data: { resources } });
+    const nextResources = { ...resources, stripeProductId: productId, stripePriceId: priceId, ...(perGBPriceId ? { stripePerGBPriceId: perGBPriceId } : {}) };
+    if (JSON.stringify(nextResources) !== JSON.stringify(resources)) {
+      await this.prisma.plan.update({ where: { id: plan.id }, data: { resources: nextResources } });
+    }
 
-    return { plan: { ...plan, resources }, productId, priceId };
+    return { plan: { ...plan, resources: nextResources }, productId, priceId };
   }
 
-  async createCheckoutSession(userId: number, planId: number, successUrl?: string, cancelUrl?: string) {
+  async createCheckoutSession(userId: number, planId: number, successUrl?: string, cancelUrl?: string, customRamGB?: number) {
     this.ensureStripeEnabled();
     const { plan, priceId } = await this.ensureStripePrice(planId);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new BadRequestException('User not found');
 
+    const resources: any = (plan as any).resources || {};
+    const ramRange = resources?.ramRange;
+    const perGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
+
+    // Validate custom quantity if plan is custom
+    let quantity = 1;
+    if (ramRange && perGB) {
+      const minGB = Math.round((ramRange.minMB || 0) / 1024);
+      const maxGB = Math.round((ramRange.maxMB || 0) / 1024);
+      const q = Number(customRamGB);
+      if (!q || q < minGB || q > maxGB) {
+        throw new BadRequestException(`Please choose a RAM size between ${minGB} and ${maxGB} GB`);
+      }
+      quantity = q;
+    }
+
     const session = await this.stripe.checkout.sessions.create({
       mode: 'subscription',
       payment_method_types: ['card'],
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [{ price: priceId, quantity }],
       customer_email: user.email,
       success_url: successUrl || this.successUrl,
       cancel_url: cancelUrl || this.cancelUrl,
       metadata: {
         userId: String(userId),
         planId: String(planId),
+        ...(ramRange && perGB ? { customRamGB: String(quantity) } : {}),
       },
     });
 
@@ -183,6 +225,9 @@ export class StripeService {
           select: { id: true, planId: true },
         });
 
+        const firstLine = invoice.lines?.data?.[0];
+        const ramGB = firstLine?.quantity || undefined;
+
         await this.prisma.transaction.create({
           data: {
             userId: user.id,
@@ -197,6 +242,7 @@ export class StripeService {
               subscriptionId: typeof sub === 'string' ? sub : sub?.id ?? null,
               customerId: typeof invoice.customer === 'string' ? invoice.customer : (invoice.customer as any)?.id ?? null,
               hostedInvoiceUrl: invoice.hosted_invoice_url,
+              ramGB: ramGB ?? null,
             },
           },
         });
