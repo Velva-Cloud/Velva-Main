@@ -38,6 +38,12 @@ enum LogAction {
   plan_change
 }
 
+enum TransactionStatus {
+  success
+  failed
+  pending
+}
+
 model User {
   id            Int       @id @default(autoincrement())
   email         String    @unique
@@ -121,4 +127,21 @@ model PasswordResetToken {
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id])
+}
+
+model Transaction {
+  id             Int                @id @default(autoincrement())
+  userId         Int
+  subscriptionId Int?
+  planId         Int?
+  amount         Decimal            @db.Decimal(10, 2)
+  currency       String             @default("USD")
+  gateway        String             @default("mock")
+  status         TransactionStatus
+  metadata       Json?
+  createdAt      DateTime           @default(now())
+
+  user         User         @relation(fields: [userId], references: [id])
+  subscription Subscription? @relation(fields: [subscriptionId], references: [id])
+  plan         Plan?        @relation(fields: [planId], references: [id])
 }

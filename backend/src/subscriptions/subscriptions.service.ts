@@ -5,6 +5,32 @@ import { PrismaService } from '../prisma/prisma.service';
 export class SubscriptionsService {
   constructor(private prisma: PrismaService) {}
 
+  async getCurrent(userId: number) {
+    return this.prisma.subscription.findFirst({
+      where: { userId, status: 'active' },
+      orderBy: { id: 'desc' },
+      include: { plan: true },
+    });
+  }
+
+  async cancel(userId: number) {
+    const current = await this.prisma.subscription.findFirst({
+      where: { userId, status: 'active' },
+      orderBy: { id: 'desc' },
+    });
+    if (!current) {
+      throw new BadRequestException('No active subscription to cancel');
+    }
+    await this.prisma.subscription.update({
+      where: { id: current.id },
+      data: { status: 'canceled', endDate: new Date() },
+    });
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'cancel', subscriptionId: current.id, planId: current.planId } },
+    });
+    return { canceled: true };
+  }
+
   async create(userId: number, planId: number) {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan || !plan.isActive) throw new BadRequestException('Invalid plan');
@@ -21,6 +47,20 @@ export class SubscriptionsService {
         planId,
         startDate: new Date(),
         status: 'active',
+      },
+    });
+
+    // Record a mock successful transaction for this subscription
+    await this.prisma.transaction.create({
+      data: {
+        userId,
+        subscriptionId: sub.id,
+        planId: plan.id,
+        amount: plan.pricePerMonth as any,
+        currency: 'USD',
+        gateway: 'mock',
+        status: 'success',
+        metadata: { reason: 'initial_subscription' },
       },
     });
 
