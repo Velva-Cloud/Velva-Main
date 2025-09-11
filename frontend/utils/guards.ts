@@ -25,3 +25,18 @@ export function useRequireAdmin() {
     }
   }, []);
 }
+
+export function useRequireSupport() {
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const token = localStorage.getItem('token');
+    const role = getUserRole();
+    if (!token) {
+      window.location.replace('/login');
+      return;
+    }
+    if (!(role === 'SUPPORT' || role === 'ADMIN' || role === 'OWNER')) {
+      window.location.replace('/dashboard');
+    }
+  }, []);
+}

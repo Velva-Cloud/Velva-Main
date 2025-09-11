@@ -28,7 +28,7 @@ export class UsersController {
   }
 
   @Get()
-  @Roles(Role.ADMIN, Role.OWNER)
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async list(
     @Query('search') search?: string,
     @Query('role') role?: Role | 'ALL',
