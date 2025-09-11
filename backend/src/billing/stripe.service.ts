@@ -209,7 +209,7 @@ export class StripeService {
         await this.mail.sendPaymentSuccess(
           user.email,
           (totalCents / 100).toFixed(2),
-          (invoice.currency || 'usd').toUpperCase(),
+          (invoice.currency || 'gbp').toUpperCase(),
           (invoice.lines?.data?.[0]?.price?.product as any)?.name,
           invoice.hosted_invoice_url || undefined,
         );
