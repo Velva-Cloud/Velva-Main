@@ -24,7 +24,7 @@ export class ServersController {
     const user = req.user as { userId: number; role: Role };
     const page = Number(query.page) || 1;
     const pageSize = Number(query.pageSize) || 20;
-    if (query.all === '1' && (user.role === Role.ADMIN || user.role === Role.OWNER)) {
+    if (query.all === '1' && (user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
       return this.service.listAll(page, pageSize);
     }
     return this.service.listForUser(user.userId, page, pageSize);
