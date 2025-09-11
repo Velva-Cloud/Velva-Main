@@ -32,7 +32,8 @@ export class StripeController {
   // Stripe webhook (no auth)
   @Post('webhooks/stripe')
   async webhooks(@Headers('stripe-signature') signature: string, @Req() req: any) {
-    const event = this.stripe.verifyAndConstructEvent(signature, req.rawBody);
+    const payload = (req as any).rawBody ?? req.body;
+    const event = this.stripe.verifyAndConstructEvent(signature, payload);
     return this.stripe.handleEvent(event);
   }
 }

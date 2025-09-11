@@ -112,7 +112,7 @@ export class StripeService {
     return { url: session.url };
   }
 
-  verifyAndConstructEvent(signature: string | undefined, payload: Buffer) {
+  verifyAndConstructEvent(signature: string | undefined, payload: Buffer | string) {
     this.ensureStripeEnabled();
     if (!signature) throw new BadRequestException('Missing Stripe-Signature header');
     const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;

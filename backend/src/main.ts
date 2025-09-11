@@ -16,8 +16,14 @@ async function bootstrap() {
 
   // Add raw body parser for Stripe webhooks before global json
   app.use('/api/webhooks/stripe', raw({ type: 'application/json' }));
-  // JSON body for the rest
-  app.use(json());
+  // JSON body for the rest, but preserve raw body for Stripe route
+  app.use(json({
+    verify: (req: any, _res, buf) => {
+      if (req.originalUrl === '/api/webhooks/stripe') {
+        req.rawBody = buf;
+      }
+    },
+  }));
 
   // CORS restricted to configured frontend URL
   const frontend = process.env.FRONTEND_URL || 'http://localhost:3000';
