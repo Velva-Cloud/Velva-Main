@@ -129,6 +129,57 @@ export class StripeService {
     return { url: session.url, id: session.id };
   }
 
+  // Admin: set per-GB price and rotate Stripe Price
+  async setPerGBPrice(planId: number, perGB: number, deactivateOld = false) {
+    this.ensureStripeEnabled();
+    const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
+    if (!plan) throw new BadRequestException('Plan not found');
+
+    // Ensure product exists
+    let productId = (plan.resources as any)?.stripeProductId as string | undefined;
+    if (!productId) {
+      const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
+      productId = product.id;
+    }
+
+    const resources: any = plan.resources || {};
+    const oldPerGBPriceId = resources?.stripePerGBPriceId as string | undefined;
+
+    const unitAmount = Math.round(perGB * 100); // pennies/GB
+    const price = await this.stripe.prices.create({
+      product: productId,
+      unit_amount: unitAmount,
+      currency: 'gbp',
+      recurring: { interval: 'month' },
+      metadata: { planId: String(plan.id), perGB: '1' },
+    });
+
+    // Optionally deactivate old price
+    if (deactivateOld && oldPerGBPriceId && oldPerGBPriceId !== price.id) {
+      try {
+        await this.stripe.prices.update(oldPerGBPriceId, { active: false });
+      } catch (e) {
+        this.logger.warn(`Failed to deactivate old per-GB price ${oldPerGBPriceId}: ${(e as any)?.message || e}`);
+      }
+    }
+
+    const nextResources = {
+      ...resources,
+      pricePerGB: perGB,
+      stripeProductId: productId,
+      stripePerGBPriceId: price.id,
+      // point main price id to per-GB for custom plan checkout usage
+      stripePriceId: price.id,
+    };
+
+    const updated = await this.prisma.plan.update({
+      where: { id: plan.id },
+      data: { resources: nextResources },
+    });
+
+    return updated;
+  }
+
   async createPortalSession(userEmail: string) {
     this.ensureStripeEnabled();
 

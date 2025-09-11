@@ -21,6 +21,13 @@ type Paged<T> = {
   pageSize: number;
 };
 
+const gbp = (v: number | string | undefined | null) => {
+  if (v == null) return '—';
+  const num = typeof v === 'string' ? parseFloat(v) : v;
+  if (isNaN(Number(num))) return '—';
+  return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 2 }).format(Number(num));
+};
+
 export default function AdminPlans() {
   useRequireAdmin();
   const toast = useToast();
@@ -147,7 +154,7 @@ export default function AdminPlans() {
               {nameError && <div className="mt-1 text-xs text-red-400">{nameError}</div>}
             </label>
             <label className="block">
-              <div className="text-sm mb-1">Price per month</div>
+              <div className="text-sm mb-1">Price per month (GBP)</div>
               <input value={price} onChange={(e) => setPrice(e.target.value)} className="input" aria-invalid={!!priceError} placeholder="9.99" />
               {priceError && <div className="mt-1 text-xs text-red-400">{priceError}</div>}
             </label>
@@ -193,19 +200,64 @@ export default function AdminPlans() {
           ) : (
             <>
               <div className="space-y-3">
-                {plans.map((p) => (
-                  <div key={p.id} className="p-4 card flex items-center justify-between">
-                    <div>
-                      <div className="font-semibold">{p.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${p.isActive ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-slate-600/30 text-slate-300 border border-slate-700'}`}>{p.isActive ? 'active' : 'inactive'}</span></div>
-                      <div className="text-sm text-slate-400">#{p.id} • ${p.pricePerMonth} / mo</div>
+                {plans.map((p) => {
+                  const isCustom = !!p?.resources?.ramRange;
+                  return (
+                    <div key={p.id} className="p-4 card flex flex-col gap-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <div className="font-semibold">{p.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${p.isActive ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-slate-600/30 text-slate-300 border border-slate-700'}`}>{p.isActive ? 'active' : 'inactive'}</span></div>
+                          <div className="text-sm text-slate-400">#{p.id} • {isCustom ? `${gbp(p?.resources?.pricePerGB || 0)} per GB / mo` : `${gbp(p.pricePerMonth)} / mo`}</div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => toggleActive(p)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">
+                            {p.isActive ? 'Disable' : 'Enable'}
+                          </button>
+                        </div>
+                      </div>
+
+                      {isCustom && (
+                        <div className="grid gap-2 md:grid-cols-3 items-end">
+                          <label className="block md:col-span-2">
+                            <div className="text-sm mb-1">Set price per GB (GBP)</div>
+                            <input
+                              type="number"
+                              step="0.01"
+                              min="0.01"
+                              defaultValue={p.resources?.pricePerGB ?? ''}
+                              onChange={(e) => {
+                                const val = e.target.value;
+                                setPlans((list) => list.map((it) => it.id === p.id ? { ...it, resources: { ...it.resources, pricePerGB: val === '' ? undefined : Number(val) } } : it));
+                              }}
+                              className="input"
+                              placeholder="0.60"
+                            />
+                          </label>
+                          <button
+                            onClick={async () => {
+                              const val = Number(p.resources?.pricePerGB);
+                              if (!val || val <= 0) {
+                                toast.show('Enter a valid price per GB', 'error');
+                                return;
+                              }
+                              try {
+                                const res = await api.post(`/plans/${p.id}/pergb`, { pricePerGB: val, deactivateOld: true });
+                                // Replace plan in list
+                                setPlans((list) => list.map((it) => (it.id === p.id ? res.data : it)));
+                                toast.show('Per-GB price updated and Stripe price created', 'success');
+                              } catch (e: any) {
+                                toast.show(e?.response?.data?.message || 'Failed to update per-GB price', 'error');
+                              }
+                            }}
+                            className="px-3 py-2 rounded bg-indigo-600 hover:bg-indigo-500"
+                          >
+                            Update per-GB & create Stripe price
+                          </button>
+                        </div>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <button onClick={() => toggleActive(p)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">
-                        {p.isActive ? 'Disable' : 'Enable'}
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
               <div className="flex items-center justify-between mt-4">
                 <div />

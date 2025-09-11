@@ -9,5 +9,6 @@ import { SettingsModule } from '../settings/settings.module';
   imports: [PrismaModule, MailModule, SettingsModule],
   providers: [StripeService],
   controllers: [StripeController],
+  exports: [StripeService],
 })
 export class StripeModule {}

@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, ParseIntPipe, Patch, Post, Query, Req, UseGuards, BadRequestException } from '@nestjs/common';
 import { PlansService } from './plans.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -8,11 +8,12 @@ import { AuthGuard } from '@nestjs/passport';
 import { CreatePlanDto } from './dto/create-plan.dto';
 import { UpdatePlanDto } from './dto/update-plan.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { StripeService } from '../billing/stripe.service';
 
 @ApiTags('plans')
 @Controller('plans')
 export class PlansController {
-  constructor(private plans: PlansService, private prisma: PrismaService) {}
+  constructor(private plans: PlansService, private prisma: PrismaService, private stripe: StripeService) {}
 
   // Public - list active plans
   @Get()
@@ -66,6 +67,24 @@ export class PlansController {
       data: { userId, action: 'plan_change', metadata: { event: 'plan_update', planId: id, patch } },
     });
     return updated;
+  }
+
+  // Update pricePerGB and rotate Stripe per-GB price
+  @ApiBearerAuth()
+  @UseGuards(AuthGuard('jwt'), RolesGuard)
+  @Roles(PanelRole.ADMIN, PanelRole.OWNER)
+  @Post(':id/pergb')
+  async setPerGB(@Param('id', ParseIntPipe) id: number, @Body() body: { pricePerGB: number; deactivateOld?: boolean }, @Req() req: any) {
+    const perGB = Number(body?.pricePerGB);
+    if (!perGB || perGB <= 0 || perGB > 100000) {
+      throw new BadRequestException('pricePerGB must be a positive number');
+    }
+    const result = await this.stripe.setPerGBPrice(id, perGB, !!body?.deactivateOld);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'plan_set_pergb', planId: id, pricePerGB: perGB } },
+    });
+    return result;
   }
 
   @ApiBearerAuth()
