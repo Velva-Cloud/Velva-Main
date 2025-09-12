@@ -22,6 +22,8 @@ type NodeRec = {
   capacityDiskMb?: number | null;
 };
 
+type JoinCode = { code: string; expiresAt: string; used?: boolean; usedAt?: string | null; usedNodeId?: number | null };
+
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
 
 export default function AdminNodes() {
@@ -30,9 +32,12 @@ export default function AdminNodes() {
 
   const [nodes, setNodes] = useState<NodeRec[]>([]);
   const [pending, setPending] = useState<NodeRec[]>([]);
+  const [joinCodes, setJoinCodes] = useState<JoinCode[]>([]);
+  const [lastCode, setLastCode] = useState<JoinCode | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyCode, setBusyCode] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -46,6 +51,8 @@ export default function AdminNodes() {
   const [capacity, setCapacity] = useState<number | ''>('');
   const [creating, setCreating] = useState(false);
 
+  const [ttlMinutes, setTtlMinutes] = useState<number>(15);
+
   const nameError = useMemo(() => (name.trim() ? null : 'Name is required'), [name]);
   const locError = useMemo(() => (location.trim() ? null : 'Location is required'), [location]);
   const ipError = useMemo(() => (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) ? null : 'Enter a valid IPv4 address'), [ip]);
@@ -55,14 +62,16 @@ export default function AdminNodes() {
     setLoading(true);
     setErr(null);
     try {
-      const [resAll, resPending] = await Promise.all([
+      const [resAll, resPending, resCodes] = await Promise.all([
         api.get('/nodes', { params: { page, pageSize } }),
         api.get('/nodes', { params: { pending: 1, page: 1, pageSize: 50 } }),
+        api.get('/nodes/join-codes'),
       ]);
       const data = resAll.data as Paged<NodeRec>;
       setNodes(data.items);
       setTotal(data.total);
       setPending((resPending.data as Paged<NodeRec>).items);
+      setJoinCodes((resCodes.data.items || []) as JoinCode[]);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load nodes');
     } finally {
@@ -96,6 +105,30 @@ export default function AdminNodes() {
       toast.show(msg, 'error');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const generateJoinCode = async () => {
+    try {
+      const res = await api.post('/nodes/join-codes', { ttlMinutes });
+      setLastCode(res.data as JoinCode);
+      await fetchNodes();
+      toast.show('Join code generated', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to generate code', 'error');
+    }
+  };
+
+  const revokeCode = async (code: string) => {
+    setBusyCode(code);
+    try {
+      await api.delete(`/nodes/join-codes/${encodeURIComponent(code)}`);
+      await fetchNodes();
+      toast.show('Join code revoked', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to revoke code', 'error');
+    } finally {
+      setBusyCode(null);
     }
   };
 
@@ -176,6 +209,8 @@ export default function AdminNodes() {
     }
   };
 
+  const panelUrl = typeof window !== 'undefined' ? window.location.origin : 'https://your-panel-url';
+
   return (
     <>
       <Head>
@@ -201,6 +236,69 @@ export default function AdminNodes() {
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
+
+        {/* One-time join codes */}
+        <section className="mb-8 p-4 card">
+          <h2 className="font-semibold mb-3">One-time join codes</h2>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <div className="text-sm mb-1">TTL (minutes)</div>
+              <input type="number" min={1} max={1440} value={ttlMinutes} onChange={(e) => setTtlMinutes(Math.max(1, Math.min(1440, Number(e.target.value || 1))))} className="input w-32" />
+            </label>
+            <button onClick={generateJoinCode} className="btn btn-primary">Generate code</button>
+          </div>
+
+          {lastCode && (
+            <div className="mt-4">
+              <div className="text-sm text-slate-400 mb-2">Latest code (expires {new Date(lastCode.expiresAt).toLocaleString()}):</div>
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-2 rounded bg-slate-800 border border-slate-700 font-mono">{lastCode.code}</div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(lastCode.code)}
+                  className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                >
+                  Copy code
+                </button>
+              </div>
+              <div className="mt-3 text-sm text-slate-400">One-liner for your node:</div>
+              <pre className="mt-2 p-3 rounded bg-slate-900 border border-slate-800 text-xs overflow-x-auto">
+{`docker run -d --name vc-agent --restart=always \\
+  --network host \\
+  -v /var/run/docker.sock:/var/run/docker.sock \\
+  -v /opt/vc-agent/certs:/certs \\
+  -e PANEL_URL=${panelUrl} \\
+  -e JOIN_CODE=${lastCode.code} \\
+  ghcr.io/OWNER/velvacloud-daemon:latest`}
+              </pre>
+              <button
+                onClick={() => {
+                  const cmd = `docker run -d --name vc-agent --restart=always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /opt/vc-agent/certs:/certs -e PANEL_URL=${panelUrl} -e JOIN_CODE=${lastCode.code} ghcr.io/OWNER/velvacloud-daemon:latest`;
+                  navigator.clipboard.writeText(cmd);
+                  toast.show('Command copied', 'success');
+                }}
+                className="mt-2 px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+              >
+                Copy command
+              </button>
+              <div className="mt-2 text-xs text-slate-500">Replace OWNER with your GitHub user/org if your image is private or differently named.</div>
+            </div>
+          )}
+
+          {joinCodes.length > 0 && (
+            <div className="mt-6">
+              <div className="text-sm font-semibold mb-2">Active join codes</div>
+              <div className="space-y-2">
+                {joinCodes.map((c) => (
+                  <div key={c.code} className="flex items-center justify-between p-2 rounded border border-slate-800 bg-slate-900/50">
+                    <div className="font-mono">{c.code}</div>
+                    <div className="text-sm text-slate-400">expires {new Date(c.expiresAt).toLocaleString()}</div>
+                    <button onClick={() => revokeCode(c.code)} disabled={busyCode === c.code} className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyCode === c.code ? 'opacity-60 cursor-not-allowed' : ''}`}>Revoke</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
 
         {/* Pending approvals */}
         {pending.length > 0 && (

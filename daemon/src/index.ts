@@ -13,6 +13,7 @@ const PORT = Number(process.env.DAEMON_PORT || 9443);
 const CERTS_DIR = process.env.CERTS_DIR || '/certs';
 const PANEL_URL = process.env.PANEL_URL || '';
 const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET || '';
+const JOIN_CODE = process.env.JOIN_CODE || '';
 const PUBLIC_IP_ENV = process.env.PUBLIC_IP || '';
 
 const CERT_PATH = process.env.DAEMON_TLS_CERT || path.join(CERTS_DIR, 'agent.crt');
@@ -62,8 +63,8 @@ function signMessage(privateKeyPem: string, message: string): string {
 async function bootstrapIfNeeded(): Promise<void> {
   const { cert, key, ca } = loadTls();
   if (cert && key && ca) return;
-  if (!PANEL_URL || !REGISTRATION_SECRET) {
-    console.error('TLS files missing and PANEL_URL/REGISTRATION_SECRET not set. Cannot bootstrap.');
+  if (!PANEL_URL || (!JOIN_CODE && !REGISTRATION_SECRET)) {
+    console.error('TLS files missing and PANEL_URL plus JOIN_CODE or REGISTRATION_SECRET not set. Cannot bootstrap.');
     process.exit(1);
   }
   try {
@@ -109,12 +110,13 @@ async function bootstrapIfNeeded(): Promise<void> {
       csrPem,
     };
 
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (JOIN_CODE) headers['x-join-code'] = JOIN_CODE;
+    else headers['x-registration-secret'] = REGISTRATION_SECRET;
+
     const regRes = await fetch(`${PANEL_URL.replace(/\/+$/, '')}/nodes/agent/register`, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'x-registration-secret': REGISTRATION_SECRET,
-      },
+      headers,
       body: JSON.stringify(registerBody),
     });
     if (!regRes.ok) {
@@ -146,14 +148,12 @@ async function bootstrapIfNeeded(): Promise<void> {
         fs.writeFileSync(CERT_PATH, data.nodeCertPem, { mode: 0o644 });
         fs.writeFileSync(CA_PATH, data.caCertPem, { mode: 0o644 });
         nonce = data.nonce;
-        // save nonce for heartbeat
         fs.writeFileSync(path.join(CERTS_DIR, 'nonce'), nonce, { mode: 0o600 });
         fs.writeFileSync(path.join(CERTS_DIR, 'nodeId'), String(reg.nodeId), { mode: 0o600 });
         approved = true;
         break;
       } else {
         await new Promise((r) => setTimeout(r, 3000));
-        // get a fresh nonce to sign next time if panel rotated it
         if (data?.nonce) {
           nonce = data.nonce;
         }
@@ -324,24 +324,3 @@ async function startHeartbeat() {
   startHttpsServer();
   startHeartbeat();
 })();
-
-const PORT = Number(process.env.DAEMON_PORT || 9443);
-
-// TLS setup
-const cert = process.env.DAEMON_TLS_CERT && fs.existsSync(process.env.DAEMON_TLS_CERT) ? fs.readFileSync(process.env.DAEMON_TLS_CERT) : Buffer.from(process.env.DAEMON_TLS_CERT || '', 'utf8');
-const key = process.env.DAEMON_TLS_KEY && fs.existsSync(process.env.DAEMON_TLS_KEY) ? fs.readFileSync(process.env.DAEMON_TLS_KEY) : Buffer.from(process.env.DAEMON_TLS_KEY || '', 'utf8');
-const ca = process.env.DAEMON_TLS_CA && fs.existsSync(process.env.DAEMON_TLS_CA) ? fs.readFileSync(process.env.DAEMON_TLS_CA) : Buffer.from(process.env.DAEMON_TLS_CA || '', 'utf8');
-
-if (!cert || !key || !ca || (cert.length === 0 || key.length === 0 || ca.length === 0)) {
-  console.error('TLS certificates not configured. Please set DAEMON_TLS_CERT, DAEMON_TLS_KEY, DAEMON_TLS_CA.');
-  process.exit(1);
-}
-
-const server = https.createServer(
-  { cert, key, ca, requestCert: true, rejectUnauthorized: true },
-  app,
-);
-
-server.listen(PORT, () => {
-  console.log(`Daemon listening on https://0.0.0.0:${PORT} (mTLS required)`);
-});

@@ -3,11 +3,7 @@ import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { PkiService } from '../common/pki.service';
 
-function randomNonce() {
-  return Array.from(crypto.getRandomValues(new Uint8Array(16))).map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-// Node.js < 19 workaround
+// Node.js < 19 workaround for crypto.getRandomValues
 import * as nodeCrypto from 'crypto';
 function randomNonceNode() {
   return nodeCrypto.randomBytes(16).toString('hex');
@@ -18,10 +14,11 @@ function randomNonceNode() {
 export class NodesAgentController {
   constructor(private prisma: PrismaService, private pki: PkiService) {}
 
-  @ApiOperation({ summary: 'Daemon registration' })
+  @ApiOperation({ summary: 'Daemon registration (supports one-time join codes)' })
   @Post('register')
   async register(
     @Headers('x-registration-secret') secret: string | undefined,
+    @Headers('x-join-code') joinCodeHeader: string | undefined,
     @Body()
     body: {
       name?: string;
@@ -32,13 +29,26 @@ export class NodesAgentController {
       csrPem: string;
     },
   ) {
-    const REG = process.env.NODE_REGISTRATION_SECRET || '';
-    if (!REG) throw new BadRequestException('Registration not enabled');
-    if (!secret || secret !== REG) throw new BadRequestException('Invalid registration secret');
     if (!body || !body.apiUrl || !body.csrPem) throw new BadRequestException('Missing apiUrl or csrPem');
 
+    // Prefer one-time join code if provided
+    let joinCode: { id: number; code: string } | null = null;
+    if (joinCodeHeader) {
+      const now = new Date();
+      const jc = await this.prisma.nodeJoinCode.findUnique({ where: { code: joinCodeHeader } });
+      if (!jc || jc.used || jc.expiresAt <= now) {
+        throw new BadRequestException('Invalid or expired join code');
+      }
+      joinCode = { id: jc.id, code: jc.code };
+    } else {
+      // Fallback to static registration secret (legacy)
+      const REG = process.env.NODE_REGISTRATION_SECRET || '';
+      if (!REG) throw new BadRequestException('Registration not enabled');
+      if (!secret || secret !== REG) throw new BadRequestException('Invalid registration secret');
+    }
+
     const fingerprint = this.pki.fingerprintFromCsr(body.csrPem);
-    const nonce = (globalThis.crypto && (randomNonce as any)()) || randomNonceNode();
+    const nonce = randomNonceNode();
 
     // Either update existing by apiUrl/fingerprint or create new
     const existing = await this.prisma.node.findFirst({
@@ -87,8 +97,16 @@ export class NodesAgentController {
       });
     }
 
+    // Consume join code if used
+    if (joinCode) {
+      await this.prisma.nodeJoinCode.update({
+        where: { id: joinCode.id },
+        data: { used: true, usedAt: new Date(), usedNodeId: node.id },
+      });
+    }
+
     await this.prisma.log.create({
-      data: { userId: null, action: 'plan_change', metadata: { event: 'node_register', nodeId: node.id, apiUrl: body.apiUrl } },
+      data: { userId: null, action: 'plan_change', metadata: { event: 'node_register', nodeId: node.id, apiUrl: body.apiUrl, method: joinCode ? 'join_code' : 'secret' } },
     });
 
     return { nodeId: node.id, approved: node.approved, nonce: node.registrationNonce };
@@ -105,20 +123,14 @@ export class NodesAgentController {
   ) {
     const node = await this.prisma.node.findUnique({ where: { id: Number(body.nodeId) } });
     if (!node || !node.csrPem || !node.registrationNonce) throw new BadRequestException('Invalid node');
-    // Verify signature over nonce using CSR public key
     const ok = this.pki.verifySignature(node.csrPem, node.registrationNonce, body.signatureBase64);
     if (!ok) throw new BadRequestException('Signature verification failed');
 
-    if (!node.approved) {
-      return { approved: false };
-    }
+    if (!node.approved) return { approved: false };
 
     const caCertPem = this.pki.getCaCertPem();
-    if (!node.nodeCertPem) {
-      throw new BadRequestException('Node is approved but certificate is not ready yet');
-    }
+    if (!node.nodeCertPem) throw new BadRequestException('Node is approved but certificate is not ready yet');
 
-    // rotate nonce
     const nextNonce = randomNonceNode();
     await this.prisma.node.update({ where: { id: node.id }, data: { registrationNonce: nextNonce } });
 

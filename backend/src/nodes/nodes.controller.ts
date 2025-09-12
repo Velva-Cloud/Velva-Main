@@ -10,6 +10,7 @@ import { UpdateNodeDto } from './dto/update-node.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type { Prisma } from '@prisma/client';
 import { PkiService } from '../common/pki.service';
+import * as crypto from 'crypto';
 
 @ApiTags('nodes')
 @ApiBearerAuth()
@@ -37,6 +38,59 @@ export class NodesController {
       data: { userId, action: 'plan_change', metadata: { event: 'node_create', nodeId: node.id } },
     });
     return node;
+  }
+
+  // Admin: generate one-time join code
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post('join-codes')
+  async generateJoinCode(@Body() body: { ttlMinutes?: number }, @Req() req: any) {
+    const ttl = Math.min(1440, Math.max(1, Number(body?.ttlMinutes || 15))); // 1..1440 minutes
+    const expiresAt = new Date(Date.now() + ttl * 60 * 1000);
+    const raw = crypto.randomBytes(8).toString('hex').toUpperCase(); // 16 hex chars
+    const code = `${raw.slice(0, 4)}-${raw.slice(4, 8)}-${raw.slice(8, 12)}-${raw.slice(12, 16)}`;
+
+    const rec = await this.prisma.nodeJoinCode.create({
+      data: {
+        code,
+        expiresAt,
+        createdById: req?.user?.userId ?? null,
+      },
+    });
+
+    await this.prisma.log.create({
+      data: { userId: req?.user?.userId ?? null, action: 'plan_change', metadata: { event: 'join_code_create', code: rec.code, expiresAt } },
+    });
+
+    return { code: rec.code, expiresAt: rec.expiresAt.toISOString() };
+  }
+
+  // Admin: list join codes
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Get('join-codes')
+  async listJoinCodes(@Query('includeUsed') includeUsed?: string) {
+    const now = new Date();
+    const where: Prisma.NodeJoinCodeWhereInput = includeUsed === '1' ? {} : { used: false, expiresAt: { gt: now } };
+    const items = await this.prisma.nodeJoinCode.findMany({ where, orderBy: { id: 'desc' }, take: 100 });
+    return { items };
+  }
+
+  // Admin: revoke a join code
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Delete('join-codes/:code')
+  async revokeJoinCode(@Param('code') code: string, @Req() req: any) {
+    const jc = await this.prisma.nodeJoinCode.findUnique({ where: { code } });
+    if (!jc) return { ok: true };
+    await this.prisma.nodeJoinCode.update({
+      where: { code },
+      data: { used: true, usedAt: new Date() },
+    });
+    await this.prisma.log.create({
+      data: { userId: req?.user?.userId ?? null, action: 'plan_change', metadata: { event: 'join_code_revoke', code } },
+    });
+    return { ok: true };
   }
 
   // Admin: approve a pending node (sign CSR and mark approved)
