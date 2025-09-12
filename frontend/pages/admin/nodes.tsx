@@ -411,6 +411,21 @@ export default function AdminNodes() {
                           Edit
                         </button>
                         <button
+                          onClick={() => {
+                            const val = prompt('Set capacity (max servers)', String(n.capacity));
+                            if (val === null) return;
+                            const num = Number(val);
+                            if (!Number.isInteger(num) || num < 1) {
+                              toast.show('Capacity must be a positive integer', 'error');
+                              return;
+                            }
+                            saveInline(n.id, { capacity: num });
+                          }}
+                          className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                        >
+                          Set capacity
+                        </button>
+                        <button
                           onClick={async () => {
                             if (!confirm('Delete this node? Servers assigned to it will be detached.')) return;
                             setBusyId(n.id);
