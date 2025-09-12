@@ -15,6 +15,13 @@ function loadPEM(value?: string) {
   return Buffer.from(value, 'utf8');
 }
 
+function getTimeoutMs(): number {
+  const v = Number(process.env.AGENT_HTTP_TIMEOUT_MS || '');
+  if (Number.isFinite(v) && v >= 5000 && v <= 300000) return v;
+  // Default to 60s to accommodate first-time image pulls on small nodes
+  return 60000;
+}
+
 @Injectable()
 export class AgentClientService {
   private readonly logger = new Logger(AgentClientService.name);
@@ -37,7 +44,7 @@ export class AgentClientService {
     }
 
     const agent = new https.Agent({ ca, cert, key, rejectUnauthorized: true });
-    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: 15000 });
+    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs() });
     this.clients.set(url, client);
     return client;
   }
