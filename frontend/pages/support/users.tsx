@@ -62,7 +62,7 @@ export default function SupportUsers() {
       <NavBar />
       <main className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Support • Users (read-only)</h1>
+          <h1 className="text-2xl font-semibold">Support • Users</h1>
           <div className="w-full max-w-sm ml-4">
             <SystemStatus />
           </div>
