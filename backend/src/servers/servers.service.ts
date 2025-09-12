@@ -33,6 +33,12 @@ export class ServersService {
 
   constructor(private prisma: PrismaService, private agent: AgentClientService) {}
 
+  private async nodeBaseUrl(nodeId?: number | null): Promise<string | undefined> {
+    if (!nodeId) return process.env.DAEMON_URL; // fallback to global
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { apiUrl: true } });
+    return node?.apiUrl || process.env.DAEMON_URL;
+  }
+
   async listForUser(userId: number, page = 1, pageSize = 20) {
     const p = clamp(page, 1, 100000);
     const ps = clamp(pageSize, 1, 100);
@@ -172,7 +178,8 @@ export class ServersService {
       const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
       const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
       const image = (resources.image as string) || 'nginx:alpine';
-      await this.agent.provision({ serverId: server.id, name: n, image, cpu, ramMB });
+      const baseURL = await this.nodeBaseUrl(chosen.id);
+      await this.agent.provision(baseURL, { serverId: server.id, name: n, image, cpu, ramMB });
       await this.prisma.log.create({
         data: { userId, action: 'plan_change', metadata: { event: 'provision_ok', serverId: server.id, nodeId: chosen.id } },
       });
@@ -237,10 +244,12 @@ export class ServersService {
 
     // Call agent
     try {
+      const s = await this.prisma.server.findUnique({ where: { id }, select: { nodeId: true } });
+      const baseURL = await this.nodeBaseUrl(s?.nodeId);
       if (status === 'running') {
-        await this.agent.start(id);
+        await this.agent.start(baseURL, id);
       } else {
-        await this.agent.stop(id);
+        await this.agent.stop(baseURL, id);
       }
     } catch (e) {
       // still update DB to reflect requested state, but log failure
@@ -295,7 +304,9 @@ export class ServersService {
 
   async delete(id: number) {
     try {
-      await this.agent.delete(id);
+      const s = await this.prisma.server.findUnique({ where: { id }, select: { nodeId: true } });
+      const baseURL = await this.nodeBaseUrl(s?.nodeId);
+      await this.agent.delete(baseURL, id);
     } catch {
       // ignore agent failure on delete
     }
@@ -312,7 +323,8 @@ export class ServersService {
     const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
     const resources: any = plan?.resources || {};
     try {
-      await this.agent.provision({
+      const baseURL = await this.nodeBaseUrl(s.nodeId);
+      await this.agent.provision(baseURL, {
         serverId: s.id,
         name: s.name,
         image: (resources.image as string) || 'nginx:alpine',
@@ -340,7 +352,9 @@ export class ServersService {
 
   async restart(id: number, actorUserId?: number, reason?: string) {
     try {
-      await this.agent.restart(id);
+      const s = await this.prisma.server.findUnique({ where: { id }, select: { nodeId: true } });
+      const baseURL = await this.nodeBaseUrl(s?.nodeId);
+      await this.agent.restart(baseURL, id);
     } catch (e) {
       await this.prisma.log.create({
         data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'agent_action_failed', serverId: id, op: 'restart', reason: reason || null } },

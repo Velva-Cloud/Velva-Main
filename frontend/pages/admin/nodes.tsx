@@ -13,6 +13,13 @@ type NodeRec = {
   ip: string;
   status: 'online' | 'offline';
   capacity: number;
+  approved?: boolean;
+  apiUrl?: string | null;
+  publicIp?: string | null;
+  lastSeenAt?: string | null;
+  capacityCpuCores?: number | null;
+  capacityMemoryMb?: number | null;
+  capacityDiskMb?: number | null;
 };
 
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
@@ -22,6 +29,7 @@ export default function AdminNodes() {
   const toast = useToast();
 
   const [nodes, setNodes] = useState<NodeRec[]>([]);
+  const [pending, setPending] = useState<NodeRec[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
@@ -47,10 +55,14 @@ export default function AdminNodes() {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get('/nodes', { params: { page, pageSize } });
-      const data = res.data as Paged<NodeRec>;
+      const [resAll, resPending] = await Promise.all([
+        api.get('/nodes', { params: { page, pageSize } }),
+        api.get('/nodes', { params: { pending: 1, page: 1, pageSize: 50 } }),
+      ]);
+      const data = resAll.data as Paged<NodeRec>;
       setNodes(data.items);
       setTotal(data.total);
+      setPending((resPending.data as Paged<NodeRec>).items);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load nodes');
     } finally {
@@ -137,6 +149,33 @@ export default function AdminNodes() {
     }
   };
 
+  const approve = async (id: number) => {
+    setBusyId(id);
+    try {
+      await api.post(`/nodes/${id}/approve`);
+      toast.show('Node approved', 'success');
+      await fetchNodes();
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to approve', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const deny = async (id: number) => {
+    if (!confirm('Deny (delete) this pending node?')) return;
+    setBusyId(id);
+    try {
+      await api.post(`/nodes/${id}/deny`);
+      toast.show('Node denied', 'success');
+      await fetchNodes();
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to deny', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   return (
     <>
       <Head>
@@ -162,6 +201,34 @@ export default function AdminNodes() {
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
+
+        {/* Pending approvals */}
+        {pending.length > 0 && (
+          <section className="mb-8 p-4 card">
+            <h2 className="font-semibold mb-3">Pending approvals</h2>
+            <div className="space-y-3">
+              {pending.map((n) => (
+                <div key={n.id} className="p-3 rounded border border-slate-800 bg-slate-900/50">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">#{n.id} {n.name || 'New node'}</div>
+                      <div className="text-sm text-slate-400">{n.location || 'Unknown'} • API {n.apiUrl || '—'} • Public IP {n.publicIp || '—'}</div>
+                      {(n.capacityCpuCores || n.capacityMemoryMb || n.capacityDiskMb) ? (
+                        <div className="text-xs text-slate-500 mt-1">
+                          CPU {n.capacityCpuCores ?? '—'} • RAM {n.capacityMemoryMb ?? '—'} MB • Disk {n.capacityDiskMb ?? '—'} MB
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => approve(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Approve</button>
+                      <button onClick={() => deny(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Deny</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section id="create-node" className="mb-8 p-4 card">
           <h2 className="font-semibold mb-3">Add Node</h2>
@@ -222,8 +289,13 @@ export default function AdminNodes() {
                   <div key={n.id} className="p-4 card">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <div className="font-semibold">{n.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${n.status === 'online' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-red-600/30 text-red-300 border border-red-700'}`}>{n.status}</span></div>
+                        <div className="font-semibold">
+                          {n.name}
+                          <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${n.status === 'online' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-red-600/30 text-red-300 border border-red-700'}`}>{n.status}</span>
+                          {n.approved === false ? <span className="ml-2 inline-block text-xs px-2 py-0.5 rounded-full bg-amber-600/30 text-amber-200 border border-amber-700">pending</span> : null}
+                        </div>
                         <div className="text-sm text-slate-400">#{n.id} • {n.location} • {n.ip} • capacity {n.capacity}</div>
+                        <div className="text-xs text-slate-500 mt-1">API: {n.apiUrl || '—'} • Last seen: {n.lastSeenAt ? new Date(n.lastSeenAt).toLocaleString() : '—'}</div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button onClick={() => ping(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Ping</button>
