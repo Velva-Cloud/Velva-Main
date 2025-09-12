@@ -1,5 +1,6 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import { AgentClientService } from './agent-client.service';
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -28,7 +29,9 @@ function mockConsoleOutput(serverName: string, status: string) {
 
 @Injectable()
 export class ServersService {
-  constructor(private prisma: PrismaService) {}
+  private readonly logger = new Logger(ServersService.name);
+
+  constructor(private prisma: PrismaService, private agent: AgentClientService) {}
 
   async listForUser(userId: number, page = 1, pageSize = 20) {
     const p = clamp(page, 1, 100000);
@@ -63,7 +66,7 @@ export class ServersService {
   async getById(id: number) {
     const s = await this.prisma.server.findUnique({ where: { id } });
     if (!s) return null;
-    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true } });
+    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true, resources: true } });
     const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
     const ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
@@ -128,18 +131,57 @@ export class ServersService {
       throw new BadRequestException('You already have a server with that name');
     }
 
+    // Select a node based on capacity (capacity = max server slots for now)
+    const candidates = await this.prisma.node.findMany({
+      where: { status: 'online' as any },
+      select: { id: true, capacity: true },
+      orderBy: { id: 'asc' },
+    });
+    if (!candidates.length) {
+      throw new BadRequestException('No online nodes available');
+    }
+    let chosen: { id: number; capacity: number } | null = null;
+    for (const node of candidates) {
+      const count = await this.prisma.server.count({ where: { nodeId: node.id } });
+      if (count < (node.capacity || 0)) {
+        chosen = node;
+        break;
+      }
+    }
+    if (!chosen) {
+      throw new BadRequestException('Insufficient node capacity');
+    }
+
     const server = await this.prisma.server.create({
       data: {
         userId,
         planId: plan.id,
         name: n,
         status: 'stopped',
+        nodeId: chosen.id,
       },
     });
 
     await this.prisma.log.create({
-      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id } },
+      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosen.id } },
     });
+
+    // Attempt to provision container on the daemon (synchronously for now)
+    try {
+      const resources: any = plan.resources || {};
+      const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
+      const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
+      const image = (resources.image as string) || 'nginx:alpine';
+      await this.agent.provision({ serverId: server.id, name: n, image, cpu, ramMB });
+      await this.prisma.log.create({
+        data: { userId, action: 'plan_change', metadata: { event: 'provision_ok', serverId: server.id, nodeId: chosen.id } },
+      });
+    } catch (e: any) {
+      await this.prisma.log.create({
+        data: { userId, action: 'plan_change', metadata: { event: 'provision_failed', serverId: server.id, error: e?.message || String(e) } },
+      });
+      // keep server record; admin/support can retry
+    }
 
     return server;
   }
@@ -192,6 +234,21 @@ export class ServersService {
     if (!['running', 'stopped'].includes(status)) {
       throw new BadRequestException('Invalid status for this operation');
     }
+
+    // Call agent
+    try {
+      if (status === 'running') {
+        await this.agent.start(id);
+      } else {
+        await this.agent.stop(id);
+      }
+    } catch (e) {
+      // still update DB to reflect requested state, but log failure
+      await this.prisma.log.create({
+        data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'agent_action_failed', serverId: id, op: status, reason: reason || null } },
+      });
+    }
+
     const updated = await this.prisma.server.update({
       where: { id },
       data: { status },
@@ -237,14 +294,39 @@ export class ServersService {
   }
 
   async delete(id: number) {
+    try {
+      await this.agent.delete(id);
+    } catch {
+      // ignore agent failure on delete
+    }
     return this.prisma.server.delete({ where: { id } });
   }
 
-  // Stubs for provisioning daemon integration
+  // Provision via agent
   async provision(id: number, actorUserId?: number) {
     await this.prisma.log.create({
       data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'provision_request', serverId: id } },
     });
+    const s = await this.prisma.server.findUnique({ where: { id } });
+    if (!s) throw new BadRequestException('Server not found');
+    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
+    const resources: any = plan?.resources || {};
+    try {
+      await this.agent.provision({
+        serverId: s.id,
+        name: s.name,
+        image: (resources.image as string) || 'nginx:alpine',
+        cpu: typeof resources.cpu === 'number' ? resources.cpu : undefined,
+        ramMB: typeof resources.ramMB === 'number' ? resources.ramMB : undefined,
+      });
+      await this.prisma.log.create({
+        data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'provision_ok', serverId: id } },
+      });
+    } catch (e: any) {
+      await this.prisma.log.create({
+        data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'provision_failed', serverId: id, error: e?.message || String(e) } },
+      });
+    }
     return this.getById(id);
   }
 
@@ -257,8 +339,14 @@ export class ServersService {
   }
 
   async restart(id: number, actorUserId?: number, reason?: string) {
-    // For mock: stop then start
-    await this.setStatus(id, 'stopped', actorUserId, reason);
+    try {
+      await this.agent.restart(id);
+    } catch (e) {
+      await this.prisma.log.create({
+        data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'agent_action_failed', serverId: id, op: 'restart', reason: reason || null } },
+      });
+    }
+    // keep running after restart
     return this.setStatus(id, 'running', actorUserId, reason);
   }
 }
