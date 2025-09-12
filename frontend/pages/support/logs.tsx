@@ -31,6 +31,9 @@ export default function SupportLogs() {
   const [to, setTo] = useState<string>('');
   const [groupBy, setGroupBy] = useState<GroupBy>('none');
 
+  // expanded state per group label
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
   const [total, setTotal] = useState(0);
@@ -98,6 +101,29 @@ export default function SupportLogs() {
     return entries;
   }, [items, groupBy]);
 
+  // Collapse/Expand helpers
+  const allCollapsed = useMemo(() => {
+    if (!grouped || grouped.length === 0) return false;
+    return grouped.every(([label]) => expanded[label] === false);
+  }, [grouped, expanded]);
+
+  const allExpanded = useMemo(() => {
+    if (!grouped || grouped.length === 0) return false;
+    return grouped.every(([label]) => expanded[label] !== false);
+  }, [grouped, expanded]);
+
+  const setAll = (value: boolean) => {
+    if (!grouped) return;
+    const next: Record<string, boolean> = {};
+    for (const [label] of grouped) next[label] = value;
+    setExpanded(next);
+  };
+
+  // Reset expanded map when grouping changes
+  useEffect(() => {
+    setExpanded({});
+  }, [groupBy, items]);
+
   return (
     <>
       <Head>
@@ -152,6 +178,12 @@ export default function SupportLogs() {
           <div className="mt-3 flex items-center gap-2">
             <button onClick={() => { setUserId(''); setServerId(''); setAction(''); setFrom(''); setTo(''); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Clear</button>
             <button onClick={() => fetchLogs()} className="px-3 py-1 rounded btn-primary">Apply</button>
+            {groupBy !== 'none' && grouped && grouped.length > 0 && (
+              <div className="ml-auto flex items-center gap-2">
+                <button onClick={() => setAll(true)} disabled={allExpanded} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50">Expand all</button>
+                <button onClick={() => setAll(false)} disabled={allCollapsed} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50">Collapse all</button>
+              </div>
+            )}
           </div>
         </div>
 
@@ -191,28 +223,41 @@ export default function SupportLogs() {
               </>
             ) : (
               <div className="space-y-5">
-                {grouped!.map(([label, arr]) => (
-                  <div key={label} className="card p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold">{label}</h3>
-                      <div className="text-sm text-slate-400">{arr.length} item{arr.length !== 1 ? 's' : ''}</div>
-                    </div>
-                    <div className="space-y-3">
-                      {arr.map((l) => (
-                        <div key={l.id} className="p-3 rounded border border-slate-800 bg-slate-900/50">
-                          <div className="flex items-center justify-between">
-                            <div className="font-medium">{l.action}</div>
-                            <div className="text-sm text-slate-400">{new Date(l.timestamp).toLocaleString()}</div>
-                          </div>
-                          <div className="text-xs text-slate-400 mt-1">User: {l.user?.email ?? '—'} {l.user ? `(ID ${l.user.id})` : ''}</div>
-                          {l.metadata ? (
-                            <pre className="text-xs bg-slate-800/60 rounded p-2 mt-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>
-                          ) : null}
+                {grouped!.map(([label, arr]) => {
+                  const isOpen = expanded[label] !== false;
+                  return (
+                    <div key={label} className="card p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-semibold">{label}</h3>
+                        <div className="flex items-center gap-2">
+                          <div className="text-sm text-slate-400">{arr.length} item{arr.length !== 1 ? 's' : ''}</div>
+                          <button
+                            onClick={() => setExpanded((prev) => ({ ...prev, [label]: !isOpen }))}
+                            className="px-2 py-0.5 rounded border border-slate-800 hover:bg-slate-800 text-sm"
+                          >
+                            {isOpen ? 'Collapse' : 'Expand'}
+                          </button>
                         </div>
-                      ))}
+                      </div>
+                      {isOpen && (
+                        <div className="space-y-3">
+                          {arr.map((l) => (
+                            <div key={l.id} className="p-3 rounded border border-slate-800 bg-slate-900/50">
+                              <div className="flex items-center justify-between">
+                                <div className="font-medium">{l.action}</div>
+                                <div className="text-sm text-slate-400">{new Date(l.timestamp).toLocaleString()}</div>
+                              </div>
+                              <div className="text-xs text-slate-400 mt-1">User: {l.user?.email ?? '—'} {l.user ? `(ID ${l.user.id})` : ''}</div>
+                              {l.metadata ? (
+                                <pre className="text-xs bg-slate-800/60 rounded p-2 mt-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>
+                              ) : null}
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
             <div className="flex items-center justify-between mt-4">
