@@ -115,7 +115,7 @@ export class PkiService {
   // Verify a signature (base64) over a message using CSR public key
   verifySignature(csrPem: string, message: string, signatureBase64: string): boolean {
     const csr = forge.pki.certificationRequestFromPem(csrPem);
-    const pkey = csr.publicKey as forge.pki.rsa.PublicKey;
+    const pkey = csr.publicKey as any;
     const sigBytes = forge.util.decode64(signatureBase64);
     const md = forge.md.sha256.create();
     md.update(message, 'utf8');
