@@ -92,12 +92,25 @@ model Subscription {
 }
 
 model Node {
-  id       Int        @id @default(autoincrement())
-  name     String
-  location String
-  ip       String
-  status   NodeStatus
-  capacity Int
+  id         Int        @id @default(autoincrement())
+  name       String
+  location   String
+  ip         String
+  status     NodeStatus
+  capacity   Int
+
+  // Auto-registration and connection details
+  approved            Boolean    @default(false)
+  apiUrl              String?
+  publicIp            String?
+  capacityCpuCores    Int?
+  capacityMemoryMb    Int?
+  capacityDiskMb      Int?
+  lastSeenAt          DateTime?
+  csrPem              String?    @db.LongText
+  csrFingerprint      String?
+  nodeCertPem         String?    @db.LongText
+  registrationNonce   String?
 
   servers  Server[]
 }

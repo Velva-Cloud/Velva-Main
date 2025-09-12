@@ -9,19 +9,21 @@ import { CreateNodeDto } from './dto/create-node.dto';
 import { UpdateNodeDto } from './dto/update-node.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import type { Prisma } from '@prisma/client';
+import { PkiService } from '../common/pki.service';
 
 @ApiTags('nodes')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'))
 @Controller('nodes')
 export class NodesController {
-  constructor(private service: NodesService, private prisma: PrismaService) {}
+  constructor(private service: NodesService, private prisma: PrismaService, private pki: PkiService) {}
 
   @Get()
-  async list(@Query('page') page?: string, @Query('pageSize') pageSize?: string) {
+  async list(@Query('page') page?: string, @Query('pageSize') pageSize?: string, @Query('pending') pending?: string) {
     const p = page ? Number(page) : 1;
     const ps = pageSize ? Number(pageSize) : 20;
-    return this.service.list(p, ps);
+    const onlyPending = pending === '1';
+    return this.service.list(p, ps, onlyPending);
   }
 
   // Admin: create node
@@ -35,6 +37,39 @@ export class NodesController {
       data: { userId, action: 'plan_change', metadata: { event: 'node_create', nodeId: node.id } },
     });
     return node;
+  }
+
+  // Admin: approve a pending node (sign CSR and mark approved)
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':id/approve')
+  async approve(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const node = await this.prisma.node.findUnique({ where: { id } });
+    if (!node) throw new Error('Node not found');
+    if (!node.csrPem) throw new Error('No CSR on file for this node');
+    const certPem = this.pki.signCsr(node.csrPem);
+    const updated = await this.prisma.node.update({
+      where: { id },
+      data: { approved: true, nodeCertPem: certPem },
+    });
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'node_approve', nodeId: id } },
+    });
+    return updated;
+  }
+
+  // Admin: deny (delete) a pending node
+  @UseGuards(RolesGuard)
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':id/deny')
+  async deny(@Param('id', ParseIntPipe) id: number, @Req() req: any) {
+    const res = await this.service.delete(id);
+    const userId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'node_deny', nodeId: id } },
+    });
+    return res;
   }
 
   // Admin: update node
