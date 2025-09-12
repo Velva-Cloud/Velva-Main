@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
-import forge from 'node-forge';
+import * as forge from 'node-forge';
 
 function ensureDir(filePath: string) {
   const dir = path.dirname(filePath);
