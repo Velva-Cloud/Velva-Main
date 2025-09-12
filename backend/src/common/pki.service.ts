@@ -1,7 +1,9 @@
 import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
-import * as forge from 'node-forge';
+// Use CommonJS require to avoid ESM/CJS interop issues in runtime bundles
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const forge = require('node-forge');
 
 function ensureDir(filePath: string) {
   const dir = path.dirname(filePath);
