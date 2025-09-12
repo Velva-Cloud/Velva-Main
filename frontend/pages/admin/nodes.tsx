@@ -210,6 +210,7 @@ export default function AdminNodes() {
   };
 
   const panelUrl = typeof window !== 'undefined' ? window.location.origin : 'https://your-panel-url';
+  const agentImage = process.env.NEXT_PUBLIC_AGENT_IMAGE || 'ghcr.io/velva-cloud/velva-daemon:latest';
 
   return (
     <>
@@ -268,11 +269,11 @@ export default function AdminNodes() {
   -v /opt/vc-agent/certs:/certs \\
   -e PANEL_URL=${panelUrl} \\
   -e JOIN_CODE=${lastCode.code} \\
-  ghcr.io/OWNER/velvacloud-daemon:latest`}
+  ${agentImage}`}
               </pre>
               <button
                 onClick={() => {
-                  const cmd = `docker run -d --name vc-agent --restart=always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /opt/vc-agent/certs:/certs -e PANEL_URL=${panelUrl} -e JOIN_CODE=${lastCode.code} ghcr.io/OWNER/velvacloud-daemon:latest`;
+                  const cmd = `docker run -d --name vc-agent --restart=always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /opt/vc-agent/certs:/certs -e PANEL_URL=${panelUrl} -e JOIN_CODE=${lastCode.code} ${agentImage}`;
                   navigator.clipboard.writeText(cmd);
                   toast.show('Command copied', 'success');
                 }}
@@ -280,7 +281,7 @@ export default function AdminNodes() {
               >
                 Copy command
               </button>
-              <div className="mt-2 text-xs text-slate-500">Replace OWNER with your GitHub user/org if your image is private or differently named.</div>
+              <div className="mt-2 text-xs text-slate-500">Image: {agentImage}. You can override via NEXT_PUBLIC_AGENT_IMAGE.</div>
             </div>
           )}
 
