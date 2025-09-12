@@ -1,5 +1,5 @@
 import Head from 'next/head';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import NavBar from '../../components/NavBar';
 import { useRequireSupport } from '../../utils/guards';
 import api from '../../utils/api';
@@ -15,6 +15,8 @@ type LogItem = {
 
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
 
+type GroupBy = 'none' | 'action' | 'user' | 'server';
+
 export default function SupportLogs() {
   useRequireSupport();
 
@@ -27,6 +29,7 @@ export default function SupportLogs() {
   const [action, setAction] = useState<string | ''>('');
   const [from, setFrom] = useState<string>('');
   const [to, setTo] = useState<string>('');
+  const [groupBy, setGroupBy] = useState<GroupBy>('none');
 
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -68,6 +71,33 @@ export default function SupportLogs() {
     fetchLogs();
   }, [page]);
 
+  // Grouping logic (client-side)
+  const grouped = useMemo(() => {
+    if (groupBy === 'none') return null;
+    const map = new Map<string, LogItem[]>();
+    const keyFn =
+      groupBy === 'action'
+        ? (l: LogItem) => l.action
+        : groupBy === 'user'
+        ? (l: LogItem) => (l.user ? `${l.user.email ?? 'unknown'} (#${l.user.id})` : 'unknown user')
+        : (l: LogItem) => {
+            const sid = (l.metadata && typeof l.metadata === 'object' && 'serverId' in l.metadata) ? (l.metadata as any).serverId : undefined;
+            return sid ? `server #${sid}` : 'server: unknown';
+          };
+    for (const l of items) {
+      const k = keyFn(l) || 'unknown';
+      if (!map.has(k)) map.set(k, []);
+      map.get(k)!.push(l);
+    }
+    // sort groups by label
+    const entries = Array.from(map.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+    // sort each group's items by timestamp desc
+    for (const [, arr] of entries) {
+      arr.sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp));
+    }
+    return entries;
+  }, [items, groupBy]);
+
   return (
     <>
       <Head>
@@ -83,7 +113,7 @@ export default function SupportLogs() {
         </div>
 
         <div className="card p-4 mb-6">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-6">
             <div>
               <div className="text-sm mb-1">User ID</div>
               <input type="number" value={userId} onChange={e => setUserId(e.target.value === '' ? '' : Number(e.target.value))} className="input" placeholder="e.g. 42" />
@@ -109,6 +139,15 @@ export default function SupportLogs() {
               <div className="text-sm mb-1">To</div>
               <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
             </div>
+            <div>
+              <div className="text-sm mb-1">Group by</div>
+              <select value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)} className="input">
+                <option value="none">None</option>
+                <option value="action">Action</option>
+                <option value="user">User</option>
+                <option value="server">Server</option>
+              </select>
+            </div>
           </div>
           <div className="mt-3 flex items-center gap-2">
             <button onClick={() => { setUserId(''); setServerId(''); setAction(''); setFrom(''); setTo(''); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Clear</button>
@@ -133,20 +172,49 @@ export default function SupportLogs() {
           </div>
         ) : (
           <>
-            <div className="space-y-3">
-              {items.map((l) => (
-                <div key={l.id} className="p-4 card">
-                  <div className="flex items-center justify-between">
-                    <div className="font-semibold">{l.action}</div>
-                    <div className="text-sm text-slate-400">{new Date(l.timestamp).toLocaleString()}</div>
-                  </div>
-                  <div className="text-sm text-slate-300 mt-1">User: {l.user?.email ?? '—'} {l.user ? `(ID ${l.user.id})` : ''}</div>
-                  {l.metadata ? (
-                    <pre className="text-xs bg-slate-800/60 rounded p-2 mt-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>
-                  ) : null}
+            {groupBy === 'none' ? (
+              <>
+                <div className="space-y-3">
+                  {items.map((l) => (
+                    <div key={l.id} className="p-4 card">
+                      <div className="flex items-center justify-between">
+                        <div className="font-semibold">{l.action}</div>
+                        <div className="text-sm text-slate-400">{new Date(l.timestamp).toLocaleString()}</div>
+                      </div>
+                      <div className="text-sm text-slate-300 mt-1">User: {l.user?.email ?? '—'} {l.user ? `(ID ${l.user.id})` : ''}</div>
+                      {l.metadata ? (
+                        <pre className="text-xs bg-slate-800/60 rounded p-2 mt-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            ) : (
+              <div className="space-y-5">
+                {grouped!.map(([label, arr]) => (
+                  <div key={label} className="card p-4">
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold">{label}</h3>
+                      <div className="text-sm text-slate-400">{arr.length} item{arr.length !== 1 ? 's' : ''}</div>
+                    </div>
+                    <div className="space-y-3">
+                      {arr.map((l) => (
+                        <div key={l.id} className="p-3 rounded border border-slate-800 bg-slate-900/50">
+                          <div className="flex items-center justify-between">
+                            <div className="font-medium">{l.action}</div>
+                            <div className="text-sm text-slate-400">{new Date(l.timestamp).toLocaleString()}</div>
+                          </div>
+                          <div className="text-xs text-slate-400 mt-1">User: {l.user?.email ?? '—'} {l.user ? `(ID ${l.user.id})` : ''}</div>
+                          {l.metadata ? (
+                            <pre className="text-xs bg-slate-800/60 rounded p-2 mt-2 overflow-auto">{JSON.stringify(l.metadata, null, 2)}</pre>
+                          ) : null}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
             <div className="flex items-center justify-between mt-4">
               <div className="text-sm text-slate-400">Page {page} of {totalPages} • {total} total</div>
               <div className="flex items-center gap-2">
