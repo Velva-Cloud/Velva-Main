@@ -35,6 +35,9 @@ services:
       DAEMON_CA: /app/certs/ca.crt
       DAEMON_CLIENT_CERT: /app/certs/panel.crt
       DAEMON_CLIENT_KEY: /app/certs/panel.key
+      # Agent registration (local dev)
+      NODE_REGISTRATION_SECRET: localdev
+      AUTO_APPROVE_NODES: "true"
     depends_on:
       mysql:
         condition: service_healthy
@@ -73,8 +76,33 @@ services:
       retries: 10
       start_period: 20s
 
+  daemon:
+    build: ./daemon
+    container_name: hosting_daemon
+    restart: unless-stopped
+    environment:
+      # Point agent to panel API (inside compose network)
+      PANEL_URL: http://backend:4000/api
+      # Auto-bootstrap using static registration secret (matches backend)
+      REGISTRATION_SECRET: localdev
+      # Optional descriptive metadata
+      NODE_NAME: local-node
+      NODE_LOCATION: local
+      # TLS output and listen port
+      CERTS_DIR: /data/certs
+      DAEMON_PORT: 9443
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - daemon_certs:/data/certs
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      - "9443:9443"
+
 # Remove caddy here to avoid port 80/443 conflicts with your existing site.
 # Configure your existing web server to reverse proxy the subdomain instead.
 
 volumes:
   mysql_data:
+  daemon_certs:
