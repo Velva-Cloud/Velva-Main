@@ -255,8 +255,6 @@ function startHttpsServer() {
       res.status(500).json({ error: e?.message || 'provision_failed' });
     }
   });
-    }
-  });
 
   app.post('/start/:id', async (req, res) => {
     const id = req.params.id;
