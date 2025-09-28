@@ -218,7 +218,19 @@ function startHttpsServer() {
     const { serverId, name, image = 'nginx:alpine', cpu, ramMB } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
+    const containerName = `vc-${serverId}`;
+
     try {
+      // Idempotency: if a container already exists with this name, return success
+      try {
+        const existing = docker.getContainer(containerName);
+        await existing.inspect();
+        return res.json({ ok: true, id: existing.id, existed: true });
+      } catch {
+        // not found, proceed to create
+      }
+
+      // Ensure image is present
       await new Promise<void>((resolve, reject) => {
         docker.pull(image, (err: any, stream: any) => {
           if (err) return reject(err);
@@ -226,7 +238,6 @@ function startHttpsServer() {
         });
       });
 
-      const containerName = `vc-${serverId}`;
       const container = await docker.createContainer({
         name: containerName,
         Image: image,
@@ -239,9 +250,11 @@ function startHttpsServer() {
         Cmd: [],
       });
 
-      res.json({ ok: true, id: container.id });
+      res.json({ ok: true, id: container.id, existed: false });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'provision_failed' });
+    }
+  });
     }
   });
 
