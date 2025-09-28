@@ -80,7 +80,16 @@ async function bootstrapIfNeeded(): Promise<void> {
     csr.setSubject([{ name: 'commonName', value: nodeName }]);
 
     const pubIp = (await detectPublicIp()) || '127.0.0.1';
+    // SANs: include IP and useful DNS names so panel hostname verification can pass in dev/prod
     const altNames: any[] = [{ type: 7, ip: pubIp }];
+    const dnsCandidates = [
+      nodeName,
+      process.env.DOCKER_SERVICE_NAME || 'daemon',
+      process.env.NODE_DNS_NAME || undefined,
+    ].filter(Boolean) as string[];
+    for (const dns of Array.from(new Set(dnsCandidates))) {
+      altNames.push({ type: 2, value: dns }); // dNSName
+    }
     const host = pubIp;
     csr.setAttributes([
       {
