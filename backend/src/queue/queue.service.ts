@@ -33,7 +33,11 @@ export class QueueService implements OnModuleInit {
     private agents: AgentClientService,
   ) {
     const url = process.env.REDIS_URL || 'redis://localhost:6379';
-    this.connection = new IORedis(url);
+    const redisOpts: IORedis.RedisOptions = {
+      // Required by BullMQ to avoid unexpected retries at the redis client level
+      maxRetriesPerRequest: null,
+    };
+    this.connection = new IORedis(url, redisOpts);
     this.provisionQ = new Queue('provision', { connection: this.connection });
     this.startQ = new Queue('start', { connection: this.connection });
     this.stopQ = new Queue('stop', { connection: this.connection });
@@ -56,7 +60,9 @@ export class QueueService implements OnModuleInit {
   }
 
   private async bootstrapWorkers() {
-    const workerConn = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379');
+    const workerConn = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
+      maxRetriesPerRequest: null,
+    });
 
     // Concurrency defaults, configurable via env
     const provisionConc = Number(process.env.Q_PROVISION_CONCURRENCY || 3);
