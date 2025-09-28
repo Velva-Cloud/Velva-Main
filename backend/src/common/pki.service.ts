@@ -125,4 +125,43 @@ export class PkiService {
       return false;
     }
   }
+
+  // Generate a client certificate for the panel if requested and missing.
+  // Uses env:
+  // - AUTO_GENERATE_PANEL_CERT=true
+  // - DAEMON_CLIENT_CERT (path to write)
+  // - DAEMON_CLIENT_KEY (path to write)
+  async ensurePanelClientCertIfRequested() {
+    if ((process.env.AUTO_GENERATE_PANEL_CERT || 'false') !== 'true') return;
+
+    const certPath = process.env.DAEMON_CLIENT_CERT;
+    const keyPath = process.env.DAEMON_CLIENT_KEY;
+    if (!certPath || !keyPath) {
+      this.logger.warn('AUTO_GENERATE_PANEL_CERT is true but DAEMON_CLIENT_CERT/DAEMON_CLIENT_KEY are not set.');
+      return;
+    }
+    if (fs.existsSync(certPath) && fs.existsSync(keyPath)) return;
+
+    try {
+      // Generate keypair and CSR with CN=panel
+      const keys = forge.pki.rsa.generateKeyPair(2048);
+      const csr = forge.pki.createCertificationRequest();
+      csr.publicKey = keys.publicKey;
+      csr.setSubject([{ name: 'commonName', value: 'panel' }]);
+      csr.sign(keys.privateKey);
+      const csrPem = forge.pki.certificationRequestToPem(csr);
+
+      const certPem = this.signCsr(csrPem);
+      const keyPem = forge.pki.privateKeyToPem(keys.privateKey);
+
+      ensureDir(certPath);
+      ensureDir(keyPath);
+      fs.writeFileSync(certPath, certPem, { mode: 0o644 });
+      fs.writeFileSync(keyPath, keyPem, { mode: 0o600 });
+
+      this.logger.log(`Generated panel client certificate at ${certPath}`);
+    } catch (e: any) {
+      this.logger.error('Failed to generate panel client cert', e?.message || e);
+    }
+  }
 }

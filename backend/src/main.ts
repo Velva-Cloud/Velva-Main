@@ -5,6 +5,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, raw } from 'express';
+import { PkiService } from './common/pki.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -22,7 +23,7 @@ async function bootstrap() {
     verify: (req: any, _res, buf) => {
       const url = req.originalUrl || req.url || '';
       if (url.startsWith('/api/webhooks/stripe')) {
-        req.rawBody = buf;
+        (req as any).rawBody = buf;
       }
     },
   }));
@@ -51,6 +52,14 @@ async function bootstrap() {
 
   const document = SwaggerModule.createDocument(app, config);
   SwaggerModule.setup('api/docs', app, document);
+
+  // Ensure a panel client certificate exists if requested
+  try {
+    const pki = app.get(PkiService);
+    await pki.ensurePanelClientCertIfRequested();
+  } catch {
+    // ignore
+  }
 
   const port = process.env.PORT || 4000;
   await app.listen(port, '0.0.0.0');

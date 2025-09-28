@@ -34,9 +34,11 @@ export class ServersService {
   constructor(private prisma: PrismaService, private agent: AgentClientService) {}
 
   private async nodeBaseUrl(nodeId?: number | null): Promise<string | undefined> {
-    if (!nodeId) return process.env.DAEMON_URL; // fallback to global
+    // In development, allow overriding per-node URLs with a global DAEMON_URL
+    if (process.env.DAEMON_URL) return process.env.DAEMON_URL;
+    if (!nodeId) return undefined;
     const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { apiUrl: true } });
-    return node?.apiUrl || process.env.DAEMON_URL;
+    return node?.apiUrl || undefined;
   }
 
   async listForUser(userId: number, page = 1, pageSize = 20) {

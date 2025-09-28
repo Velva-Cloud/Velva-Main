@@ -38,6 +38,10 @@ services:
       # Agent registration (local dev)
       NODE_REGISTRATION_SECRET: localdev
       AUTO_APPROVE_NODES: "true"
+      # Agent URL inside compose network
+      DAEMON_URL: https://daemon:9443
+      # Auto-generate panel client cert if missing
+      AUTO_GENERATE_PANEL_CERT: "true"
     depends_on:
       mysql:
         condition: service_healthy
@@ -45,7 +49,7 @@ services:
       - type: bind
         source: ${PWD}/pki
         target: /app/certs
-        read_only: true
+        read_only: false
     ports:
       - "4000:4000"
     healthcheck:
