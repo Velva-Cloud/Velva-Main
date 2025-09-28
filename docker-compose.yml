@@ -97,8 +97,11 @@ services:
     volumes:
       - daemon_certs:/data/certs
       - /var/run/docker.sock:/var/run/docker.sock
-    ports:
-      - "9443:9443"
+    # Do not publish the daemon port to host to avoid conflicts.
+    # The daemon only needs to reach the panel; inbound mTLS calls from panel
+    # are not required in Phase 1–3.
+    expose:
+      - "9443"
 
 # Remove caddy here to avoid port 80/443 conflicts with your existing site.
 # Configure your existing web server to reverse proxy the subdomain instead.
