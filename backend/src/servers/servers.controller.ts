@@ -46,7 +46,7 @@ export class ServersController {
   @Post()
   async create(@Request() req: any, @Body() body: CreateServerDto) {
     const user = req.user as { userId: number };
-    return this.service.create(user.userId, body.planId, body.name);
+    return this.service.create(user.userId, body.planId, body.name, body.image);
   }
 
   // Admin-only updates

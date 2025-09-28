@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: hosting_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: ./backend
     container_name: hosting_backend
@@ -44,8 +57,12 @@ services:
       AUTO_GENERATE_PANEL_CERT: "true"
       # Development: allow CN/SAN hostname mismatch while CA is still enforced
       AGENT_SKIP_HOSTNAME_VERIFY: "true"
+      # Redis for job queues
+      REDIS_URL: redis://redis:6379
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - type: bind
@@ -122,3 +139,4 @@ services:
 volumes:
   mysql_data:
   daemon_certs:
+  redis_data:

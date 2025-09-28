@@ -40,6 +40,7 @@ export default function Dashboard() {
   const [me, setMe] = useState<Me>(null);
   const [name, setName] = useState('');
   const [planId, setPlanId] = useState<number | ''>('');
+  const [image, setImage] = useState('nginx:alpine');
   const [err, setErr] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
 
@@ -128,10 +129,11 @@ export default function Dashboard() {
         return;
       }
       setCreating(true);
-      const res = await api.post('/servers', { name: name.trim(), planId });
+      const res = await api.post('/servers', { name: name.trim(), planId, image: image.trim() || undefined });
       setServers([res.data, ...servers]);
       setTotal((t) => t + 1);
       setName('');
+      setImage('nginx:alpine');
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to create server');
     } finally {
@@ -212,6 +214,14 @@ export default function Dashboard() {
               return <option key={p.id} value={p.id}>{label}</option>;
             })}
           </select>
+          <input
+            value={image}
+            onChange={e => setImage(e.target.value)}
+            placeholder="Docker image (e.g., ghcr.io/library/nginx:alpine)"
+            className="px-3 py-2 rounded bg-slate-800 border border-slate-700 w-full sm:w-auto flex-1"
+            aria-label="Docker image"
+            disabled={!sub || sub.status !== 'active' || limitReached}
+          />
           <button
             onClick={createServer}
             disabled={creating || !sub || sub.status !== 'active' || limitReached}
