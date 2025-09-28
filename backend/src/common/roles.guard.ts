@@ -12,12 +12,15 @@ export class RolesGuard implements CanActivate {
       context.getHandler(),
       context.getClass(),
     ]);
+    const request = context.switchToHttp().getRequest();
+    const user = request.user as { userId?: number; role?: Role } | undefined;
+
+    // If no JWT user, deny
+    if (!user?.role || !user?.userId) return false;
+
     if (!requiredRoles || requiredRoles.length === 0) {
       return true;
     }
-    const request = context.switchToHttp().getRequest();
-    const user = request.user as { role?: Role } | undefined;
-    if (!user?.role) return false;
 
     if (requiredRoles.includes(Role.OWNER)) {
       return user.role === Role.OWNER;

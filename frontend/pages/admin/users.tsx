@@ -13,6 +13,7 @@ type User = {
   role: 'OWNER' | 'ADMIN' | 'SUPPORT' | 'USER';
   createdAt: string;
   lastLogin?: string | null;
+  suspended?: boolean;
 };
 
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
@@ -144,9 +145,12 @@ export default function AdminUsers() {
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
+          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Users</a>
           <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
           <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
+          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
+          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
@@ -190,7 +194,10 @@ export default function AdminUsers() {
               {users.map((u) => (
                 <div key={u.id} className="p-4 card flex flex-wrap items-center justify-between gap-3">
                   <div>
-                    <div className="font-semibold">{u.email}</div>
+                    <div className="font-semibold">
+                      {u.email}
+                      {u.suspended ? <span className="ml-2 text-xs px-2 py-0.5 rounded-full bg-amber-700 text-white">suspended</span> : null}
+                    </div>
                     <div className="text-sm text-slate-400">ID {u.id} • joined {new Date(u.createdAt).toLocaleString()} {u.lastLogin ? `• last login ${new Date(u.lastLogin).toLocaleString()}` : ''}</div>
                   </div>
                   <div className="flex items-center gap-2">
@@ -201,6 +208,39 @@ export default function AdminUsers() {
                       <option value="SUPPORT">SUPPORT</option>
                       <option value="USER">USER</option>
                     </select>
+                    {!u.suspended ? (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Suspend user ${u.email}?`)) return;
+                          try {
+                            await api.post(`/users/${u.id}/suspend`, {});
+                            setUsers((list) => list.map((x) => (x.id === u.id ? { ...x, suspended: true } : x)));
+                            toast.show('User suspended', 'success');
+                          } catch (e: any) {
+                            toast.show(e?.response?.data?.message || 'Failed to suspend user', 'error');
+                          }
+                        }}
+                        className="px-3 py-1 rounded bg-amber-700 hover:bg-amber-600"
+                      >
+                        Suspend
+                      </button>
+                    ) : (
+                      <button
+                        onClick={async () => {
+                          if (!confirm(`Unsuspend user ${u.email}?`)) return;
+                          try {
+                            await api.post(`/users/${u.id}/unsuspend`, {});
+                            setUsers((list) => list.map((x) => (x.id === u.id ? { ...x, suspended: false } : x)));
+                            toast.show('User unsuspended', 'success');
+                          } catch (e: any) {
+                            toast.show(e?.response?.data?.message || 'Failed to unsuspend user', 'error');
+                          }
+                        }}
+                        className="px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600"
+                      >
+                        Unsuspend
+                      </button>
+                    )}
                     <button onClick={() => openEdit(u)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">Edit email</button>
                     <button onClick={() => deleteUser(u)} className="px-3 py-1 rounded bg-red-700 hover:bg-red-600">Delete</button>
                   </div>

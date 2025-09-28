@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
+import { Role } from '../common/roles.enum';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
@@ -13,7 +14,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
+    // Normalize role in case tokens carry lowercase values
+    const rawRole = (payload?.role ?? 'USER') as string;
+    const upper = String(rawRole).toUpperCase();
+    const role: Role =
+      upper === 'OWNER' ? Role.OWNER :
+      upper === 'ADMIN' ? Role.ADMIN :
+      upper === 'SUPPORT' ? Role.SUPPORT :
+      Role.USER;
+
     // Attach user info to request object
-    return { userId: payload.sub, email: payload.email, role: payload.role };
+    return { userId: payload.sub, email: payload.email, role };
   }
 }

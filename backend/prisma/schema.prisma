@@ -55,6 +55,7 @@ model User {
   createdAt          DateTime  @default(now())
   lastLogin          DateTime?
   stripeCustomerId   String?
+  suspended          Boolean   @default(false)
 
   subscriptions Subscription[]
   servers       Server[]
@@ -91,12 +92,25 @@ model Subscription {
 }
 
 model Node {
-  id       Int        @id @default(autoincrement())
-  name     String
-  location String
-  ip       String
-  status   NodeStatus
-  capacity Int
+  id         Int        @id @default(autoincrement())
+  name       String
+  location   String
+  ip         String
+  status     NodeStatus
+  capacity   Int
+
+  // Auto-registration and connection details
+  approved            Boolean    @default(false)
+  apiUrl              String?
+  publicIp            String?
+  capacityCpuCores    Int?
+  capacityMemoryMb    Int?
+  capacityDiskMb      Int?
+  lastSeenAt          DateTime?
+  csrPem              String?    @db.LongText
+  csrFingerprint      String?
+  nodeCertPem         String?    @db.LongText
+  registrationNonce   String?
 
   servers  Server[]
 }
@@ -157,4 +171,15 @@ model Setting {
   key   String @id
   value Json
   updatedAt DateTime @updatedAt
+}
+
+model NodeJoinCode {
+  id           Int       @id @default(autoincrement())
+  code         String    @unique
+  createdAt    DateTime  @default(now())
+  expiresAt    DateTime
+  used         Boolean   @default(false)
+  usedAt       DateTime?
+  usedNodeId   Int?
+  createdById  Int?
 }

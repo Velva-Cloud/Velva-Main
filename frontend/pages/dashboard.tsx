@@ -9,6 +9,8 @@ type Server = {
   name: string;
   status: string;
   planId: number;
+  plan?: { id: number; name: string } | null;
+  node?: { id: number; name: string } | null;
 };
 
 type Plan = {
@@ -25,6 +27,8 @@ type Subscription = {
   plan?: Plan;
 };
 
+type Me = { id: number; email: string; role: string; suspended?: boolean } | null;
+
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
 
 export default function Dashboard() {
@@ -33,6 +37,7 @@ export default function Dashboard() {
   const [servers, setServers] = useState<Server[]>([]);
   const [plans, setPlans] = useState<Plan[]>([]);
   const [sub, setSub] = useState<Subscription | null>(null);
+  const [me, setMe] = useState<Me>(null);
   const [name, setName] = useState('');
   const [planId, setPlanId] = useState<number | ''>('');
   const [err, setErr] = useState<string | null>(null);
@@ -53,6 +58,7 @@ export default function Dashboard() {
 
   const maxServers = Number(sub?.plan?.resources?.maxServers ?? 1);
   const limitReached = sub ? total >= maxServers : true;
+  const suspended = !!me?.suspended;
 
   const fetchServers = async () => {
     try {
@@ -71,12 +77,14 @@ export default function Dashboard() {
   }, [page]);
 
   useEffect(() => {
-    // Load subscription first, then plans so we can filter to the subscribed plan
+    // Load me + subscription and plans
     Promise.all([
+      api.get('/users/me').catch(() => ({ data: null })),
       api.get('/subscriptions/me').catch(() => ({ data: null })),
       api.get('/plans'),
     ])
-      .then(([subRes, plansRes]) => {
+      .then(([meRes, subRes, plansRes]) => {
+        setMe(meRes.data as any);
         const subData = subRes.data as any;
         setSub(subData);
         const data = plansRes.data as any;
@@ -99,6 +107,10 @@ export default function Dashboard() {
   const createServer = async () => {
     setErr(null);
     try {
+      if (suspended) {
+        setErr('Your account is suspended. Please contact support.');
+        return;
+      }
       if (!sub || sub.status !== 'active') {
         setErr('You need an active subscription to create a server.');
         return;
@@ -138,6 +150,11 @@ export default function Dashboard() {
           <h1 className="text-2xl font-semibold">Your Servers</h1>
           <div className="text-sm text-slate-400">Page {page} of {totalPages} • {total} total</div>
         </div>
+        {suspended && (
+          <div className="mb-4 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
+            Your account is currently suspended. You can view servers but cannot perform actions. Please contact support.
+          </div>
+        )}
 
         {/* Plan usage / subscription indicator */}
         <div className="mb-4 p-3 rounded border border-slate-800 bg-slate-900">
@@ -224,8 +241,11 @@ export default function Dashboard() {
             <ul className="space-y-3">
               {servers.map(s => (
                 <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
-                  <div className="font-semibold">{s.name}</div>
-                  <div className="text-sm text-slate-300">Status: {s.status} • Plan #{s.planId}</div>
+                  <div className="font-semibold"><a className="hover:underline" href={`/servers/${s.id}`}>{s.name}</a></div>
+                  <div className="text-sm text-slate-300">
+                    Status: {s.status} • Plan {s.plan?.name ? `${s.plan.name} (#${s.planId})` : `#${s.planId}`}
+                    {s.node ? <> • Node {s.node.name} (#{s.node.id})</> : null}
+                  </div>
                 </li>
               ))}
             </ul>

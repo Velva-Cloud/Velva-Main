@@ -13,7 +13,16 @@ type NodeRec = {
   ip: string;
   status: 'online' | 'offline';
   capacity: number;
+  approved?: boolean;
+  apiUrl?: string | null;
+  publicIp?: string | null;
+  lastSeenAt?: string | null;
+  capacityCpuCores?: number | null;
+  capacityMemoryMb?: number | null;
+  capacityDiskMb?: number | null;
 };
+
+type JoinCode = { code: string; expiresAt: string; used?: boolean; usedAt?: string | null; usedNodeId?: number | null };
 
 type Paged<T> = { items: T[]; total: number; page: number; pageSize: number };
 
@@ -22,9 +31,13 @@ export default function AdminNodes() {
   const toast = useToast();
 
   const [nodes, setNodes] = useState<NodeRec[]>([]);
+  const [pending, setPending] = useState<NodeRec[]>([]);
+  const [joinCodes, setJoinCodes] = useState<JoinCode[]>([]);
+  const [lastCode, setLastCode] = useState<JoinCode | null>(null);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<number | null>(null);
+  const [busyCode, setBusyCode] = useState<string | null>(null);
 
   const [page, setPage] = useState(1);
   const [pageSize] = useState(20);
@@ -38,6 +51,8 @@ export default function AdminNodes() {
   const [capacity, setCapacity] = useState<number | ''>('');
   const [creating, setCreating] = useState(false);
 
+  const [ttlMinutes, setTtlMinutes] = useState<number>(15);
+
   const nameError = useMemo(() => (name.trim() ? null : 'Name is required'), [name]);
   const locError = useMemo(() => (location.trim() ? null : 'Location is required'), [location]);
   const ipError = useMemo(() => (/^\d{1,3}(?:\.\d{1,3}){3}$/.test(ip) ? null : 'Enter a valid IPv4 address'), [ip]);
@@ -47,10 +62,16 @@ export default function AdminNodes() {
     setLoading(true);
     setErr(null);
     try {
-      const res = await api.get('/nodes', { params: { page, pageSize } });
-      const data = res.data as Paged<NodeRec>;
+      const [resAll, resPending, resCodes] = await Promise.all([
+        api.get('/nodes', { params: { page, pageSize } }),
+        api.get('/nodes', { params: { pending: 1, page: 1, pageSize: 50 } }),
+        api.get('/nodes/join-codes'),
+      ]);
+      const data = resAll.data as Paged<NodeRec>;
       setNodes(data.items);
       setTotal(data.total);
+      setPending((resPending.data as Paged<NodeRec>).items);
+      setJoinCodes((resCodes.data.items || []) as JoinCode[]);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to load nodes');
     } finally {
@@ -84,6 +105,30 @@ export default function AdminNodes() {
       toast.show(msg, 'error');
     } finally {
       setCreating(false);
+    }
+  };
+
+  const generateJoinCode = async () => {
+    try {
+      const res = await api.post('/nodes/join-codes', { ttlMinutes });
+      setLastCode(res.data as JoinCode);
+      await fetchNodes();
+      toast.show('Join code generated', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to generate code', 'error');
+    }
+  };
+
+  const revokeCode = async (code: string) => {
+    setBusyCode(code);
+    try {
+      await api.delete(`/nodes/join-codes/${encodeURIComponent(code)}`);
+      await fetchNodes();
+      toast.show('Join code revoked', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to revoke code', 'error');
+    } finally {
+      setBusyCode(null);
     }
   };
 
@@ -137,6 +182,36 @@ export default function AdminNodes() {
     }
   };
 
+  const approve = async (id: number) => {
+    setBusyId(id);
+    try {
+      await api.post(`/nodes/${id}/approve`);
+      toast.show('Node approved', 'success');
+      await fetchNodes();
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to approve', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const deny = async (id: number) => {
+    if (!confirm('Deny (delete) this pending node?')) return;
+    setBusyId(id);
+    try {
+      await api.post(`/nodes/${id}/deny`);
+      toast.show('Node denied', 'success');
+      await fetchNodes();
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to deny', 'error');
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const panelUrl = typeof window !== 'undefined' ? window.location.origin : 'https://your-panel-url';
+  const agentImage = process.env.NEXT_PUBLIC_AGENT_IMAGE || 'ghcr.io/velva-cloud/velva-daemon:latest';
+
   return (
     <>
       <Head>
@@ -153,12 +228,106 @@ export default function AdminNodes() {
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Nodes</a>
+          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
           <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
           <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
+          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
+          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
+
+        {/* One-time join codes */}
+        <section className="mb-8 p-4 card">
+          <h2 className="font-semibold mb-3">One-time join codes</h2>
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <div className="text-sm mb-1">TTL (minutes)</div>
+              <input type="number" min={1} max={1440} value={ttlMinutes} onChange={(e) => setTtlMinutes(Math.max(1, Math.min(1440, Number(e.target.value || 1))))} className="input w-32" />
+            </label>
+            <button onClick={generateJoinCode} className="btn btn-primary">Generate code</button>
+          </div>
+
+          {lastCode && (
+            <div className="mt-4">
+              <div className="text-sm text-slate-400 mb-2">Latest code (expires {new Date(lastCode.expiresAt).toLocaleString()}):</div>
+              <div className="flex items-center gap-2">
+                <div className="px-3 py-2 rounded bg-slate-800 border border-slate-700 font-mono">{lastCode.code}</div>
+                <button
+                  onClick={() => navigator.clipboard.writeText(lastCode.code)}
+                  className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                >
+                  Copy code
+                </button>
+              </div>
+              <div className="mt-3 text-sm text-slate-400">One-liner for your node:</div>
+              <pre className="mt-2 p-3 rounded bg-slate-900 border border-slate-800 text-xs overflow-x-auto">
+{`docker run -d --name vc-agent --restart=always \\
+  --network host \\
+  -v /var/run/docker.sock:/var/run/docker.sock \\
+  -v /opt/vc-agent/certs:/certs \\
+  -e PANEL_URL=${panelUrl} \\
+  -e JOIN_CODE=${lastCode.code} \\
+  ${agentImage}`}
+              </pre>
+              <button
+                onClick={() => {
+                  const cmd = `docker run -d --name vc-agent --restart=always --network host -v /var/run/docker.sock:/var/run/docker.sock -v /opt/vc-agent/certs:/certs -e PANEL_URL=${panelUrl} -e JOIN_CODE=${lastCode.code} ${agentImage}`;
+                  navigator.clipboard.writeText(cmd);
+                  toast.show('Command copied', 'success');
+                }}
+                className="mt-2 px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+              >
+                Copy command
+              </button>
+              <div className="mt-2 text-xs text-slate-500">Image: {agentImage}. You can override via NEXT_PUBLIC_AGENT_IMAGE.</div>
+            </div>
+          )}
+
+          {joinCodes.length > 0 && (
+            <div className="mt-6">
+              <div className="text-sm font-semibold mb-2">Active join codes</div>
+              <div className="space-y-2">
+                {joinCodes.map((c) => (
+                  <div key={c.code} className="flex items-center justify-between p-2 rounded border border-slate-800 bg-slate-900/50">
+                    <div className="font-mono">{c.code}</div>
+                    <div className="text-sm text-slate-400">expires {new Date(c.expiresAt).toLocaleString()}</div>
+                    <button onClick={() => revokeCode(c.code)} disabled={busyCode === c.code} className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyCode === c.code ? 'opacity-60 cursor-not-allowed' : ''}`}>Revoke</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </section>
+
+        {/* Pending approvals */}
+        {pending.length > 0 && (
+          <section className="mb-8 p-4 card">
+            <h2 className="font-semibold mb-3">Pending approvals</h2>
+            <div className="space-y-3">
+              {pending.map((n) => (
+                <div key={n.id} className="p-3 rounded border border-slate-800 bg-slate-900/50">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <div className="font-semibold">#{n.id} {n.name || 'New node'}</div>
+                      <div className="text-sm text-slate-400">{n.location || 'Unknown'} • API {n.apiUrl || '—'} • Public IP {n.publicIp || '—'}</div>
+                      {(n.capacityCpuCores || n.capacityMemoryMb || n.capacityDiskMb) ? (
+                        <div className="text-xs text-slate-500 mt-1">
+                          CPU {n.capacityCpuCores ?? '—'} • RAM {n.capacityMemoryMb ?? '—'} MB • Disk {n.capacityDiskMb ?? '—'} MB
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button onClick={() => approve(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-emerald-700 hover:bg-emerald-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Approve</button>
+                      <button onClick={() => deny(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Deny</button>
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
 
         <section id="create-node" className="mb-8 p-4 card">
           <h2 className="font-semibold mb-3">Add Node</h2>
@@ -219,8 +388,13 @@ export default function AdminNodes() {
                   <div key={n.id} className="p-4 card">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div>
-                        <div className="font-semibold">{n.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${n.status === 'online' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-red-600/30 text-red-300 border border-red-700'}`}>{n.status}</span></div>
+                        <div className="font-semibold">
+                          {n.name}
+                          <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${n.status === 'online' ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-red-600/30 text-red-300 border border-red-700'}`}>{n.status}</span>
+                          {n.approved === false ? <span className="ml-2 inline-block text-xs px-2 py-0.5 rounded-full bg-amber-600/30 text-amber-200 border border-amber-700">pending</span> : null}
+                        </div>
                         <div className="text-sm text-slate-400">#{n.id} • {n.location} • {n.ip} • capacity {n.capacity}</div>
+                        <div className="text-xs text-slate-500 mt-1">API: {n.apiUrl || '—'} • Last seen: {n.lastSeenAt ? new Date(n.lastSeenAt).toLocaleString() : '—'}</div>
                       </div>
                       <div className="flex items-center gap-2">
                         <button onClick={() => ping(n.id)} disabled={busyId === n.id} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busyId === n.id ? 'opacity-60 cursor-not-allowed' : ''}`}>Ping</button>
@@ -235,6 +409,21 @@ export default function AdminNodes() {
                           className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
                         >
                           Edit
+                        </button>
+                        <button
+                          onClick={() => {
+                            const val = prompt('Set capacity (max servers)', String(n.capacity));
+                            if (val === null) return;
+                            const num = Number(val);
+                            if (!Number.isInteger(num) || num < 1) {
+                              toast.show('Capacity must be a positive integer', 'error');
+                              return;
+                            }
+                            saveInline(n.id, { capacity: num });
+                          }}
+                          className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600"
+                        >
+                          Set capacity
                         </button>
                         <button
                           onClick={async () => {

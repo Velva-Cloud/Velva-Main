@@ -28,9 +28,21 @@ services:
       FRONTEND_URL: https://panel.velvacloud.com
       PORT: 4000
       SEED_ON_BOOT: "true"
+      # PKI (persist CA so it doesn't regenerate on restart)
+      CA_KEY_PATH: /app/certs/ca.key
+      CA_CERT_PATH: /app/certs/ca.crt
+      # mTLS (panel -> agent)
+      DAEMON_CA: /app/certs/ca.crt
+      DAEMON_CLIENT_CERT: /app/certs/panel.crt
+      DAEMON_CLIENT_KEY: /app/certs/panel.key
     depends_on:
       mysql:
         condition: service_healthy
+    volumes:
+      - type: bind
+        source: ${PWD}/pki
+        target: /app/certs
+        read_only: true
     ports:
       - "4000:4000"
     healthcheck:

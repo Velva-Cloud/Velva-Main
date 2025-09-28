@@ -13,12 +13,13 @@ function clamp(n: number, min: number, max: number) {
 export class NodesService {
   constructor(private prisma: PrismaService) {}
 
-  async list(page = 1, pageSize = 20) {
+  async list(page = 1, pageSize = 20, pendingOnly = false) {
     const p = clamp(page, 1, 100000);
     const ps = clamp(pageSize, 1, 100);
+    const where = pendingOnly ? { approved: false } : {};
     const [total, items] = await this.prisma.$transaction([
-      this.prisma.node.count(),
-      this.prisma.node.findMany({ orderBy: { id: 'asc' }, skip: (p - 1) * ps, take: ps }),
+      this.prisma.node.count({ where }),
+      this.prisma.node.findMany({ where, orderBy: { id: 'asc' }, skip: (p - 1) * ps, take: ps }),
     ]);
     return { items, total, page: p, pageSize: ps };
   }

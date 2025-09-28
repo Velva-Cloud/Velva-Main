@@ -41,12 +41,20 @@ export default function AdminPlans() {
   const [total, setTotal] = useState(0);
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  // form state
+  // create form state
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
   const [resources, setResources] = useState('{\n  "cpu": 2,\n  "memory": "4GB",\n  "storage": "50GB"\n}');
   const [isActive, setIsActive] = useState(true);
   const [creating, setCreating] = useState(false);
+
+  // edit form state
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editPrice, setEditPrice] = useState('');
+  const [editResources, setEditResources] = useState('');
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
   const nameError = useMemo(() => (name.trim() ? null : 'Name is required'), [name]);
   const priceError = useMemo(() => (/^\d+(?:\.\d{1,2})?$/.test(price) ? null : 'Enter a valid price'), [price]);
@@ -58,6 +66,21 @@ export default function AdminPlans() {
       return 'Resources must be valid JSON';
     }
   }, [resources]);
+
+  const editNameError = useMemo(() => (editingId !== null && !editName.trim() ? 'Name is required' : null), [editingId, editName]);
+  const editPriceError = useMemo(
+    () => (editingId !== null && !/^\d+(?:\.\d{1,2})?$/.test(editPrice) ? 'Enter a valid price' : null),
+    [editingId, editPrice]
+  );
+  const editResError = useMemo(() => {
+    if (editingId === null) return null;
+    try {
+      JSON.parse(editResources);
+      return null;
+    } catch {
+      return 'Resources must be valid JSON';
+    }
+  }, [editingId, editResources]);
 
   const fetchPlans = async () => {
     setLoading(true);
@@ -122,6 +145,61 @@ export default function AdminPlans() {
     }
   };
 
+  const beginEdit = (p: Plan) => {
+    setEditingId(p.id);
+    setEditName(p.name);
+    setEditPrice(String(p.pricePerMonth));
+    try {
+      setEditResources(JSON.stringify(p.resources ?? {}, null, 2));
+    } catch {
+      setEditResources('{}');
+    }
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditName('');
+    setEditPrice('');
+    setEditResources('');
+    setSavingEdit(false);
+  };
+
+  const saveEdit = async (p: Plan) => {
+    if (editNameError || editPriceError || editResError) {
+      toast.show(editNameError || editPriceError || editResError || 'Invalid input', 'error');
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const res = await api.patch(`/plans/${p.id}`, {
+        name: editName.trim(),
+        pricePerMonth: editPrice,
+        resources: editResources,
+      });
+      setPlans((list) => list.map((it) => (it.id === p.id ? res.data : it)));
+      toast.show('Plan updated', 'success');
+      cancelEdit();
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to update plan', 'error');
+      setSavingEdit(false);
+    }
+  };
+
+  const deletePlan = async (p: Plan) => {
+    if (!confirm(`Delete plan "${p.name}"? This cannot be undone.`)) return;
+    setDeletingId(p.id);
+    try {
+      await api.delete(`/plans/${p.id}`);
+      setPlans((list) => list.filter((it) => it.id !== p.id));
+      setTotal((t) => Math.max(0, t - 1));
+      toast.show('Plan deleted', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to delete plan', 'error');
+    } finally {
+      setDeletingId(null);
+    }
+  };
+
   return (
     <>
       <Head>
@@ -138,9 +216,12 @@ export default function AdminPlans() {
         <div className="flex flex-wrap items-center gap-2 mb-6">
           <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Plans</a>
           <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
+          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
           <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
           <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
           <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
+          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
+          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
@@ -202,19 +283,73 @@ export default function AdminPlans() {
               <div className="space-y-3">
                 {plans.map((p) => {
                   const isCustom = !!p?.resources?.ramRange;
+                  const isEditing = editingId === p.id;
                   return (
                     <div key={p.id} className="p-4 card flex flex-col gap-3">
                       <div className="flex items-center justify-between">
                         <div>
-                          <div className="font-semibold">{p.name} <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${p.isActive ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-slate-600/30 text-slate-300 border border-slate-700'}`}>{p.isActive ? 'active' : 'inactive'}</span></div>
-                          <div className="text-sm text-slate-400">#{p.id} • {isCustom ? `${gbp(p?.resources?.pricePerGB || 0)} per GB / mo` : `${gbp(p.pricePerMonth)} / mo`}</div>
+                          <div className="font-semibold">
+                            {p.name}{' '}
+                            <span
+                              className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${
+                                p.isActive ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700' : 'bg-slate-600/30 text-slate-300 border border-slate-700'
+                              }`}
+                            >
+                              {p.isActive ? 'active' : 'inactive'}
+                            </span>
+                          </div>
+                          <div className="text-sm text-slate-400">
+                            #{p.id} • {isCustom ? `${gbp(p?.resources?.pricePerGB || 0)} per GB / mo` : `${gbp(p.pricePerMonth)} / mo`}
+                          </div>
                         </div>
                         <div className="flex items-center gap-2">
                           <button onClick={() => toggleActive(p)} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">
                             {p.isActive ? 'Disable' : 'Enable'}
                           </button>
+                          <button
+                            onClick={() => (isEditing ? cancelEdit() : beginEdit(p))}
+                            className="px-3 py-1 rounded border border-slate-700 hover:bg-slate-800"
+                          >
+                            {isEditing ? 'Cancel' : 'Edit'}
+                          </button>
+                          <button
+                            onClick={() => deletePlan(p)}
+                            disabled={deletingId === p.id}
+                            className={`px-3 py-1 rounded bg-red-700 hover:bg-red-600 ${deletingId === p.id ? 'opacity-60 cursor-not-allowed' : ''}`}
+                          >
+                            {deletingId === p.id ? 'Deleting…' : 'Delete'}
+                          </button>
                         </div>
                       </div>
+
+                      {isEditing && (
+                        <div className="mt-2 grid gap-3 md:grid-cols-4">
+                          <label className="block">
+                            <div className="text-sm mb-1">Name</div>
+                            <input value={editName} onChange={(e) => setEditName(e.target.value)} className="input" aria-invalid={!!editNameError} />
+                            {editNameError && <div className="mt-1 text-xs text-red-400">{editNameError}</div>}
+                          </label>
+                          <label className="block">
+                            <div className="text-sm mb-1">Price per month (GBP)</div>
+                            <input value={editPrice} onChange={(e) => setEditPrice(e.target.value)} className="input" aria-invalid={!!editPriceError} placeholder="9.99" />
+                            {editPriceError && <div className="mt-1 text-xs text-red-400">{editPriceError}</div>}
+                          </label>
+                          <div className="md:col-span-4">
+                            <div className="text-sm mb-1">Resources (JSON)</div>
+                            <textarea value={editResources} onChange={(e) => setEditResources(e.target.value)} rows={6} className="input font-mono text-xs" />
+                            {editResError && <div className="mt-1 text-xs text-red-400">{editResError}</div>}
+                          </div>
+                          <div className="md:col-span-4">
+                            <button
+                              onClick={() => saveEdit(p)}
+                              disabled={savingEdit || !!editNameError || !!editPriceError || !!editResError}
+                              className={`btn btn-primary ${savingEdit ? 'opacity-70 cursor-not-allowed' : ''}`}
+                            >
+                              {savingEdit ? 'Saving…' : 'Save changes'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
 
                       {isCustom && (
                         <div className="grid gap-2 md:grid-cols-3 items-end">
@@ -227,7 +362,7 @@ export default function AdminPlans() {
                               defaultValue={p.resources?.pricePerGB ?? ''}
                               onChange={(e) => {
                                 const val = e.target.value;
-                                setPlans((list) => list.map((it) => it.id === p.id ? { ...it, resources: { ...it.resources, pricePerGB: val === '' ? undefined : Number(val) } } : it));
+                                setPlans((list) => list.map((it) => (it.id === p.id ? { ...it, resources: { ...it.resources, pricePerGB: val === '' ? undefined : Number(val) } } : it)));
                               }}
                               className="input"
                               placeholder="0.60"

@@ -32,6 +32,13 @@ export default function NavBar() {
       <div className="flex items-center gap-4">
         <Link href="/dashboard" className="hover:text-sky-300 transition-colors">Dashboard</Link>
         {token && <Link href="/billing" className="hover:text-sky-300 transition-colors">Billing</Link>}
+        {role && (role === 'SUPPORT' || role === 'ADMIN' || role === 'OWNER') && (
+          <>
+            <Link href="/support/users" className="hover:text-sky-300 transition-colors">Support</Link>
+            <Link href="/support/servers" className="hover:text-sky-300 transition-colors">Servers</Link>
+            <Link href="/admin/logs" className="hover:text-sky-300 transition-colors">Logs</Link>
+          </>
+        )}
         {role && (role === 'ADMIN' || role === 'OWNER') && (
           <Link href="/admin" className="hover:text-sky-300 transition-colors">Admin</Link>
         )}

@@ -79,6 +79,45 @@ async function main() {
     }
   }
 
+  // Demo user, subscription, and a server (if none)
+  let demo = await prisma.user.findUnique({ where: { email: 'demo@example.com' } });
+  if (!demo) {
+    demo = await prisma.user.create({
+      data: { email: 'demo@example.com', password: null, role: 'USER' },
+    });
+    console.log('Created demo user');
+  }
+
+  const plan = await prisma.plan.findFirst({ orderBy: { id: 'asc' } });
+  if (plan) {
+    const existingSub = await prisma.subscription.findFirst({ where: { userId: demo.id, status: 'active' } });
+    if (!existingSub) {
+      await prisma.subscription.create({
+        data: { userId: demo.id, planId: plan.id, startDate: new Date(), status: 'active' },
+      });
+      await prisma.transaction.create({
+        data: {
+          userId: demo.id,
+          subscriptionId: undefined,
+          planId: plan.id,
+          amount: plan.pricePerMonth,
+          currency: 'GBP',
+          gateway: 'mock',
+          status: 'success',
+          metadata: { reason: 'seed_initial' },
+        },
+      });
+      console.log('Created demo subscription and mock transaction');
+    }
+    const serverCount = await prisma.server.count({ where: { userId: demo.id } });
+    if (serverCount === 0) {
+      await prisma.server.create({
+        data: { userId: demo.id, planId: plan.id, name: 'demo-server', status: 'stopped' },
+      });
+      console.log('Created demo server');
+    }
+  }
+
   console.log('Seed completed');
 }
 
