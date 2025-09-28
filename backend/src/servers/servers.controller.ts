@@ -88,7 +88,7 @@ export class ServersController {
 
   // Future daemon hooks (stubs)
   @Post(':id/provision')
-  @Roles(Role.ADMIN, Role.OWNER)
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async provision(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
     const actor = req.user as { userId: number };
     return this.service.provision(id, actor.userId);

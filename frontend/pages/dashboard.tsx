@@ -220,6 +220,9 @@ export default function Dashboard() {
             {creating ? 'Creating…' : 'Create server'}
           </button>
           {(err || nameError) && <div className="text-red-400 w-full">{err || nameError}</div>}
+          <div className="text-xs text-slate-400 w-full mt-1">
+            Your plan allows up to <span className="text-slate-200 font-medium">{maxServers}</span> server{maxServers > 1 ? 's' : ''}. You currently have {total}.
+          </div>
         </div>
 
         {servers.length === 0 ? (

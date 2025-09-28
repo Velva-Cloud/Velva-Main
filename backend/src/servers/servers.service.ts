@@ -78,12 +78,35 @@ export class ServersService {
     const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
     const ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
+
+    // Find last provisioning-related log for this server
+    const provLog = await this.prisma.log.findFirst({
+      where: {
+        action: 'plan_change' as any,
+        OR: [
+          { metadata: { contains: { serverId: id, event: 'provision_ok' } } as any },
+          { metadata: { contains: { serverId: id, event: 'provision_failed' } } as any },
+          { metadata: { contains: { serverId: id, event: 'provision_request' } } as any },
+        ],
+      },
+      orderBy: { id: 'desc' },
+    });
+
+    const provisionStatus = provLog
+      ? {
+          lastEvent: (provLog.metadata as any)?.event || null,
+          lastError: (provLog.metadata as any)?.error || null,
+          at: provLog.timestamp,
+        }
+      : null;
+
     return {
       ...s,
       mockIp: ip,
       consoleOutput: consoleOut,
       planName: plan?.name ?? null,
       nodeName: node?.name ?? null,
+      provisionStatus,
     };
   }
 
