@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Queue, Worker, QueueScheduler, JobsOptions } from 'bullmq';
+import { Queue, Worker, JobsOptions } from 'bullmq';
 import IORedis from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from '../servers/agent-client.service';
@@ -39,12 +39,8 @@ export class QueueService implements OnModuleInit {
     this.stopQ = new Queue('stop', { connection: this.connection });
     this.restartQ = new Queue('restart', { connection: this.connection });
     this.deleteQ = new Queue('delete', { connection: this.connection });
-    // QueueSchedulers manage delayed jobs and retries
-    new QueueScheduler('provision', { connection: this.connection });
-    new QueueScheduler('start', { connection: this.connection });
-    new QueueScheduler('stop', { connection: this.connection });
-    new QueueScheduler('restart', { connection: this.connection });
-    new QueueScheduler('delete', { connection: this.connection });
+    // QueueSchedulers were required in older BullMQ versions for delayed jobs/retries.
+    // In modern BullMQ, Workers manage this internally; no explicit scheduler is needed.
   }
 
   async onModuleInit() {
