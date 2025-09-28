@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { Queue, Worker, JobsOptions } from 'bullmq';
-import IORedis from 'ioredis';
+import IORedis, { RedisOptions } from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from '../servers/agent-client.service';
 
@@ -33,7 +33,7 @@ export class QueueService implements OnModuleInit {
     private agents: AgentClientService,
   ) {
     const url = process.env.REDIS_URL || 'redis://localhost:6379';
-    const redisOpts: IORedis.RedisOptions = {
+    const redisOpts: RedisOptions = {
       // Required by BullMQ to avoid unexpected retries at the redis client level
       maxRetriesPerRequest: null,
     };
