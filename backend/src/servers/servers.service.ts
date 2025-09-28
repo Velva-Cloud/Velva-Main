@@ -80,16 +80,15 @@ export class ServersService {
     const consoleOut = mockConsoleOutput(s.name, s.status);
 
     // Find last provisioning-related log for this server
-    const provLog = await this.prisma.log.findFirst({
-      where: {
-        action: 'plan_change' as any,
-        OR: [
-          { metadata: { contains: { serverId: id, event: 'provision_ok' } } as any },
-          { metadata: { contains: { serverId: id, event: 'provision_failed' } } as any },
-          { metadata: { contains: { serverId: id, event: 'provision_request' } } as any },
-        ],
-      },
+    // Note: Prisma JSON filtering differs per provider; fetch recent and filter in app
+    const recent = await this.prisma.log.findMany({
+      where: { action: 'plan_change' as any },
       orderBy: { id: 'desc' },
+      take: 100,
+    });
+    const provLog = recent.find((l: any) => {
+      const m = (l?.metadata as any) || {};
+      return m.serverId === id && ['provision_ok', 'provision_failed', 'provision_request'].includes(m.event);
     });
 
     const provisionStatus = provLog
