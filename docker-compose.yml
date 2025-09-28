@@ -42,6 +42,8 @@ services:
       DAEMON_URL: https://daemon:9443
       # Auto-generate panel client cert if missing
       AUTO_GENERATE_PANEL_CERT: "true"
+      # Development: allow CN/SAN hostname mismatch while CA is still enforced
+      AGENT_SKIP_HOSTNAME_VERIFY: "true"
     depends_on:
       mysql:
         condition: service_healthy
