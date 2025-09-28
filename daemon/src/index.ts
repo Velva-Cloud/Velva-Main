@@ -184,8 +184,9 @@ function startHttpsServer() {
 
   // mTLS auth
   app.use((req, res, next) => {
-    const certInfo = (req.socket as any).getPeerCertificate?.();
-    if (!req.client.authorized || !certInfo) {
+    const tlsSocket = req.socket as any; // TLSSocket at runtime
+    const certInfo = tlsSocket.getPeerCertificate?.();
+    if (!tlsSocket.authorized || !certInfo) {
       return res.status(401).json({ error: 'mTLS required' });
     }
     next();
@@ -210,7 +211,7 @@ function startHttpsServer() {
 
     try {
       await new Promise<void>((resolve, reject) => {
-        docker.pull(image, (err, stream) => {
+        docker.pull(image, (err: any, stream: any) => {
           if (err) return reject(err);
           docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
         });
