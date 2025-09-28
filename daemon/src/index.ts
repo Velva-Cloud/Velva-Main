@@ -238,20 +238,34 @@ function startHttpsServer() {
         });
       });
 
-      const container = await docker.createContainer({
-        name: containerName,
-        Image: image,
-        HostConfig: {
-          NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
-          Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
-          RestartPolicy: { Name: 'unless-stopped' },
-        },
-        Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
-        Cmd: [],
-      });
-
-      res.json({ ok: true, id: container.id, existed: false });
+      try {
+        const container = await docker.createContainer({
+          name: containerName,
+          Image: image,
+          HostConfig: {
+            NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
+            Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
+            RestartPolicy: { Name: 'unless-stopped' },
+          },
+          Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
+          Cmd: [],
+        });
+        return res.json({ ok: true, id: container.id, existed: false });
+      } catch (e: any) {
+        // If name conflict happened due to a race, treat as existed
+        const msg = String(e?.message || '');
+        if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
+          try {
+            const existing = docker.getContainer(containerName);
+            await existing.inspect();
+            return res.json({ ok: true, id: existing.id, existed: true });
+          } catch {}
+        }
+        console.error('provision_error:', e);
+        return res.status(500).json({ error: e?.message || 'provision_failed' });
+      }
     } catch (e: any) {
+      console.error('provision_unexpected:', e);
       res.status(500).json({ error: e?.message || 'provision_failed' });
     }
   });
