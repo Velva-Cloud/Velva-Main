@@ -289,11 +289,18 @@ export class QueueService implements OnModuleInit {
           } catch {
             // ignore agent failure on delete
           }
+          // Remove dependent records that enforce FK constraints before deleting the server
+          try {
+            await this.prisma.serverEvent.deleteMany({ where: { serverId: s.id } });
+          } catch {
+            // ignore cleanup errors
+          }
           await this.prisma.server.delete({ where: { id: s.id } });
           await this.prisma.log.create({
             data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_deleted', serverId },
             },
           });
+          // Do not write ServerEvent after delete (would violate FK); recordEvent is best-effort and will no-op on failure
           await this.recordEvent(serverId, 'server_deleted', undefined, undefined, actorUserId ?? null);
         }
         return { ok: true };
