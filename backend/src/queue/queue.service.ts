@@ -3,6 +3,7 @@ import { Queue, Worker, JobsOptions } from 'bullmq';
 import IORedis, { RedisOptions } from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from '../servers/agent-client.service';
+import EventEmitter from 'events';
 
 function backoffOptions(): JobsOptions {
   const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
@@ -27,6 +28,9 @@ export class QueueService implements OnModuleInit {
   private stopQ: Queue;
   private restartQ: Queue;
   private deleteQ: Queue;
+
+  // Events
+  private emitter = new EventEmitter();
 
   constructor(
     private prisma: PrismaService,
@@ -59,6 +63,12 @@ export class QueueService implements OnModuleInit {
     return node?.apiUrl || undefined;
   }
 
+  private emit(event: string, payload: any) {
+    try {
+      this.emitter.emit('event', { type: event, ...payload, ts: Date.now() });
+    } catch {}
+  }
+
   private async bootstrapWorkers() {
     const workerConn = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
       maxRetriesPerRequest: null,
@@ -71,7 +81,7 @@ export class QueueService implements OnModuleInit {
     const restartConc = Number(process.env.Q_RESTART_CONCURRENCY || 5);
     const deleteConc = Number(process.env.Q_DELETE_CONCURRENCY || 5);
 
-    new Worker(
+    const wProvision = new Worker(
       'provision',
       async job => {
         const { serverId } = job.data as { serverId: number };
@@ -115,7 +125,7 @@ export class QueueService implements OnModuleInit {
       { connection: workerConn, concurrency: provisionConc },
     );
 
-    new Worker(
+    const wStart = new Worker(
       'start',
       async job => {
         const { serverId, actorUserId } = job.data as { serverId: number; actorUserId?: number };
@@ -132,7 +142,7 @@ export class QueueService implements OnModuleInit {
       { connection: workerConn, concurrency: startConc },
     );
 
-    new Worker(
+    const wStop = new Worker(
       'stop',
       async job => {
         const { serverId, actorUserId } = job.data as { serverId: number; actorUserId?: number };
@@ -149,7 +159,7 @@ export class QueueService implements OnModuleInit {
       { connection: workerConn, concurrency: stopConc },
     );
 
-    new Worker(
+    const wRestart = new Worker(
       'restart',
       async job => {
         const { serverId, actorUserId } = job.data as { serverId: number; actorUserId?: number };
@@ -167,7 +177,7 @@ export class QueueService implements OnModuleInit {
       { connection: workerConn, concurrency: restartConc },
     );
 
-    new Worker(
+    const wDelete = new Worker(
       'delete',
       async job => {
         const { serverId, actorUserId } = job.data as { serverId: number; actorUserId?: number };
@@ -189,6 +199,20 @@ export class QueueService implements OnModuleInit {
       },
       { connection: workerConn, concurrency: deleteConc },
     );
+
+    const attach = (worker: Worker, name: string) => {
+      worker.on('active', job => this.emit('job_active', { queue: name, id: job.id, data: job.data }));
+      worker.on('completed', job => this.emit('job_completed', { queue: name, id: job.id, returnvalue: job.returnvalue }));
+      worker.on('failed', (job, err) => this.emit('job_failed', { queue: name, id: job?.id, reason: err?.message || String(err) }));
+      worker.on('waiting', jobId => this.emit('job_waiting', { queue: name, id: jobId }));
+      worker.on('error', err => this.emit('worker_error', { queue: name, reason: err?.message || String(err) }));
+    };
+
+    attach(wProvision, 'provision');
+    attach(wStart, 'start');
+    attach(wStop, 'stop');
+    attach(wRestart, 'restart');
+    attach(wDelete, 'delete');
   }
 
   // Admin job visibility
@@ -243,6 +267,11 @@ export class QueueService implements OnModuleInit {
     };
   }
 
+  onEvents(listener: (evt: any) => void) {
+    this.emitter.on('event', listener);
+    return () => this.emitter.off('event', listener);
+  }
+
   private getQueueByName(name: string) {
     switch (name) {
       case 'provision':
@@ -293,6 +322,18 @@ export class QueueService implements OnModuleInit {
   async resumeQueue(name: string) {
     const q = this.getQueueByName(name);
     await q.resume();
+    return { ok: true };
+  }
+
+  async drainQueue(name: string) {
+    const q = this.getQueueByName(name);
+    await q.drain(true);
+    return { ok: true };
+  }
+
+  async cleanQueue(name: string, state: 'completed' | 'failed', graceMs = 0, limit = 1000) {
+    const q = this.getQueueByName(name);
+    await q.clean(graceMs, state, limit);
     return { ok: true };
   }
 
