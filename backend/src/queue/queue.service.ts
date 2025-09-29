@@ -3,7 +3,7 @@ import { Queue, Worker, JobsOptions } from 'bullmq';
 import IORedis, { RedisOptions } from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from '../servers/agent-client.service';
-import EventEmitter from 'events';
+import { EventEmitter } from 'events';
 
 function backoffOptions(): JobsOptions {
   const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
