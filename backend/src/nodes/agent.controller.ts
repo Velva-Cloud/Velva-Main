@@ -17,7 +17,7 @@ export class NodesAgentController {
 
   @ApiOperation({ summary: 'Daemon registration (supports one-time join codes)' })
   @Post('register')
-  @Throttle('node-api')
+  @Throttle({ 'node-api': { limit: 20, ttl: 60 * 1000 } })
   async register(
     @Headers('x-registration-secret') secret: string | undefined,
     @Headers('x-join-code') joinCodeHeader: string | undefined,
@@ -130,7 +130,7 @@ export class NodesAgentController {
 
   @ApiOperation({ summary: 'Daemon poll for approval and certificates' })
   @Post('poll')
-  @Throttle('node-api')
+  @Throttle({ 'node-api': { limit: 20, ttl: 60 * 1000 } })
   async poll(
     @Body()
     body: {
@@ -156,7 +156,7 @@ export class NodesAgentController {
 
   @ApiOperation({ summary: 'Daemon heartbeat' })
   @Post('heartbeat')
-  @Throttle('node-api')
+  @Throttle({ 'node-api': { limit: 20, ttl: 60 * 1000 } })
   async heartbeat(
     @Body()
     body: {
