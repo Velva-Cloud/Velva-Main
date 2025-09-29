@@ -297,6 +297,16 @@ function startHttpsServer() {
       await container.start();
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      // Treat already started (304) as success
+      if (code === 304 || /already started/i.test(msg) || /not modified/i.test(msg)) {
+        return res.json({ ok: true, already: true });
+      }
+      // Propagate not found as 404 with a stable error code
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
       res.status(500).json({ error: e?.message || 'start_failed' });
     }
   });
@@ -308,6 +318,16 @@ function startHttpsServer() {
       await container.stop({ t: Number(process.env.STOP_TIMEOUT || 10) });
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      // Treat already stopped (304) as success
+      if (code === 304 || /not running/i.test(msg) || /not modified/i.test(msg)) {
+        return res.json({ ok: true, already: true });
+      }
+      // If container is missing, treat stop as a no-op success
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.json({ ok: true, missing: true });
+      }
       res.status(500).json({ error: e?.message || 'stop_failed' });
     }
   });
@@ -319,6 +339,11 @@ function startHttpsServer() {
       await container.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) });
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
       res.status(500).json({ error: e?.message || 'restart_failed' });
     }
   });
@@ -330,6 +355,12 @@ function startHttpsServer() {
       await container.remove({ force: true });
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      // Deleting a missing container is idempotent success
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.json({ ok: true, missing: true });
+      }
       res.status(500).json({ error: e?.message || 'delete_failed' });
     }
   });

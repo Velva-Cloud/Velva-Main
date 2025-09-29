@@ -83,7 +83,14 @@ export class AgentClientService {
       const res = await this.getClient(baseURL).post(`/start/${serverId}`);
       return res.data;
     } catch (e: any) {
-      this.logger.warn(`Start failed for server ${serverId}: ${e?.message || e}`);
+      const status = e?.response?.status;
+      const err = e?.response?.data?.error;
+      if (status === 404 && err === 'container_not_found') {
+        // Pass through a stable error for upstream logic
+        throw new Error('container_not_found');
+      }
+      const detail = err ? ` (${err})` : '';
+      this.logger.warn(`Start failed for server ${serverId}: ${e?.message || e}${detail}`);
       throw e;
     }
   }

@@ -208,7 +208,18 @@ export class QueueService implements OnModuleInit {
         const s = await this.prisma.server.findUnique({ where: { id: serverId } });
         if (!s) throw new Error('server_not_found');
         const baseURL = await this.nodeBaseUrl(s.nodeId);
-        await this.agents.start(baseURL, s.id);
+        try {
+          await this.agents.start(baseURL, s.id);
+        } catch (e: any) {
+          const msg = (e?.message || '').toString();
+          if (msg.includes('container_not_found')) {
+            await this.recordEvent(s.id, 'start_missing_container', `server ${s.id} missing on node ${s.nodeId}, scheduling provision`, undefined, actorUserId ?? null);
+            await this.enqueueProvision(s.id);
+            // Complete the job without changing status; provision will auto-start and set status
+            return { ok: false, scheduledProvision: true };
+          }
+          throw e;
+        }
         await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
         await this.prisma.log.create({
           data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
@@ -244,7 +255,17 @@ export class QueueService implements OnModuleInit {
         const s = await this.prisma.server.findUnique({ where: { id: serverId } });
         if (!s) throw new Error('server_not_found');
         const baseURL = await this.nodeBaseUrl(s.nodeId);
-        await this.agents.restart(baseURL, s.id);
+        try {
+          await this.agents.restart(baseURL, s.id);
+        } catch (e: any) {
+          const msg = (e?.message || '').toString();
+          if (msg.includes('container_not_found')) {
+            await this.recordEvent(s.id, 'restart_missing_container', `server ${s.id} missing on node ${s.nodeId}, scheduling provision`, undefined, actorUserId ?? null);
+            await this.enqueueProvision(s.id);
+            return { ok: false, scheduledProvision: true };
+          }
+          throw e;
+        }
         // Keep running
         await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
         await this.prisma.log.create({
