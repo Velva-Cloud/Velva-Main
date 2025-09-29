@@ -122,15 +122,19 @@ services:
       DAEMON_PORT: 9443
       # API key to accept panel calls in addition to mTLS (dev)
       PANEL_API_KEY: dev-panel-key
+      # SFTP
+      SFTP_PORT: 2222
+      SFTP_PASSWORD: dev-sftp
     depends_on:
       backend:
         condition: service_healthy
     volumes:
       - daemon_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
-    # Do not publish the daemon port to host to avoid conflicts.
-    # The daemon only needs to reach the panel; inbound mTLS calls from panel
-    # are not required in Phase 1–3.
+    # Publish SFTP to host
+    ports:
+      - "2222:2222"
+    # Do not publish the daemon TLS port to host
     expose:
       - "9443"
     networks:

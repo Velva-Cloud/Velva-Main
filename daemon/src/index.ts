@@ -11,6 +11,8 @@ import forge from 'node-forge';
 const tar = require('tar-stream');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const multer = require('multer');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Server: SSHServer } = require('ssh2');
 
 const app = express();
 app.use(express.json());
@@ -19,11 +21,14 @@ const PORT = Number(process.env.DAEMON_PORT || 9443);
 const CERTS_DIR = process.env.CERTS_DIR || '/certs';
 const DATA_DIR = process.env.DATA_DIR || '/data';
 const SERVERS_DIR = path.join(DATA_DIR, 'servers');
+const SSH_DIR = path.join(DATA_DIR, 'ssh');
 const PANEL_URL = process.env.PANEL_URL || '';
 const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET || '';
 const JOIN_CODE = process.env.JOIN_CODE || '';
 const PUBLIC_IP_ENV = process.env.PUBLIC_IP || '';
 const PANEL_API_KEY = process.env.PANEL_API_KEY || process.env.AGENT_API_KEY || '';
+const SFTP_PORT = Number(process.env.SFTP_PORT || 2222);
+const SFTP_PASSWORD = process.env.SFTP_PASSWORD || PANEL_API_KEY || '';
 
 const CERT_PATH = process.env.DAEMON_TLS_CERT || path.join(CERTS_DIR, 'agent.crt');
 const KEY_PATH = process.env.DAEMON_TLS_KEY || path.join(CERTS_DIR, 'agent.key');
@@ -81,9 +86,24 @@ function signMessage(privateKeyPem: string, message: string): string {
   return forge.util.encode64(sigBytes);
 }
 
+async function ensureHostKey(): Promise<string> {
+  ensureDir(SSH_DIR);
+  const hostKeyPath = path.join(SSH_DIR, 'host_rsa.key');
+  if (fs.existsSync(hostKeyPath)) return hostKeyPath;
+  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const privPem = forge.pki.privateKeyToPem(keys.privateKey);
+  fs.writeFileSync(hostKeyPath, privPem, { mode: 0o600 });
+  return hostKeyPath;
+}
+
 async function bootstrapIfNeeded(): Promise<void> {
   const { cert, key, ca } = loadTls();
-  if (cert && key && ca) return;
+  if (cert && key && ca) {
+    ensureDir(SERVERS_DIR);
+    ensureDir(DATA_DIR);
+    ensureDir(SSH_DIR);
+    return;
+  }
   if (!PANEL_URL || (!JOIN_CODE && !REGISTRATION_SECRET)) {
     console.error('TLS files missing and PANEL_URL plus JOIN_CODE or REGISTRATION_SECRET not set. Cannot bootstrap.');
     process.exit(1);
@@ -94,6 +114,7 @@ async function bootstrapIfNeeded(): Promise<void> {
     ensureDir(path.dirname(CA_PATH));
     ensureDir(SERVERS_DIR);
     ensureDir(DATA_DIR);
+    ensureDir(SSH_DIR);
 
     // Keypair and CSR
     const keys = forge.pki.rsa.generateKeyPair(2048);
@@ -604,6 +625,273 @@ function startHttpsServer() {
     console.log(`Persistent server data at ${SERVERS_DIR} (mounted into containers at /srv)`);
   });
 }
+
+function statToAttrs(st: fs.Stats) {
+  return {
+    mode: st.mode,
+    uid: (st as any).uid || 0,
+    gid: (st as any).gid || 0,
+    size: st.size,
+    atime: Math.floor(st.atimeMs / 1000),
+    mtime: Math.floor(st.mtimeMs / 1000),
+  };
+}
+
+function startSftpServer() {
+  if (!SFTP_PASSWORD) {
+    console.warn('SFTP disabled (SFTP_PASSWORD not set)');
+    return;
+  }
+  const hostKeyPathPromise = ensureHostKey();
+  hostKeyPathPromise.then((hostKeyPath) => {
+    const server = new SSHServer(
+      {
+        hostKeys: [fs.readFileSync(hostKeyPath)],
+        ident: 'VelvaCloud-sftp',
+      },
+      (client: any) => {
+        let srvId: number | null = null;
+        client
+          .on('authentication', (ctx: any) => {
+            try {
+              const m = (ctx.username || '').match(/^(server|srv)\-(\d+)$/i);
+              if (!m) return ctx.reject(['password']);
+              srvId = Number(m[2]);
+              if (ctx.method === 'password' && SFTP_PASSWORD && ctx.password === SFTP_PASSWORD) {
+                return ctx.accept();
+              }
+              return ctx.reject(['password']);
+            } catch {
+              return ctx.reject(['password']);
+            }
+          })
+          .on('ready', () => {
+            if (!srvId) {
+              client.end();
+              return;
+            }
+            const root = serverDir(srvId);
+            ensureDir(root);
+            client.on('session', (accept: any, _reject: any) => {
+              const session = accept();
+              session.on('sftp', (acceptSftp: any, _rejectSftp: any) => {
+                const sftp = acceptSftp();
+                const handles = new Map<string, any>();
+                let handleCount = 0;
+                const newHandle = (obj: any) => {
+                  const h = Buffer.alloc(4);
+                  h.writeUInt32BE(++handleCount, 0);
+                  handles.set(h.toString('hex'), obj);
+                  return h;
+                };
+                const getHandle = (h: Buffer) => handles.get(h.toString('hex'));
+
+                sftp.on('REALPATH', (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p || '/');
+                    const rel = '/' + path.relative(root, full).replace(/\\/g, '/');
+                    sftp.name(reqid, [{ filename: rel, longname: rel, attrs: {} }]);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('STAT', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    const st = await fs.promises.stat(full);
+                    sftp.attrs(reqid, statToAttrs(st));
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('LSTAT', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    const st = await fs.promises.lstat(full);
+                    sftp.attrs(reqid, statToAttrs(st));
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('OPENDIR', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    const entries = await fs.promises.readdir(full, { withFileTypes: true });
+                    const handle = newHandle({ type: 'dir', path: full, entries, idx: 0 });
+                    sftp.handle(reqid, handle);
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('READDIR', async (reqid: number, handle: Buffer) => {
+                  const h = getHandle(handle);
+                  if (!h || h.type !== 'dir') return sftp.status(reqid, 4);
+                  const batch = [];
+                  for (let i = 0; i < 50 && h.idx < h.entries.length; i++, h.idx++) {
+                    const ent = h.entries[h.idx];
+                    const full = path.join(h.path, ent.name);
+                    let st: fs.Stats | null = null;
+                    try {
+                      st = await fs.promises.stat(full);
+                    } catch {}
+                    batch.push({
+                      filename: ent.name,
+                      longname: ent.name,
+                      attrs: st ? statToAttrs(st) : {},
+                    });
+                  }
+                  if (batch.length > 0) {
+                    sftp.name(reqid, batch);
+                  } else {
+                    sftp.status(reqid, 1);
+                  }
+                });
+
+                sftp.on('OPEN', async (reqid: number, p: string, flags: number, _attrs: any) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    // Translate SFTP flags to Node flags
+                    const SSH_FXF_READ = 0x00000001;
+                    const SSH_FXF_WRITE = 0x00000002;
+                    const SSH_FXF_APPEND = 0x00000004;
+                    const SSH_FXF_CREAT = 0x00000008;
+                    const SSH_FXF_TRUNC = 0x00000010;
+                    const SSH_FXF_EXCL = 0x00000020;
+
+                    let nodeFlags = 'r';
+                    const canRead = !!(flags & SSH_FXF_READ);
+                    const canWrite = !!(flags & SSH_FXF_WRITE);
+                    const append = !!(flags & SSH_FXF_APPEND);
+                    const creat = !!(flags & SSH_FXF_CREAT);
+                    const trunc = !!(flags & SSH_FXF_TRUNC);
+                    const excl = !!(flags & SSH_FXF_EXCL);
+
+                    if (append) nodeFlags = canRead ? 'a+' : 'a';
+                    else if (trunc || creat) nodeFlags = canRead ? 'w+' : 'w';
+                    else if (canRead && canWrite) nodeFlags = 'r+';
+                    else if (canWrite) nodeFlags = 'w';
+                    else nodeFlags = 'r';
+
+                    // Ensure directory exists on create
+                    if (creat) {
+                      ensureDir(path.dirname(full));
+                    }
+
+                    const fd = await fs.promises.open(full, nodeFlags, 0o644);
+                    const handle = newHandle({ type: 'file', fd });
+                    sftp.handle(reqid, handle);
+                  } catch (e: any) {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('READ', async (reqid: number, handle: Buffer, offset: number, length: number) => {
+                  const h = getHandle(handle);
+                  if (!h || h.type !== 'file') return sftp.status(reqid, 4);
+                  try {
+                    const buf = Buffer.alloc(length);
+                    const { bytesRead } = await h.fd.read(buf, 0, length, offset);
+                    if (bytesRead > 0) sftp.data(reqid, buf.subarray(0, bytesRead));
+                    else sftp.status(reqid, 1); // EOF
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('WRITE', async (reqid: number, handle: Buffer, offset: number, data: Buffer) => {
+                  const h = getHandle(handle);
+                  if (!h || h.type !== 'file') return sftp.status(reqid, 4);
+                  try {
+                    await h.fd.write(data, 0, data.length, offset);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('CLOSE', async (reqid: number, handle: Buffer) => {
+                  const h = getHandle(handle);
+                  if (h && h.type === 'file') {
+                    try { await h.fd.close(); } catch {}
+                  }
+                  handles.delete(handle.toString('hex'));
+                  sftp.status(reqid, 0);
+                });
+
+                sftp.on('REMOVE', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    await fs.promises.unlink(full);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('RMDIR', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    await fs.promises.rmdir(full);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('MKDIR', async (reqid: number, p: string, _attrs: any) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    await fs.promises.mkdir(full, { recursive: false });
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('RENAME', async (reqid: number, from: string, to: string) => {
+                  try {
+                    const f = safeResolve(root, from);
+                    const t = safeResolve(root, to);
+                    await fs.promises.rename(f, t);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('READLINK', (reqid: number, _p: string) => {
+                  sftp.status(reqid, 4);
+                });
+
+                sftp.on('SETSTAT', (reqid: number, _p: string, _attrs: any) => {
+                  // silently accept basic metadata updates
+                  sftp.status(reqid, 0);
+                });
+              });
+            });
+          })
+          .on('end', () => {})
+          .on('close', () => {})
+          .on('error', (_e: any) => {});
+      },
+    );
+    server.listen(SFTP_PORT, '0.0.0.0', () => {
+      console.log(`SFTP server listening on 0.0.0.0:${SFTP_PORT} (username: server-<id>, password: [SFTP_PASSWORD])`);
+    });
+  }).catch((e) => {
+    console.error('SFTP host key generation failed:', e?.message || e);
+  });
+}
+
+(async () => {
+  await bootstrapIfNeeded();
+  startHttpsServer();
+  startSftpServer();
+})();
 
 async function startHeartbeat() {
   try {
