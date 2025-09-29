@@ -333,7 +333,8 @@ export class QueueService implements OnModuleInit {
 
   async cleanQueue(name: string, state: 'completed' | 'failed', graceMs = 0, limit = 1000) {
     const q = this.getQueueByName(name);
-    await q.clean(graceMs, state as any, limit);
+    // BullMQ clean signature differs across versions; use status-first ordering
+    await q.clean(state as any, graceMs, limit);
     return { ok: true };
   }
 
