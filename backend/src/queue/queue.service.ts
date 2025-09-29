@@ -191,6 +191,75 @@ export class QueueService implements OnModuleInit {
     );
   }
 
+  // Admin job visibility
+  async listQueues() {
+    return [
+      { name: 'provision' },
+      { name: 'start' },
+      { name: 'stop' },
+      { name: 'restart' },
+      { name: 'delete' },
+    ];
+  }
+
+  async listJobs(name: string, state: string, page: number, pageSize: number) {
+    const q = this.getQueueByName(name);
+    const start = (page - 1) * pageSize;
+    const end = start + pageSize - 1;
+    const jobs = await q.getJobs([state as any], start, end);
+    return {
+      items: jobs.map(j => ({
+        id: j.id,
+        name: j.name,
+        data: j.data,
+        attemptsMade: j.attemptsMade,
+        timestamp: j.timestamp,
+        finishedOn: j.finishedOn,
+        processedOn: j.processedOn,
+        failedReason: j.failedReason,
+        stacktrace: j.stacktrace,
+        state,
+      })),
+      page,
+      pageSize,
+    };
+  }
+
+  async getJob(name: string, id: number) {
+    const q = this.getQueueByName(name);
+    const job = await q.getJob(String(id));
+    if (!job) return null;
+    return {
+      id: job.id,
+      name: job.name,
+      data: job.data,
+      attemptsMade: job.attemptsMade,
+      timestamp: job.timestamp,
+      finishedOn: job.finishedOn,
+      processedOn: job.processedOn,
+      failedReason: job.failedReason,
+      stacktrace: job.stacktrace,
+      progress: job.progress,
+    };
+  }
+
+  private getQueueByName(name: string) {
+    switch (name) {
+      case 'provision':
+        return this.provisionQ;
+      case 'start':
+        return this.startQ;
+      case 'stop':
+        return this.stopQ;
+      case 'restart':
+        return this.restartQ;
+      case 'delete':
+        return this.deleteQ;
+      default:
+        throw new Error('unknown_queue');
+    }
+  }
+
   async enqueueProvision(serverId: number) {
     return this.provisionQ.add('provision', { serverId }, backoffOptions());
   }
