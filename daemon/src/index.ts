@@ -241,13 +241,15 @@ function startHttpsServer() {
     const containerName = `vc-${serverId}`;
 
     try {
-      // Idempotency: if a container already exists with this name, return success
+      // Idempotency: robust existence check by name via listContainers
       try {
-        const existing = docker.getContainer(containerName);
-        await existing.inspect();
-        return res.json({ ok: true, id: existing.id, existed: true });
+        const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+        if (Array.isArray(matches) && matches.length > 0) {
+          const info = matches[0];
+          return res.json({ ok: true, id: info.Id, existed: true });
+        }
       } catch {
-        // not found, proceed to create
+        // ignore pre-check failures and proceed
       }
 
       // Ensure image is present
@@ -276,10 +278,26 @@ function startHttpsServer() {
         const msg = String(e?.message || '');
         if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
           try {
-            const existing = docker.getContainer(containerName);
-            await existing.inspect();
-            return res.json({ ok: true, id: existing.id, existed: true });
-          } catch {}
+            // Try listContainers to resolve by name
+            const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+            if (Array.isArray(matches) && matches.length > 0) {
+              const info = matches[0];
+              return res.json({ ok: true, id: info.Id, existed: true });
+            }
+            // Fallback to inspect by name with and without leading slash
+            try {
+              const c1 = docker.getContainer(containerName);
+              await c1.inspect();
+              return res.json({ ok: true, id: c1.id, existed: true });
+            } catch {}
+            try {
+              const c2 = docker.getContainer(`/${containerName}`);
+              await c2.inspect();
+              return res.json({ ok: true, id: c2.id, existed: true });
+            } catch {}
+          } catch {
+            // ignore and fall through to error
+          }
         }
         console.error('provision_error:', e);
         return res.status(500).json({ error: e?.message || 'provision_failed' });
