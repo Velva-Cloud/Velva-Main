@@ -74,6 +74,48 @@ export default function ServerPage() {
     fetchServer();
   }, [id]);
 
+  // Lifecycle controls
+  const call = async (action: 'start' | 'stop' | 'restart') => {
+    if (!srv) return;
+    setBusy(true);
+    setErr(null);
+    try {
+      const payload: any = {};
+      if (role === 'SUPPORT') {
+        if (!reason.trim()) {
+          toast.show('Reason is required for support actions', 'error');
+          setBusy(false);
+          return;
+        }
+        payload.reason = reason.trim();
+      }
+      await api.post(`/servers/${srv.id}/${action}`, payload);
+      await fetchServer();
+      toast.show(`Server ${action}ed`, 'success');
+      if (role === 'SUPPORT') setReason('');
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || `Failed to ${action} server`;
+      setErr(msg);
+      toast.show(msg, 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const retryProvision = async () => {
+    if (!srv) return;
+    setBusy(true);
+    try {
+      await api.post(`/servers/${srv.id}/provision`);
+      await fetchServer();
+      toast.show('Provision request sent', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to request provisioning', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // Console: start SSE over fetch (so we can send Authorization header)
   const startConsole = async () => {
     if (!id) return;
