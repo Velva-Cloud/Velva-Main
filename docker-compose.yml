@@ -118,6 +118,7 @@ services:
       NODE_LOCATION: local
       # TLS output and listen port
       CERTS_DIR: /data/certs
+      DATA_DIR: /data
       DAEMON_PORT: 9443
       # API key to accept panel calls in addition to mTLS (dev)
       PANEL_API_KEY: dev-panel-key
@@ -125,7 +126,7 @@ services:
       backend:
         condition: service_healthy
     volumes:
-      - daemon_certs:/data/certs
+      - daemon_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     # Do not publish the daemon port to host to avoid conflicts.
     # The daemon only needs to reach the panel; inbound mTLS calls from panel
@@ -137,34 +138,7 @@ services:
         aliases:
           - local-node
 
-  prometheus:
-    image: prom/prometheus:v2.54.1
-    container_name: hosting_prometheus
-    restart: unless-stopped
-    volumes:
-      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    command:
-      - --config.file=/etc/prometheus/prometheus.yml
-    ports:
-      - "9090:9090"
-    depends_on:
-      - backend
-
-  grafana:
-    image: grafana/grafana:11.1.0
-    container_name: hosting_grafana
-    restart: unless-stopped
-    ports:
-      - "3001:3000"
-    environment:
-      - GF_SECURITY_ADMIN_PASSWORD=admin
-    depends_on:
-      - prometheus
-
-# Remove caddy here to avoid port 80/443 conflicts with your existing site.
-# Configure your existing web server to reverse proxy the subdomain instead.
-
 volumes:
   mysql_data:
-  daemon_certs:
+  daemon_data:
   redis_data:

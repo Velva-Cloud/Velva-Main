@@ -6,11 +6,19 @@ import os from 'os';
 import Docker from 'dockerode';
 import forge from 'node-forge';
 
+// Runtime helpers for archives and uploads
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const tar = require('tar-stream');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const multer = require('multer');
+
 const app = express();
 app.use(express.json());
 
 const PORT = Number(process.env.DAEMON_PORT || 9443);
 const CERTS_DIR = process.env.CERTS_DIR || '/certs';
+const DATA_DIR = process.env.DATA_DIR || '/data';
+const SERVERS_DIR = path.join(DATA_DIR, 'servers');
 const PANEL_URL = process.env.PANEL_URL || '';
 const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET || '';
 const JOIN_CODE = process.env.JOIN_CODE || '';
@@ -22,8 +30,20 @@ const KEY_PATH = process.env.DAEMON_TLS_KEY || path.join(CERTS_DIR, 'agent.key')
 const CA_PATH = process.env.DAEMON_TLS_CA || path.join(CERTS_DIR, 'ca.crt');
 
 function ensureDir(p: string) {
-  const dir = path.dirname(p);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+}
+
+function serverDir(serverId: number | string) {
+  return path.join(SERVERS_DIR, String(serverId));
+}
+
+function safeResolve(base: string, reqPath: string | undefined) {
+  const req = reqPath || '';
+  const full = path.resolve(base, '.' + (req.startsWith('/') ? req : `/${req}`));
+  if (!full.startsWith(base)) {
+    throw new Error('invalid_path');
+  }
+  return full;
 }
 
 const docker = new Docker({ socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock' });
@@ -69,9 +89,11 @@ async function bootstrapIfNeeded(): Promise<void> {
     process.exit(1);
   }
   try {
-    ensureDir(KEY_PATH);
-    ensureDir(CERT_PATH);
-    ensureDir(CA_PATH);
+    ensureDir(path.dirname(KEY_PATH));
+    ensureDir(path.dirname(CERT_PATH));
+    ensureDir(path.dirname(CA_PATH));
+    ensureDir(SERVERS_DIR);
+    ensureDir(DATA_DIR);
 
     // Keypair and CSR
     const keys = forge.pki.rsa.generateKeyPair(2048);
@@ -124,7 +146,7 @@ async function bootstrapIfNeeded(): Promise<void> {
     if (JOIN_CODE) headers['x-join-code'] = JOIN_CODE;
     else headers['x-registration-secret'] = REGISTRATION_SECRET;
 
-    const regRes = await fetch(`${PANEL_URL.replace(/\/+$/, '')}/nodes/agent/register`, {
+    const regRes = await fetch(`${PANEL_URL.replace(/\/*$/, '')}/nodes/agent/register`, {
       method: 'POST',
       headers,
       body: JSON.stringify(registerBody),
@@ -138,7 +160,7 @@ async function bootstrapIfNeeded(): Promise<void> {
 
     // Poll for approval
     let approved = reg.approved;
-    const pollUrl = `${PANEL_URL.replace(/\/+$/, '')}/nodes/agent/poll`;
+    const pollUrl = `${PANEL_URL.replace(/\/*$/, '')}/nodes/agent/poll`;
     for (let attempt = 0; attempt < 60; attempt++) {
       const signatureBase64 = signMessage(privPem, nonce);
       const pollRes = await fetch(pollUrl, {
@@ -223,7 +245,7 @@ function startHttpsServer() {
       const list = await docker.listContainers({ all: true });
       const containers = list.map(info => {
         const name = (info.Names && info.Names[0]) ? info.Names[0].replace(/^\//, '') : info.Id.substring(0, 12);
-        const m = name.match(/^vc-(\\d+)$/);
+        const m = name.match(/^vc-(\d+)$/);
         const serverId = m ? Number(m[1]) : undefined;
         const running = info.State === 'running';
         return { id: info.Id, name, serverId, running };
@@ -231,6 +253,72 @@ function startHttpsServer() {
       res.json({ containers });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'inventory_failed' });
+    }
+  });
+
+  // Console: stream logs via SSE
+  app.get('/logs/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+      const follow = req.query.follow === '1' || req.query.follow === 'true';
+      const tail = Number(req.query.tail || 200);
+      const opts = { follow, stdout: true, stderr: true, tail } as any;
+      const stream = await container.logs(opts);
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const ping = setInterval(() => {
+        try { res.write(': ping\n\n'); } catch {}
+      }, 25000);
+
+      stream.on('data', (chunk: Buffer) => {
+        const line = chunk.toString('utf8');
+        res.write(`data: ${JSON.stringify(line)}\n\n`);
+      });
+      stream.on('end', () => {
+        clearInterval(ping);
+        try { res.end(); } catch {}
+      });
+      stream.on('error', (_e: any) => {
+        clearInterval(ping);
+        try { res.end(); } catch {}
+      });
+
+      const reqRaw = (res as any).req || undefined;
+      if (reqRaw && typeof reqRaw.on === 'function') {
+        reqRaw.on('close', () => { try { stream.destroy?.(); } catch {} clearInterval(ping); });
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'logs_failed' });
+    }
+  });
+
+  // Console: run a command via docker exec and return its output
+  app.post('/exec/:id', async (req, res) => {
+    const id = req.params.id;
+    const cmd = (req.body?.cmd || '').toString();
+    if (!cmd || cmd.length > 1000) return res.status(400).json({ error: 'invalid_cmd' });
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+      const exec = await container.exec({
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty: false,
+        Cmd: ['/bin/sh', '-lc', cmd],
+      } as any);
+      const stream = await exec.start({ hijack: true, stdin: false } as any);
+      let output = '';
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (d: Buffer) => (output += d.toString('utf8')));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      res.json({ ok: true, output });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'exec_failed' });
     }
   });
 
@@ -252,7 +340,11 @@ function startHttpsServer() {
         // ignore pre-check failures and proceed
       }
 
-      // Ensure image is present
+      // Ensure persistent server directory and image presence
+      const srvDir = serverDir(serverId);
+      ensureDir(SERVERS_DIR);
+      ensureDir(srvDir);
+
       await new Promise<void>((resolve, reject) => {
         docker.pull(image, (err: any, stream: any) => {
           if (err) return reject(err);
@@ -264,7 +356,13 @@ function startHttpsServer() {
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
+          Tty: true,
+          OpenStdin: true,
+          AttachStdin: true,
+          AttachStdout: true,
+          AttachStderr: true,
           HostConfig: {
+            Binds: [`${srvDir}:/srv`],
             NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
             Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
             RestartPolicy: { Name: 'unless-stopped' },
@@ -272,7 +370,7 @@ function startHttpsServer() {
           Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
           Cmd: [],
         });
-        return res.json({ ok: true, id: container.id, existed: false });
+        return res.json({ ok: true, id: container.id, existed: false, volume: '/srv' });
       } catch (e: any) {
         // If name conflict happened due to a race, treat as existed
         const msg = String(e?.message || '');
@@ -282,18 +380,18 @@ function startHttpsServer() {
             const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
             if (Array.isArray(matches) && matches.length > 0) {
               const info = matches[0];
-              return res.json({ ok: true, id: info.Id, existed: true });
+              return res.json({ ok: true, id: info.Id, existed: true, volume: '/srv' });
             }
             // Fallback to inspect by name with and without leading slash
             try {
               const c1 = docker.getContainer(containerName);
               await c1.inspect();
-              return res.json({ ok: true, id: c1.id, existed: true });
+              return res.json({ ok: true, id: c1.id, existed: true, volume: '/srv' });
             } catch {}
             try {
               const c2 = docker.getContainer(`/${containerName}`);
               await c2.inspect();
-              return res.json({ ok: true, id: c2.id, existed: true });
+              return res.json({ ok: true, id: c2.id, existed: true, volume: '/srv' });
             } catch {}
           } catch {
             // ignore and fall through to error
@@ -383,9 +481,127 @@ function startHttpsServer() {
     }
   });
 
+  // Simple file manager on persistent volume /data/servers/<id> mounted at /srv inside containers
+  const upload = multer({ storage: multer.memoryStorage() });
+  app.get('/fs/:id/list', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const target = safeResolve(root, (req.query.path as string) || '/');
+      const entries = await fs.promises.readdir(target, { withFileTypes: true });
+      const items = await Promise.all(entries.map(async (ent) => {
+        const full = path.join(target, ent.name);
+        const st = await fs.promises.stat(full);
+        return {
+          name: ent.name,
+          type: ent.isDirectory() ? 'dir' : 'file',
+          size: ent.isDirectory() ? null : st.size,
+          mtime: st.mtime,
+        };
+      }));
+      res.json({ path: target.replace(root, '') || '/', items });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'list_failed' });
+    }
+  });
+
+  app.get('/fs/:id/download', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const target = safeResolve(root, (req.query.path as string) || '/');
+      const st = await fs.promises.stat(target);
+      if (st.isDirectory()) {
+        // Return a tar archive of the directory
+        const pack = tar.pack();
+        const base = target;
+        const walk = async (dir: string, rel: string) => {
+          const ents = await fs.promises.readdir(dir, { withFileTypes: true });
+          for (const ent of ents) {
+            const full = path.join(dir, ent.name);
+            const relPath = path.join(rel, ent.name);
+            const stat = await fs.promises.stat(full);
+            if (ent.isDirectory()) {
+              await new Promise<void>((resolve) => pack.entry({ name: relPath + '/', type: 'directory', mode: stat.mode }, resolve));
+              await walk(full, relPath);
+            } else {
+              const data = await fs.promises.readFile(full);
+              await new Promise<void>((resolve) => pack.entry({ name: relPath, size: data.length, mode: stat.mode }, data, resolve));
+            }
+          }
+        };
+        await walk(base, '');
+        pack.finalize();
+        res.setHeader('Content-Type', 'application/x-tar');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(target)}.tar"`);
+        pack.pipe(res);
+      } else {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(target)}"`);
+        fs.createReadStream(target).pipe(res);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'download_failed' });
+    }
+  });
+
+  app.post('/fs/:id/upload', upload.single('file'), async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const dirPath = safeResolve(root, (req.query.path as string) || '/');
+      await fs.promises.mkdir(dirPath, { recursive: true });
+      const file = (req as any).file;
+      if (!file) return res.status(400).json({ error: 'file_required' });
+      const dest = path.join(dirPath, file.originalname);
+      await fs.promises.writeFile(dest, file.buffer);
+      res.json({ ok: true, path: dest.replace(root, '') });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'upload_failed' });
+    }
+  });
+
+  app.post('/fs/:id/mkdir', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const dirPath = safeResolve(root, (req.body?.path as string) || '/');
+      await fs.promises.mkdir(dirPath, { recursive: true });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'mkdir_failed' });
+    }
+  });
+
+  app.post('/fs/:id/delete', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const p = safeResolve(root, (req.body?.path as string) || '/');
+      await fs.promises.rm(p, { recursive: true, force: true });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'delete_failed' });
+    }
+  });
+
+  app.post('/fs/:id/rename', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const from = safeResolve(root, (req.body?.from as string) || '/');
+      const to = safeResolve(root, (req.body?.to as string) || '/');
+      await fs.promises.rename(from, to);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'rename_failed' });
+    }
+  });
+
   const server = https.createServer(tlsOpts, app);
   server.listen(PORT, () => {
     console.log(`VelvaCloud daemon listening on https://0.0.0.0:${PORT}`);
+    console.log(`Persistent server data at ${SERVERS_DIR} (mounted into containers at /srv)`);
   });
 }
 

@@ -444,4 +444,72 @@ export class ServersService {
     // Keep running after restart; worker will update DB
     return this.getById(id);
   }
+
+  // New: console and file manager operations
+
+  async streamLogs(serverId: number, res: any) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) {
+      res.status(404).end();
+      return;
+    }
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.streamLogs(baseURL, serverId, res);
+    }
+
+  async exec(serverId: number, cmd: string) {
+    if (!cmd) throw new BadRequestException('cmd required');
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.exec(baseURL, serverId, cmd);
+  }
+
+  async fsList(serverId: number, path: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.fsList(baseURL, serverId, path);
+  }
+
+  async fsDownload(serverId: number, path: string, res: any) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) {
+      res.status(404).end();
+      return;
+    }
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    const { headers, stream } = await this.agent.fsDownloadStream(baseURL, serverId, path);
+    if (headers['content-type']) res.setHeader('Content-Type', headers['content-type']);
+    if (headers['content-disposition']) res.setHeader('Content-Disposition', headers['content-disposition']);
+    stream.pipe(res);
+  }
+
+  async fsUpload(serverId: number, dirPath: string, filename: string, content: Buffer) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.fsUpload(baseURL, serverId, dirPath, filename, content);
+  }
+
+  async fsMkdir(serverId: number, dirPath: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.fsMkdir(baseURL, serverId, dirPath);
+  }
+
+  async fsDelete(serverId: number, targetPath: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.fsDelete(baseURL, serverId, targetPath);
+  }
+
+  async fsRename(serverId: number, from: string, to: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    return this.agent.fsRename(baseURL, serverId, from, to);
+  }
 }

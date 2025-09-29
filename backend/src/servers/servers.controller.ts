@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, Request, UseGuards } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, ParseIntPipe, Patch, Post, Query, Request, Res, UseGuards } from '@nestjs/common';
 import { ServersService } from './servers.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { Roles } from '../common/roles.decorator';
@@ -41,6 +41,90 @@ export class ServersController {
       return null;
     }
     return s;
+  }
+
+  // Console logs SSE proxy
+  @Get(':id/logs')
+  async logs(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Res() res: any) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      return res.status(404).end();
+    }
+    return this.service.streamLogs(id, res);
+  }
+
+  // Exec command inside container (best-effort)
+  @Post(':id/exec')
+  async exec(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { cmd: string }) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      throw new ForbiddenException();
+    }
+    return this.service.exec(id, body.cmd || '');
+  }
+
+  // File manager
+  @Get(':id/fs/list')
+  async fsList(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('path') path = '/') {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      throw new ForbiddenException();
+    }
+    return this.service.fsList(id, path);
+  }
+
+  @Get(':id/fs/download')
+  async fsDownload(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('path') path = '/', @Res() res: any) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      return res.status(403).end();
+    }
+    return this.service.fsDownload(id, path, res);
+  }
+
+  @Post(':id/fs/upload')
+  async fsUpload(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('path') path = '/', @Body() body: { filename: string; contentBase64: string }) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      throw new ForbiddenException();
+    }
+    const buf = Buffer.from(body.contentBase64 || '', 'base64');
+    return this.service.fsUpload(id, path, body.filename || 'upload.bin', buf);
+  }
+
+  @Post(':id/fs/mkdir')
+  async fsMkdir(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { path: string }) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      throw new ForbiddenException();
+    }
+    return this.service.fsMkdir(id, body.path || '/');
+  }
+
+  @Post(':id/fs/delete')
+  async fsDelete(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { path: string }) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      throw new ForbiddenException();
+    }
+    return this.service.fsDelete(id, body.path || '/');
+  }
+
+  @Post(':id/fs/rename')
+  async fsRename(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { from: string; to: string }) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s || (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER))) {
+      throw new ForbiddenException();
+    }
+    return this.service.fsRename(id, body.from || '/', body.to || '/');
   }
 
   @Post()

@@ -129,4 +129,63 @@ export class AgentClientService {
     const res = await this.getClient(baseURL).get('/inventory');
     return res.data;
   }
+
+  // Stream logs via SSE from agent to client response
+  async streamLogs(baseURL: string | undefined, serverId: number, res: any) {
+    const client = this.getClient(baseURL);
+    const agentRes = await client.get(`/logs/${serverId}?follow=1&tail=200`, { responseType: 'stream' });
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    agentRes.data.pipe(res);
+  }
+
+  async exec(baseURL: string | undefined, serverId: number, cmd: string): Promise<{ ok: boolean; output: string }> {
+    const res = await this.getClient(baseURL).post(`/exec/${serverId}`, { cmd });
+    return res.data;
+  }
+
+  async fsList(baseURL: string | undefined, serverId: number, path: string) {
+    const res = await this.getClient(baseURL).get(`/fs/${serverId}/list`, { params: { path } });
+    return res.data;
+  }
+
+  async fsDownloadStream(baseURL: string | undefined, serverId: number, path: string) {
+    const res = await this.getClient(baseURL).get(`/fs/${serverId}/download`, {
+      params: { path },
+      responseType: 'stream',
+    });
+    return { headers: res.headers, stream: res.data };
+  }
+
+  async fsUpload(baseURL: string | undefined, serverId: number, dirPath: string, filename: string, content: Buffer) {
+    // Minimal multipart body using form-data
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', content, { filename });
+    const headers = form.getHeaders();
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/upload`, form, {
+      params: { path: dirPath },
+      headers,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    });
+    return res.data;
+  }
+
+  async fsMkdir(baseURL: string | undefined, serverId: number, dirPath: string) {
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/mkdir`, { path: dirPath });
+    return res.data;
+  }
+
+  async fsDelete(baseURL: string | undefined, serverId: number, targetPath: string) {
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/delete`, { path: targetPath });
+    return res.data;
+  }
+
+  async fsRename(baseURL: string | undefined, serverId: number, from: string, to: string) {
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/rename`, { from, to });
+    return res.data;
+  }
 }
