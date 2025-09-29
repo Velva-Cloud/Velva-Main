@@ -150,12 +150,18 @@ export class AgentClientService {
     return res.data;
   }
 
-  async fsDownloadStream(baseURL: string | undefined, serverId: number, path: string) {
+  async fsDownloadStream(
+    baseURL: string | undefined,
+    serverId: number,
+    path: string,
+  ): Promise<{ headers: Record<string, any>; stream: any }> {
     const res = await this.getClient(baseURL).get(`/fs/${serverId}/download`, {
       params: { path },
       responseType: 'stream',
     });
-    return { headers: res.headers, stream: res.data };
+    // Avoid exposing Axios internal header types in declaration output
+    const headers = res.headers as any;
+    return { headers, stream: res.data as any };
   }
 
   async fsUpload(baseURL: string | undefined, serverId: number, dirPath: string, filename: string, content: Buffer) {
