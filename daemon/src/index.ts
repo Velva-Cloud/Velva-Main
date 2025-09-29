@@ -5,6 +5,7 @@ import path from 'path';
 import os from 'os';
 import Docker from 'dockerode';
 import forge from 'node-forge';
+import { PassThrough } from 'stream';
 
 // Runtime helpers for archives and uploads
 // eslint-disable-next-line @typescript-eslint/no-var-requires
@@ -285,7 +286,6 @@ function startHttpsServer() {
       const follow = req.query.follow === '1' || req.query.follow === 'true';
       const tail = Number(req.query.tail || 200);
       const opts = { follow, stdout: true, stderr: true, tail } as any;
-      const stream = await container.logs(opts);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -295,23 +295,49 @@ function startHttpsServer() {
         try { res.write(': ping\n\n'); } catch {}
       }, 25000);
 
-      stream.on('data', (chunk: Buffer) => {
-        const line = chunk.toString('utf8');
-        res.write(`data: ${JSON.stringify(line)}\n\n`);
-      });
-      stream.on('end', () => {
-        clearInterval(ping);
-        try { res.end(); } catch {}
-      });
-      stream.on('error', (_e: any) => {
-        clearInterval(ping);
-        try { res.end(); } catch {}
-      });
+      // Use callback overload to obtain a stream and satisfy TS types
+      container.logs(opts, (err: any, stream: any) => {
+        if (err || !stream) {
+          clearInterval(ping);
+          return res.status(500).json({ error: err?.message || 'logs_failed' });
+        }
 
-      const reqRaw = (res as any).req || undefined;
-      if (reqRaw && typeof reqRaw.on === 'function') {
-        reqRaw.on('close', () => { try { stream.destroy?.(); } catch {} clearInterval(ping); });
-      }
+        // Demux stdout/stderr when needed
+        const out = new PassThrough();
+        const errOut = new PassThrough();
+        try {
+          (docker as any).modem.demuxStream(stream, out, errOut);
+        } catch {
+          // If not multiplexed (TTY), just use the stream directly
+          stream.on('data', (chunk: Buffer) => {
+            const line = chunk.toString('utf8');
+            res.write(`data: ${JSON.stringify(line)}\n\n`);
+          });
+        }
+
+        const onChunk = (chunk: Buffer) => {
+          const line = chunk.toString('utf8');
+          res.write(`data: ${JSON.stringify(line)}\n\n`);
+        };
+        out.on('data', onChunk);
+        errOut.on('data', onChunk);
+
+        const endAll = () => {
+          clearInterval(ping);
+          try { out.destroy(); } catch {}
+          try { errOut.destroy(); } catch {}
+          try { stream.destroy(); } catch {}
+          try { res.end(); } catch {}
+        };
+
+        stream.on('end', endAll);
+        stream.on('error', endAll);
+
+        const reqRaw = (res as any).req || undefined;
+        if (reqRaw && typeof reqRaw.on === 'function') {
+          reqRaw.on('close', endAll);
+        }
+      });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'logs_failed' });
     }
@@ -887,11 +913,7 @@ function startSftpServer() {
   });
 }
 
-(async () => {
-  await bootstrapIfNeeded();
-  startHttpsServer();
-  startSftpServer();
-})();
+// removed duplicate bootstrap/start; see unified bootstrap at end of file
 
 async function startHeartbeat() {
   try {
@@ -930,5 +952,6 @@ async function startHeartbeat() {
 (async () => {
   await bootstrapIfNeeded();
   startHttpsServer();
+  startSftpServer();
   startHeartbeat();
 })();
