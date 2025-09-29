@@ -204,7 +204,7 @@ export class QueueService implements OnModuleInit {
       worker.on('active', job => this.emit('job_active', { queue: name, id: job.id, data: job.data }));
       worker.on('completed', job => this.emit('job_completed', { queue: name, id: job.id, returnvalue: job.returnvalue }));
       worker.on('failed', (job, err) => this.emit('job_failed', { queue: name, id: job?.id, reason: err?.message || String(err) }));
-      worker.on('waiting', jobId => this.emit('job_waiting', { queue: name, id: jobId }));
+      // 'waiting' is not a typed Worker event in BullMQ; omit to satisfy TS types.
       worker.on('error', err => this.emit('worker_error', { queue: name, reason: err?.message || String(err) }));
     };
 
@@ -251,7 +251,7 @@ export class QueueService implements OnModuleInit {
 
   async getJob(name: string, id: number) {
     const q = this.getQueueByName(name);
-    const job = await q.getJob(String(id));
+    const job = await q.getJob(id as any);
     if (!job) return null;
     return {
       id: job.id,
@@ -291,7 +291,7 @@ export class QueueService implements OnModuleInit {
 
   async retryJob(name: string, id: number) {
     const q = this.getQueueByName(name);
-    const job = await q.getJob(String(id));
+    const job = await q.getJob(id as any);
     if (!job) return { ok: false, error: 'job_not_found' };
     await job.retry();
     return { ok: true };
@@ -299,7 +299,7 @@ export class QueueService implements OnModuleInit {
 
   async removeJob(name: string, id: number) {
     const q = this.getQueueByName(name);
-    const job = await q.getJob(String(id));
+    const job = await q.getJob(id as any);
     if (!job) return { ok: false, error: 'job_not_found' };
     await job.remove();
     return { ok: true };
@@ -307,7 +307,7 @@ export class QueueService implements OnModuleInit {
 
   async promoteJob(name: string, id: number) {
     const q = this.getQueueByName(name);
-    const job = await q.getJob(String(id));
+    const job = await q.getJob(id as any);
     if (!job) return { ok: false, error: 'job_not_found' };
     await job.promote();
     return { ok: true };
