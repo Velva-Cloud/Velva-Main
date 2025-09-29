@@ -1,5 +1,5 @@
 import Head from 'next/head';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import NavBar from '../../components/NavBar';
 import { useRequireAuth } from '../../utils/guards';
@@ -26,6 +26,8 @@ type Server = {
   provisionStatus?: ProvisionStatus;
 };
 
+type FsItem = { name: string; type: 'file' | 'dir'; size?: number | null; mtime?: string | Date };
+
 export default function ServerPage() {
   useRequireAuth();
   const toast = useToast();
@@ -37,6 +39,17 @@ export default function ServerPage() {
   const [err, setErr] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState('');
+
+  // Console state
+  const [consoleLines, setConsoleLines] = useState<string[]>([]);
+  const [cmd, setCmd] = useState('');
+  const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
+  const abortRef = useRef<AbortController | null>(null);
+
+  // File manager state
+  const [fmPath, setFmPath] = useState('/');
+  const [fmItems, setFmItems] = useState<FsItem[]>([]);
+  const [uploading, setUploading] = useState(false);
 
   const role = useMemo(() => getUserRole(), []);
   const canControl =
@@ -61,44 +74,155 @@ export default function ServerPage() {
     fetchServer();
   }, [id]);
 
-  const call = async (action: 'start' | 'stop' | 'restart') => {
-    if (!srv) return;
-    setBusy(true);
-    setErr(null);
+  // Console: start SSE over fetch (so we can send Authorization header)
+  const startConsole = async () => {
+    if (!id) return;
+    stopConsole();
     try {
-      const payload: any = {};
-      if (role === 'SUPPORT') {
-        if (!reason.trim()) {
-          toast.show('Reason is required for support actions', 'error');
-          setBusy(false);
-          return;
-        }
-        payload.reason = reason.trim();
+      abortRef.current = new AbortController();
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : '';
+      const res = await fetch(`${api.defaults.baseURL}/servers/${id}/logs`, {
+        method: 'GET',
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        signal: abortRef.current.signal,
+      });
+      if (!res.ok || !res.body) {
+        toast.show('Failed to open console stream', 'error');
+        return;
       }
-      await api.post(`/servers/${srv.id}/${action}`, payload);
-      await fetchServer();
-      toast.show(`Server ${action}ed`, 'success');
-      if (role === 'SUPPORT') setReason('');
+      const reader = res.body.getReader();
+      readerRef.current = reader;
+      const decoder = new TextDecoder();
+      let buffer = '';
+      const pump = async (): Promise<void> => {
+        const r = await reader.read();
+        if (r.done) return;
+        const chunk = decoder.decode(r.value, { stream: true });
+        buffer += chunk;
+        // SSE messages separated by double newline
+        let idx: number;
+        while ((idx = buffer.indexOf('\n\n')) >= 0) {
+          const part = buffer.slice(0, idx);
+          buffer = buffer.slice(idx + 2);
+          const line = part.split('\n').find(l => l.startsWith('data: '));
+          if (line) {
+            try {
+              const payload = JSON.parse(line.slice(6));
+              setConsoleLines(prev => [...prev, payload]);
+            } catch {
+              setConsoleLines(prev => [...prev, line.slice(6)]);
+            }
+          }
+        }
+        await pump();
+      };
+      pump();
+    } catch {
+      // ignore open errors
+    }
+  };
+
+  const stopConsole = () => {
+    try { abortRef.current?.abort(); } catch {}
+    abortRef.current = null;
+    try { readerRef.current?.cancel(); } catch {}
+    readerRef.current = null;
+  };
+
+  useEffect(() => {
+    // start console when server id changes
+    if (id) {
+      setConsoleLines([]);
+      startConsole();
+    }
+    return () => stopConsole();
+  }, [id]);
+
+  const runCmd = async () => {
+    if (!srv || !cmd.trim()) return;
+    setBusy(true);
+    try {
+      const res = await api.post(`/servers/${srv.id}/exec`, { cmd: cmd.trim() });
+      const out = (res.data?.output || '').toString();
+      if (out) {
+        setConsoleLines(prev => [...prev, `$ ${cmd.trim()}`, out]);
+      }
+      setCmd('');
     } catch (e: any) {
-      const msg = e?.response?.data?.message || `Failed to ${action} server`;
-      setErr(msg);
-      toast.show(msg, 'error');
+      toast.show(e?.response?.data?.message || 'Command failed', 'error');
     } finally {
       setBusy(false);
     }
   };
 
-  const retryProvision = async () => {
+  // File manager
+  const loadDir = async (p: string) => {
     if (!srv) return;
-    setBusy(true);
     try {
-      await api.post(`/servers/${srv.id}/provision`);
-      await fetchServer();
-      toast.show('Provision request sent', 'success');
+      const res = await api.get(`/servers/${srv.id}/fs/list`, { params: { path: p } });
+      setFmItems((res.data?.items || []) as FsItem[]);
+      setFmPath(res.data?.path || p);
     } catch (e: any) {
-      toast.show(e?.response?.data?.message || 'Failed to request provisioning', 'error');
+      toast.show(e?.response?.data?.message || 'Failed to list directory', 'error');
+    }
+  };
+
+  useEffect(() => {
+    if (srv) loadDir('/');
+  }, [srv?.id]);
+
+  const goTo = async (name: string, type: 'file' | 'dir') => {
+    if (type === 'dir') {
+      const next = fmPath.endsWith('/') ? `${fmPath}${name}` : `${fmPath}/${name}`;
+      await loadDir(next);
+    }
+  };
+
+  const upDir = async () => {
+    if (fmPath === '/' || !fmPath) return;
+    const parts = fmPath.split('/').filter(Boolean);
+    parts.pop();
+    const next = '/' + parts.join('/');
+    await loadDir(next || '/');
+  };
+
+  const handleUpload = async (files: FileList | null) => {
+    if (!srv || !files || !files.length) return;
+    setUploading(true);
+    try {
+      const f = files[0];
+      const buf = await f.arrayBuffer();
+      const base64 = typeof window !== 'undefined' ? btoa(String.fromCharCode(...new Uint8Array(buf))) : Buffer.from(buf).toString('base64');
+      await api.post(`/servers/${srv.id}/fs/upload`, { filename: f.name, contentBase64: base64 }, { params: { path: fmPath } });
+      toast.show('File uploaded', 'success');
+      await loadDir(fmPath);
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Upload failed', 'error');
     } finally {
-      setBusy(false);
+      setUploading(false);
+    }
+  };
+
+  const downloadItem = async (name: string) => {
+    if (!srv) return;
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : '';
+      const p = fmPath.endsWith('/') ? `${fmPath}${name}` : `${fmPath}/${name}`;
+      const res = await fetch(`${api.defaults.baseURL}/servers/${srv.id}/fs/download?path=${encodeURIComponent(p)}`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = name.endsWith('.tar') ? name : name; // server sets content-disposition
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e: any) {
+      toast.show(e?.message || 'Download failed', 'error');
     }
   };
 
@@ -244,14 +368,51 @@ export default function ServerPage() {
               )}
             </section>
 
-            <section className="card p-4">
+            <section className="card p-4 mb-6">
               <div className="flex items-center justify-between">
                 <h2 className="font-semibold">Console</h2>
-                <button onClick={fetchServer} disabled={busy} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Refresh</button>
+                <div className="flex gap-2">
+                  <button onClick={() => { setConsoleLines([]); startConsole(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
+                  <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
+                </div>
               </div>
-              <pre className="mt-3 text-xs bg-slate-800/70 rounded p-3 overflow-auto" style={{ minHeight: 200 }}>
-                {srv.consoleOutput || 'Loading…'}
+              <pre className="mt-3 text-xs bg-slate-800/70 rounded p-3 overflow-auto" style={{ minHeight: 200, maxHeight: 360 }}>
+                {consoleLines.length ? consoleLines.join('\n') : 'Connecting…'}
               </pre>
+              <div className="mt-3 flex gap-2">
+                <input value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="Enter command" className="input flex-1" onKeyDown={(e) => { if (e.key === 'Enter') runCmd(); }} />
+                <button onClick={runCmd} disabled={busy || !cmd.trim()} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Run</button>
+              </div>
+            </section>
+
+            <section className="card p-4">
+              <div className="flex items-center justify-between">
+                <h2 className="font-semibold">Files</h2>
+                <div className="flex items-center gap-2">
+                  <button onClick={upDir} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Up</button>
+                  <span className="text-sm text-slate-400">{fmPath}</span>
+                  <label className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 cursor-pointer ${uploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
+                    <input type="file" className="hidden" onChange={(e) => handleUpload(e.target.files)} disabled={uploading} />
+                    Upload
+                  </label>
+                </div>
+              </div>
+              <div className="mt-3 grid grid-cols-1 gap-1">
+                {fmItems.map((it) => (
+                  <div key={`${fmPath}/${it.name}`} className="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/50">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs px-1.5 py-0.5 rounded border border-slate-700">{it.type === 'dir' ? 'DIR' : 'FILE'}</span>
+                      <button onClick={() => goTo(it.name, it.type)} className="hover:underline text-left">{it.name}</button>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {it.type === 'file' && (
+                        <button onClick={() => downloadItem(it.name)} className="text-xs px-2 py-0.5 rounded border border-slate-800 hover:bg-slate-800">Download</button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+                {!fmItems.length && <div className="text-sm text-slate-400">Empty directory</div>}
+              </div>
             </section>
           </>
         )}
