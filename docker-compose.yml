@@ -133,7 +133,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     # Publish SFTP to host
     ports:
-      - "${SFTP_HOST_PORT:-2222}:2222"
+      - "2223:2222"
     # Do not publish the daemon TLS port to host
     expose:
       - "9443"
