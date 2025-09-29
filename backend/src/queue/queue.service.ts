@@ -333,7 +333,7 @@ export class QueueService implements OnModuleInit {
 
   async cleanQueue(name: string, state: 'completed' | 'failed', graceMs = 0, limit = 1000) {
     const q = this.getQueueByName(name);
-    await q.clean(graceMs, state, limit);
+    await q.clean(graceMs, state as any, limit);
     return { ok: true };
   }
 
