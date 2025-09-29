@@ -7,6 +7,12 @@ import api from '../../utils/api';
 import { getUserRole } from '../../utils/auth';
 import { useToast } from '../../components/Toast';
 
+type ProvisionStatus = {
+  lastEvent: 'provision_ok' | 'provision_failed' | 'provision_request' | null;
+  lastError?: string | null;
+  at?: string | Date | null;
+} | null;
+
 type Server = {
   id: number;
   userId: number;
@@ -17,6 +23,7 @@ type Server = {
   createdAt: string;
   mockIp?: string;
   consoleOutput?: string;
+  provisionStatus?: ProvisionStatus;
 };
 
 export default function ServerPage() {
@@ -81,6 +88,34 @@ export default function ServerPage() {
     }
   };
 
+  const retryProvision = async () => {
+    if (!srv) return;
+    setBusy(true);
+    try {
+      await api.post(`/servers/${srv.id}/provision`);
+      await fetchServer();
+      toast.show('Provision request sent', 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to request provisioning', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const renderProvisionBadge = (ps: ProvisionStatus) => {
+    if (!ps || !ps.lastEvent) {
+      return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded bg-slate-800 border border-slate-700 text-slate-300">No provision data</span>;
+    }
+    const ts = ps.at ? new Date(ps.at as any).toLocaleString() : '';
+    if (ps.lastEvent === 'provision_ok') {
+      return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded bg-emerald-700/30 border border-emerald-700 text-emerald-300">Provisioned • {ts}</span>;
+    }
+    if (ps.lastEvent === 'provision_failed') {
+      return <span title={ps.lastError || undefined} className="inline-flex items-center px-2 py-0.5 text-xs rounded bg-red-700/30 border border-red-700 text-red-300">Provision failed • {ts}</span>;
+    }
+    return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded bg-indigo-700/30 border border-indigo-700 text-indigo-300">Provision requested • {ts}</span>;
+  };
+
   return (
     <>
       <Head>
@@ -133,6 +168,10 @@ export default function ServerPage() {
                   <div className="text-sm text-slate-400">Created</div>
                   <div className="font-semibold">{new Date(srv.createdAt).toLocaleString()}</div>
                 </div>
+                <div>
+                  <div className="text-sm text-slate-400">Provision</div>
+                  <div className="font-semibold">{renderProvisionBadge(srv.provisionStatus || null)}</div>
+                </div>
               </div>
 
               {canControl && (
@@ -152,6 +191,7 @@ export default function ServerPage() {
                     <button onClick={() => call('start')} disabled={busy} className={`px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
                     <button onClick={() => call('stop')} disabled={busy} className={`px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
                     <button onClick={() => call('restart')} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
+                    <button onClick={retryProvision} disabled={busy} className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Retry provision</button>
                     {srv.status !== 'suspended' ? (
                       <button
                         onClick={async () => {

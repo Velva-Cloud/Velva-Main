@@ -105,6 +105,20 @@ export class NodesAgentController {
       });
     }
 
+    // Optional: auto-approve nodes in development for easier local testing
+    if (process.env.AUTO_APPROVE_NODES === 'true') {
+      try {
+        const nodeCertPem = this.pki.signCsr(body.csrPem);
+        await this.prisma.node.update({
+          where: { id: node.id },
+          data: { approved: true, nodeCertPem },
+        });
+        node.approved = true;
+      } catch {
+        // If signing fails, leave node pending
+      }
+    }
+
     await this.prisma.log.create({
       data: { userId: null, action: 'plan_change', metadata: { event: 'node_register', nodeId: node.id, apiUrl: body.apiUrl, method: joinCode ? 'join_code' : 'secret' } },
     });

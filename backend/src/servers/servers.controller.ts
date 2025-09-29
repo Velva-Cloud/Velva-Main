@@ -46,7 +46,7 @@ export class ServersController {
   @Post()
   async create(@Request() req: any, @Body() body: CreateServerDto) {
     const user = req.user as { userId: number };
-    return this.service.create(user.userId, body.planId, body.name);
+    return this.service.create(user.userId, body.planId, body.name, body.image);
   }
 
   // Admin-only updates
@@ -88,7 +88,7 @@ export class ServersController {
 
   // Future daemon hooks (stubs)
   @Post(':id/provision')
-  @Roles(Role.ADMIN, Role.OWNER)
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async provision(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
     const actor = req.user as { userId: number };
     return this.service.provision(id, actor.userId);

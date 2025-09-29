@@ -31,8 +31,6 @@ const gbp = (v: number | string | undefined | null) => {
   return new Intl.NumberFormat('en-GB', { style: 'currency', currency: 'GBP', maximumFractionDigits: 2 }).format(Number(num));
 };
 
-const PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID;
-
 export default function Billing() {
   useRequireAuth();
   const toast = useToast();
@@ -43,6 +41,7 @@ export default function Billing() {
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [countdown, setCountdown] = useState<string>('');
+  const [currency, setCurrency] = useState<'GBP' | 'USD' | 'EUR'>('GBP');
 
   const refresh = async () => {
     setLoading(true);
@@ -90,19 +89,7 @@ export default function Billing() {
     return () => clearInterval(timer);
   }, [sub?.status, sub?.graceUntil]);
 
-  // Inject PayPal JS when client id is present
-  useEffect(() => {
-    if (!PAYPAL_CLIENT_ID) return;
-    const src = `https://www.paypal.com/sdk/js?client-id=${PAYPAL_CLIENT_ID}&vault=true&intent=subscription&currency=GBP`;
-    if (document.querySelector(`script[src^="https://www.paypal.com/sdk/js"]`)) return;
-    const s = document.createElement('script');
-    s.src = src;
-    s.async = true;
-    document.body.appendChild(s);
-    return () => {
-      // no-op, keep script cached
-    };
-  }, []);
+  
 
   // Custom RAM selection per-plan (for custom plan)
   const [customGB, setCustomGB] = useState<Record<number, number>>({});
@@ -142,78 +129,7 @@ export default function Billing() {
     }
   };
 
-  const renderPayPalButton = (p: Plan, isCustom: boolean, selectedGB?: number | null) => {
-    if (!PAYPAL_CLIENT_ID) return null;
-    if (isCustom) {
-      // custom per-GB plan not supported on PayPal in this pass
-      return (
-        <button className="px-4 py-2 rounded border border-slate-700 text-slate-400 cursor-not-allowed" title="Custom RAM not supported via PayPal yet">
-          PayPal (unavailable)
-        </button>
-      );
-    }
-    return (
-      <button
-        onClick={async () => {
-          try {
-            setBusy(true);
-            // Ensure PayPal plan exists server-side
-            const res = await api.post('/billing/paypal/ensure-plan', { planId: p.id });
-            const planId = res.data.paypalPlanId as string;
-            // Create subscription via PayPal JS
-            // @ts-ignore
-            if (!(window as any).paypal?.Buttons) {
-              toast.show('PayPal not ready. Please try again in a moment.', 'error');
-              return;
-            }
-            // Dynamically create a hidden container and render a one-time buttons instance to kick off the approval
-            const container = document.createElement('div');
-            container.style.display = 'none';
-            document.body.appendChild(container);
-            // @ts-ignore
-            const buttons = (window as any).paypal.Buttons({
-              style: { layout: 'vertical' },
-              createSubscription: function (_: any, actions: any) {
-                return actions.subscription.create({
-                  plan_id: planId,
-                });
-              },
-              onApprove: async (_: any, data: any) => {
-                try {
-                  await api.post('/billing/paypal/complete', { planId: p.id, subscriptionId: data.subscriptionID });
-                  toast.show('Subscription activated via PayPal', 'success');
-                  await refresh();
-                } catch (e: any) {
-                  toast.show(e?.response?.data?.message || 'Failed to activate subscription', 'error');
-                }
-              },
-              onError: (err: any) => {
-                console.error(err);
-                toast.show('PayPal error', 'error');
-              },
-            });
-            buttons.render(container);
-            // programmatically click the rendered button
-            const btn = container.querySelector('iframe') as HTMLIFrameElement | null;
-            if (!btn) {
-              // in some cases render async; fall back to alert
-              toast.show('Click the PayPal button that just appeared.', 'info');
-              container.style.display = 'block';
-            }
-          } catch (e: any) {
-            const msg = e?.response?.data?.message || 'Failed to initialize PayPal';
-            toast.show(msg, 'error');
-          } finally {
-            setBusy(false);
-          }
-        }}
-        className="px-4 py-2 rounded border border-blue-700/40 hover:bg-blue-900/30 transition shadow"
-        disabled={busy}
-      >
-        Subscribe with PayPal
-      </button>
-    );
-  };
+  
 
   return (
     <>
@@ -224,7 +140,20 @@ export default function Billing() {
       <main className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-2xl font-semibold">Billing • Choose your server size</h1>
-          <a href="/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 transition">Transactions</a>
+          <div className="flex items-center gap-3">
+            <label className="text-sm text-slate-400">Currency</label>
+            <select
+              value={currency}
+              onChange={(e) => setCurrency(e.target.value as any)}
+              className="px-2 py-1 rounded bg-slate-800 border border-slate-700"
+              aria-label="Select currency"
+            >
+              <option value="GBP">GBP</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+            </select>
+            <a href="/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 transition">Transactions</a>
+          </div>
         </div>
 
         {err && <div className="mb-4 text-red-400">{err}</div>}
@@ -459,7 +388,7 @@ export default function Billing() {
                             onClick={async () => {
                               try {
                                 setBusy(true);
-                                const payload: any = { planId: p.id };
+                                const payload: any = { planId: p.id, currency: currency.toLowerCase() };
                                 if (isCustom) payload.customRamGB = selectedGB || minGB || 32;
                                 const res = await api.post('/billing/stripe/checkout', payload);
                                 window.location.href = res.data.url;
@@ -475,9 +404,6 @@ export default function Billing() {
                           >
                             Subscribe with Stripe
                           </button>
-
-                          {/* PayPal CTA (fixed-price plans only for now) */}
-                          {renderPayPalButton(p, isCustom, selectedGB)}
                         </div>
                       </div>
                     );

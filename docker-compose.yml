@@ -17,6 +17,19 @@ services:
       timeout: 5s
       retries: 10
 
+  redis:
+    image: redis:7-alpine
+    container_name: hosting_redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   backend:
     build: ./backend
     container_name: hosting_backend
@@ -35,14 +48,27 @@ services:
       DAEMON_CA: /app/certs/ca.crt
       DAEMON_CLIENT_CERT: /app/certs/panel.crt
       DAEMON_CLIENT_KEY: /app/certs/panel.key
+      # Agent registration (local dev)
+      NODE_REGISTRATION_SECRET: localdev
+      AUTO_APPROVE_NODES: "true"
+      # Agent URL inside compose network (use DNS that matches cert SAN)
+      DAEMON_URL: https://local-node:9443
+      # Auto-generate panel client cert if missing
+      AUTO_GENERATE_PANEL_CERT: "true"
+      # Development: allow CN/SAN hostname mismatch while CA is still enforced
+      AGENT_SKIP_HOSTNAME_VERIFY: "true"
+      # Redis for job queues
+      REDIS_URL: redis://redis:6379
     depends_on:
       mysql:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     volumes:
       - type: bind
         source: ${PWD}/pki
         target: /app/certs
-        read_only: true
+        read_only: false
     ports:
       - "4000:4000"
     healthcheck:
@@ -73,8 +99,44 @@ services:
       retries: 10
       start_period: 20s
 
+  daemon:
+    build: ./daemon
+    container_name: hosting_daemon
+    restart: unless-stopped
+    hostname: local-node
+    environment:
+      # Inform daemon about service name for DNS SAN
+      DOCKER_SERVICE_NAME: daemon
+      # Point agent to panel API (inside compose network)
+      PANEL_URL: http://backend:4000/api
+      # Auto-bootstrap using static registration secret (matches backend)
+      REGISTRATION_SECRET: localdev
+      # Optional descriptive metadata
+      NODE_NAME: local-node
+      NODE_LOCATION: local
+      # TLS output and listen port
+      CERTS_DIR: /data/certs
+      DAEMON_PORT: 9443
+    depends_on:
+      backend:
+        condition: service_healthy
+    volumes:
+      - daemon_certs:/data/certs
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Do not publish the daemon port to host to avoid conflicts.
+    # The daemon only needs to reach the panel; inbound mTLS calls from panel
+    # are not required in Phase 1–3.
+    expose:
+      - "9443"
+    networks:
+      default:
+        aliases:
+          - local-node
+
 # Remove caddy here to avoid port 80/443 conflicts with your existing site.
 # Configure your existing web server to reverse proxy the subdomain instead.
 
 volumes:
   mysql_data:
+  daemon_certs:
+  redis_data:

@@ -4,6 +4,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { MailService } from '../mail/mail.service';
 import { SettingsService } from '../settings/settings.service';
 
+type Currency = 'gbp' | 'usd' | 'eur';
+const AllowedCurrencies: Currency[] = ['gbp', 'usd', 'eur'];
+
 @Injectable()
 export class StripeService {
   private readonly logger = new Logger(StripeService.name);
@@ -26,37 +29,48 @@ export class StripeService {
     }
   }
 
-  async ensureStripePrice(planId: number) {
+  private normalizeCurrency(cur?: string): Currency {
+    const c = (cur || 'gbp').toLowerCase();
+    if ((AllowedCurrencies as string[]).includes(c)) return c as Currency;
+    return 'gbp';
+  }
+
+  async ensureStripePrice(planId: number, currency?: string) {
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan || !plan.isActive) throw new BadRequestException('Invalid or inactive plan');
 
-    let productId = (plan.resources as any)?.stripeProductId as string | undefined;
-    let priceId = (plan.resources as any)?.stripePriceId as string | undefined;
+    const ccy = this.normalizeCurrency(currency);
+
+    const resources: any = plan.resources || {};
+    let productId = resources?.stripeProductId as string | undefined;
 
     if (!productId) {
       const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
       productId = product.id;
     }
 
+    const priceMap: Record<string, string> = resources?.stripePriceIds || {};
+    let priceId = priceMap[ccy];
+
     // Detect custom plan (per-GB pricing)
-    const resources: any = plan.resources || {};
     const ramRange = resources?.ramRange;
     const perGB = typeof resources?.pricePerGB === 'number' ? resources.pricePerGB : undefined;
-    let perGBPriceId = resources?.stripePerGBPriceId as string | undefined;
+    const perGBPriceMap: Record<string, string> = resources?.stripePerGBPriceIds || {};
+    let perGBPriceId = perGBPriceMap[ccy];
 
     if (ramRange && perGB) {
       if (!perGBPriceId) {
-        const unitAmount = Math.round(perGB * 100); // pennies per GB
+        const unitAmount = Math.round(perGB * 100); // cents per GB
         const price = await this.stripe.prices.create({
           product: productId,
           unit_amount: unitAmount,
-          currency: 'gbp',
+          currency: ccy,
           recurring: { interval: 'month' },
           metadata: { planId: String(plan.id), perGB: '1' },
         });
         perGBPriceId = price.id;
+        perGBPriceMap[ccy] = perGBPriceId;
       }
-      // For custom plans, always use per-GB price id
       priceId = perGBPriceId;
     }
 
@@ -64,9 +78,9 @@ export class StripeService {
     if (!priceId) {
       const unitAmount = Math.round(Number(plan.pricePerMonth) * 100);
       const price = await this.stripe.prices.create({
-        product: productId,
+        product: productId!,
         unit_amount: unitAmount,
-        currency: 'gbp',
+        currency: ccy,
         recurring: { interval: 'month' },
         metadata: { planId: String(plan.id) },
       });
@@ -74,17 +88,26 @@ export class StripeService {
     }
 
     // Persist back into resources JSON
-    const nextResources = { ...resources, stripeProductId: productId, stripePriceId: priceId, ...(perGBPriceId ? { stripePerGBPriceId: perGBPriceId } : {}) };
+    const nextResources = {
+      ...resources,
+      stripeProductId: productId,
+      stripePriceIds: { ...(resources.stripePriceIds || {}), [ccy]: priceId },
+      ...(Object.keys(perGBPriceMap).length ? { stripePerGBPriceIds: perGBPriceMap } : {}),
+      // backward-compat pointers
+      stripePriceId: resources.stripePriceId || priceId,
+      ...(perGBPriceId ? { stripePerGBPriceId: perGBPriceId } : {}),
+    };
     if (JSON.stringify(nextResources) !== JSON.stringify(resources)) {
       await this.prisma.plan.update({ where: { id: plan.id }, data: { resources: nextResources } });
     }
 
-    return { plan: { ...plan, resources: nextResources }, productId, priceId };
+    return { plan: { ...plan, resources: nextResources }, productId: productId!, priceId };
   }
 
-  async createCheckoutSession(userId: number, planId: number, successUrl?: string, cancelUrl?: string, customRamGB?: number) {
+  async createCheckoutSession(userId: number, planId: number, successUrl?: string, cancelUrl?: string, customRamGB?: number, currencyOverride?: string) {
     this.ensureStripeEnabled();
-    const { plan, priceId } = await this.ensureStripePrice(planId);
+    const currency = this.normalizeCurrency(currencyOverride);
+    const { plan, priceId } = await this.ensureStripePrice(planId, currency);
     const user = await this.prisma.user.findUnique({ where: { id: userId } });
     if (!user) throw new BadRequestException('User not found');
 
@@ -114,6 +137,7 @@ export class StripeService {
       metadata: {
         userId: String(userId),
         planId: String(planId),
+        currency,
         ...(ramRange && perGB ? { customRamGB: String(quantity) } : {}),
       },
     });
@@ -130,26 +154,28 @@ export class StripeService {
   }
 
   // Admin: set per-GB price and rotate Stripe Price
-  async setPerGBPrice(planId: number, perGB: number, deactivateOld = false) {
+  async setPerGBPrice(planId: number, perGB: number, deactivateOld = false, currency?: string) {
     this.ensureStripeEnabled();
     const plan = await this.prisma.plan.findUnique({ where: { id: planId } });
     if (!plan) throw new BadRequestException('Plan not found');
 
     // Ensure product exists
-    let productId = (plan.resources as any)?.stripeProductId as string | undefined;
+    const resources: any = plan.resources || {};
+    let productId = resources?.stripeProductId as string | undefined;
     if (!productId) {
       const product = await this.stripe.products.create({ name: plan.name, metadata: { planId: String(plan.id) } });
       productId = product.id;
     }
 
-    const resources: any = plan.resources || {};
-    const oldPerGBPriceId = resources?.stripePerGBPriceId as string | undefined;
+    const ccy = this.normalizeCurrency(currency);
+    const perGBPriceMap: Record<string, string> = resources?.stripePerGBPriceIds || {};
+    const oldPerGBPriceId = perGBPriceMap[ccy];
 
     const unitAmount = Math.round(perGB * 100); // pennies/GB
     const price = await this.stripe.prices.create({
-      product: productId,
+      product: productId!,
       unit_amount: unitAmount,
-      currency: 'gbp',
+      currency: ccy,
       recurring: { interval: 'month' },
       metadata: { planId: String(plan.id), perGB: '1' },
     });
@@ -167,9 +193,11 @@ export class StripeService {
       ...resources,
       pricePerGB: perGB,
       stripeProductId: productId,
+      stripePerGBPriceIds: { ...(resources.stripePerGBPriceIds || {}), [ccy]: price.id },
+      // point main price id to latest for convenience
       stripePerGBPriceId: price.id,
-      // point main price id to per-GB for custom plan checkout usage
-      stripePriceId: price.id,
+      stripePriceIds: { ...(resources.stripePriceIds || {}), [ccy]: price.id },
+      stripePriceId: resources.stripePriceId || price.id,
     };
 
     const updated = await this.prisma.plan.update({

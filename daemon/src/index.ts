@@ -80,7 +80,16 @@ async function bootstrapIfNeeded(): Promise<void> {
     csr.setSubject([{ name: 'commonName', value: nodeName }]);
 
     const pubIp = (await detectPublicIp()) || '127.0.0.1';
+    // SANs: include IP and useful DNS names so panel hostname verification can pass in dev/prod
     const altNames: any[] = [{ type: 7, ip: pubIp }];
+    const dnsCandidates = [
+      nodeName,
+      process.env.DOCKER_SERVICE_NAME || 'daemon',
+      process.env.NODE_DNS_NAME || undefined,
+    ].filter(Boolean) as string[];
+    for (const dns of Array.from(new Set(dnsCandidates))) {
+      altNames.push({ type: 2, value: dns }); // dNSName
+    }
     const host = pubIp;
     csr.setAttributes([
       {
@@ -184,8 +193,9 @@ function startHttpsServer() {
 
   // mTLS auth
   app.use((req, res, next) => {
-    const certInfo = (req.socket as any).getPeerCertificate?.();
-    if (!req.client.authorized || !certInfo) {
+    const tlsSocket = req.socket as any; // TLSSocket at runtime
+    const certInfo = tlsSocket.getPeerCertificate?.();
+    if (!tlsSocket.authorized || !certInfo) {
       return res.status(401).json({ error: 'mTLS required' });
     }
     next();
@@ -208,29 +218,54 @@ function startHttpsServer() {
     const { serverId, name, image = 'nginx:alpine', cpu, ramMB } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
+    const containerName = `vc-${serverId}`;
+
     try {
+      // Idempotency: if a container already exists with this name, return success
+      try {
+        const existing = docker.getContainer(containerName);
+        await existing.inspect();
+        return res.json({ ok: true, id: existing.id, existed: true });
+      } catch {
+        // not found, proceed to create
+      }
+
+      // Ensure image is present
       await new Promise<void>((resolve, reject) => {
-        docker.pull(image, (err, stream) => {
+        docker.pull(image, (err: any, stream: any) => {
           if (err) return reject(err);
           docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
         });
       });
 
-      const containerName = `vc-${serverId}`;
-      const container = await docker.createContainer({
-        name: containerName,
-        Image: image,
-        HostConfig: {
-          NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
-          Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
-          RestartPolicy: { Name: 'unless-stopped' },
-        },
-        Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
-        Cmd: [],
-      });
-
-      res.json({ ok: true, id: container.id });
+      try {
+        const container = await docker.createContainer({
+          name: containerName,
+          Image: image,
+          HostConfig: {
+            NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
+            Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
+            RestartPolicy: { Name: 'unless-stopped' },
+          },
+          Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
+          Cmd: [],
+        });
+        return res.json({ ok: true, id: container.id, existed: false });
+      } catch (e: any) {
+        // If name conflict happened due to a race, treat as existed
+        const msg = String(e?.message || '');
+        if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
+          try {
+            const existing = docker.getContainer(containerName);
+            await existing.inspect();
+            return res.json({ ok: true, id: existing.id, existed: true });
+          } catch {}
+        }
+        console.error('provision_error:', e);
+        return res.status(500).json({ error: e?.message || 'provision_failed' });
+      }
     } catch (e: any) {
+      console.error('provision_unexpected:', e);
       res.status(500).json({ error: e?.message || 'provision_failed' });
     }
   });

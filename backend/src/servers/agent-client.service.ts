@@ -43,7 +43,21 @@ export class AgentClientService {
       return dummy;
     }
 
-    const agent = new https.Agent({ ca, cert, key, rejectUnauthorized: true });
+    const skipHostname = (process.env.AGENT_SKIP_HOSTNAME_VERIFY || 'false') === 'true';
+
+    const agent = new https.Agent({
+      ca,
+      cert,
+      key,
+      rejectUnauthorized: true,
+      // In development, allow certificate CN/SAN hostname mismatch while still verifying CA
+      ...(skipHostname
+        ? {
+            checkServerIdentity: () => undefined,
+          }
+        : {}),
+    } as https.AgentOptions);
+
     const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs() });
     this.clients.set(url, client);
     return client;

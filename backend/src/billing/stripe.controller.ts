@@ -12,9 +12,9 @@ export class StripeController {
   @ApiBearerAuth()
   @UseGuards(AuthGuard('jwt'), RolesGuard)
   @Post('billing/stripe/checkout')
-  async checkout(@Req() req: any, @Body() body: { planId: number; successUrl?: string; cancelUrl?: string; customRamGB?: number }) {
+  async checkout(@Req() req: any, @Body() body: { planId: number; successUrl?: string; cancelUrl?: string; customRamGB?: number; currency?: string }) {
     const userId = req.user?.userId as number;
-    return this.stripe.createCheckoutSession(userId, Number(body.planId), body.successUrl, body.cancelUrl, body.customRamGB);
+    return this.stripe.createCheckoutSession(userId, Number(body.planId), body.successUrl, body.cancelUrl, body.customRamGB, body.currency);
   }
 
   @ApiBearerAuth()

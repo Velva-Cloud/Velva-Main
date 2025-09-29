@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 
 export class CreateServerDto {
   @ApiProperty({ example: 1 })
@@ -18,4 +18,9 @@ export class CreateServerDto {
     message: 'name can only contain letters, numbers, dash and underscore',
   })
   name!: string;
+
+  @ApiProperty({ example: 'ghcr.io/library/nginx:alpine', required: false })
+  @IsString()
+  @IsOptional()
+  image?: string;
 }
