@@ -22,6 +22,10 @@ export class QueueService implements OnModuleInit {
   private readonly connection: IORedis;
   private ready = false;
 
+  isReady() {
+    return this.ready === true;
+  }
+
   // Queues
   private provisionQ: Queue;
   private startQ: Queue;

@@ -1,9 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
+import IORedis from 'ioredis';
+import { QueueService } from '../queue/queue.service';
 
 @Injectable()
 export class StatusService {
-  constructor(private prisma: PrismaService) {}
+  constructor(private prisma: PrismaService, private queues: QueueService) {}
 
   async getSystemStatus() {
     // DB status
@@ -16,22 +18,32 @@ export class StatusService {
       dbOk = false;
     }
 
+    // Redis status
     const redisUrl = process.env.REDIS_URL || process.env.REDIS_HOST;
-    const redis = {
-      configured: !!redisUrl,
-      ok: false,
-      message: redisUrl ? 'Redis integration not configured in this MVP' : 'Redis not configured',
-    };
+    let redisOk = false;
+    let redisMsg = 'Redis not configured';
+    if (redisUrl) {
+      try {
+        const client = new IORedis(redisUrl, { maxRetriesPerRequest: null, lazyConnect: true });
+        await client.connect();
+        const pong = await client.ping();
+        redisOk = pong?.toLowerCase?.() === 'pong';
+        redisMsg = redisOk ? 'OK' : 'Ping failed';
+        await client.quit();
+      } catch (e: any) {
+        redisOk = false;
+        redisMsg = e?.message || 'Connection error';
+      }
+    }
 
-    const queue = {
-      ok: false,
-      message: 'Queue not configured in this MVP',
-    };
+    // Queue status
+    const queueOk = this.queues.isReady();
+    const queueMsg = queueOk ? 'Workers ready' : 'Not initialized';
 
     return {
       db: { ok: dbOk },
-      redis,
-      queue,
+      redis: { configured: !!redisUrl, ok: redisOk, message: redisMsg },
+      queue: { ok: queueOk, message: queueMsg },
       uptimeSec: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     };
