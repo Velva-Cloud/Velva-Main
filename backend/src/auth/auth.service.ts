@@ -4,6 +4,7 @@ import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { Role } from '../common/roles.enum';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
 
 @Injectable()
 export class AuthService {
@@ -141,10 +142,22 @@ export class AuthService {
     return { ok: true };
   }
 
+  private readJwtSecret(): string {
+    const filePath = process.env.JWT_SECRET_FILE;
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        return fs.readFileSync(filePath, 'utf8').trim();
+      } catch {
+        // fallback
+      }
+    }
+    return process.env.JWT_SECRET || 'change_this_in_production';
+  }
+
   private async signToken(userId: number, email: string, role: Role) {
     const payload = { sub: userId, email, role };
     return this.jwt.signAsync(payload, {
-      secret: process.env.JWT_SECRET || 'change_this_in_production',
+      secret: this.readJwtSecret(),
       expiresIn: process.env.JWT_EXPIRES_IN || '7d',
     });
   }

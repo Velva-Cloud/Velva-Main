@@ -58,7 +58,12 @@ export class AgentClientService {
         : {}),
     } as https.AgentOptions);
 
-    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs() });
+    const headers: Record<string, string> = {};
+    if (process.env.AGENT_API_KEY) {
+      headers['x-panel-api-key'] = process.env.AGENT_API_KEY;
+    }
+
+    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs(), headers });
     this.clients.set(url, client);
     return client;
   }
@@ -111,5 +116,10 @@ export class AgentClientService {
       this.logger.warn(`Delete failed for server ${serverId}: ${e?.message || e}`);
       throw e;
     }
+  }
+
+  async inventory(baseURL: string | undefined): Promise<{ containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> }> {
+    const res = await this.getClient(baseURL).get('/inventory');
+    return res.data;
   }
 }

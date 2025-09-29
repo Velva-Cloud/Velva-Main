@@ -15,6 +15,7 @@ const PANEL_URL = process.env.PANEL_URL || '';
 const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET || '';
 const JOIN_CODE = process.env.JOIN_CODE || '';
 const PUBLIC_IP_ENV = process.env.PUBLIC_IP || '';
+const PANEL_API_KEY = process.env.PANEL_API_KEY || process.env.AGENT_API_KEY || '';
 
 const CERT_PATH = process.env.DAEMON_TLS_CERT || path.join(CERTS_DIR, 'agent.crt');
 const KEY_PATH = process.env.DAEMON_TLS_KEY || path.join(CERTS_DIR, 'agent.key');
@@ -191,12 +192,15 @@ function startHttpsServer() {
     rejectUnauthorized: true,
   };
 
-  // mTLS auth
+  // Auth: allow either mTLS client certificate (preferred) or API key header
   app.use((req, res, next) => {
     const tlsSocket = req.socket as any; // TLSSocket at runtime
-    const certInfo = tlsSocket.getPeerCertificate?.();
-    if (!tlsSocket.authorized || !certInfo) {
-      return res.status(401).json({ error: 'mTLS required' });
+    const hasCert = tlsSocket.getPeerCertificate?.();
+    const mtlsOk = tlsSocket.authorized && !!hasCert;
+    const apiKey = req.headers['x-panel-api-key'];
+    const apiOk = PANEL_API_KEY && typeof apiKey === 'string' && apiKey === PANEL_API_KEY;
+    if (!mtlsOk && !apiOk) {
+      return res.status(401).json({ error: 'unauthorized' });
     }
     next();
   });
@@ -211,6 +215,22 @@ function startHttpsServer() {
       res.json({ containers: containers.length });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'docker_error' });
+    }
+  });
+
+  app.get('/inventory', async (_req, res) => {
+    try {
+      const list = await docker.listContainers({ all: true });
+      const containers = list.map(info => {
+        const name = (info.Names && info.Names[0]) ? info.Names[0].replace(/^\//, '') : info.Id.substring(0, 12);
+        const m = name.match(/^vc-(\\d+)$/);
+        const serverId = m ? Number(m[1]) : undefined;
+        const running = info.State === 'running';
+        return { id: info.Id, name, serverId, running };
+      });
+      res.json({ containers });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'inventory_failed' });
     }
   });
 

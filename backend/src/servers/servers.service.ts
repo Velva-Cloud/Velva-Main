@@ -28,6 +28,8 @@ function mockConsoleOutput(serverName: string, status: string) {
   ].join('\n');
 }
 
+type Resources = { cpu?: number; ramMB?: number; diskMB?: number; diskGB?: number; maxServers?: number; preferLocation?: string };
+
 @Injectable()
 export class ServersService {
   private readonly logger = new Logger(ServersService.name);
@@ -110,6 +112,27 @@ export class ServersService {
     };
   }
 
+  private toMb(val: number | undefined, assumeGbIfLarge = false): number {
+    if (!val || !Number.isFinite(val)) return 0;
+    if (assumeGbIfLarge && val < 1024) return Math.round(val * 1024);
+    return Math.round(val);
+  }
+
+  private pickNodeFor(resources: Resources) {
+    return this.prisma.node.findMany({
+      where: { status: 'online' as any, approved: true },
+      select: {
+        id: true,
+        name: true,
+        location: true,
+        capacityCpuCores: true,
+        capacityMemoryMb: true,
+        capacityDiskMb: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+  }
+
   async create(userId: number, planId: number, name: string, imageOverride?: string) {
     // Normalize and validate inputs (additional to DTO validation)
     const n = (name || '').trim();
@@ -125,6 +148,10 @@ export class ServersService {
     if (!plan || !plan.isActive) {
       throw new BadRequestException('Invalid or inactive plan');
     }
+    const res = (plan.resources || {}) as Resources;
+    const cpuUnits = Number(res.cpu ?? 0); // arbitrary cpu units
+    const ramMB = this.toMb(Number(res.ramMB ?? 0));
+    const diskMB = res.diskMB ? this.toMb(Number(res.diskMB)) : this.toMb(Number(res.diskGB ?? 0), true);
 
     // Validate user exists to avoid FK violation (e.g., stale session after DB reset)
     const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
@@ -162,25 +189,109 @@ export class ServersService {
       throw new BadRequestException('You already have a server with that name');
     }
 
-    // Select a node with simple capacity (slots) for now
-    const candidates = await this.prisma.node.findMany({
-      where: { status: 'online' as any },
-      select: { id: true, capacity: true },
-      orderBy: { id: 'asc' },
+    // Capacity-aware scheduling:
+    // - Filter nodes by online/approved
+    // - Enforce RAM & Disk hard limits
+    // - Allow CPU overcommit up to 150%
+    // - Prefer location (if plan.resources.preferLocation), then least-loaded weighted score
+    const nodes = await this.pickNodeFor(res);
+    if (!nodes.length) throw new BadRequestException('No online nodes available');
+
+    // Compute current usage per node
+    const serversByNode = await this.prisma.server.findMany({
+      where: { nodeId: { in: nodes.map(n => n.id) } },
+      select: { id: true, nodeId: true, plan: { select: { resources: true } } },
     });
-    if (!candidates.length) {
-      throw new BadRequestException('No online nodes available');
+
+    const usage = new Map<number, { cpu: number; ramMB: number; diskMB: number; count: number }>();
+    for (const node of nodes) {
+      usage.set(node.id, { cpu: 0, ramMB: 0, diskMB: 0, count: 0 });
     }
-    let chosen: { id: number; capacity: number } | null = null;
-    for (const node of candidates) {
-      const count = await this.prisma.server.count({ where: { nodeId: node.id } });
-      if (count < (node.capacity || 0)) {
-        chosen = node;
-        break;
+    for (const s of serversByNode) {
+      const r = (s.plan.resources || {}) as Resources;
+      const c = Number(r.cpu ?? 0);
+      const m = this.toMb(Number(r.ramMB ?? 0));
+      const d = r.diskMB ? this.toMb(Number(r.diskMB)) : this.toMb(Number(r.diskGB ?? 0), true);
+      const u = usage.get(s.nodeId!)!;
+      u.cpu += c;
+      u.ramMB += m;
+      u.diskMB += d;
+      u.count += 1;
+    }
+
+    const preferLoc = (res.preferLocation || '').toLowerCase().trim();
+
+    type Candidate = { id: number; score: number; reason?: string; nodeLoc: string };
+    const candidates: Candidate[] = [];
+    for (const node of nodes) {
+      const capCpu = Number(node.capacityCpuCores ?? 0) * 100; // assume 100 cpu units per core unless specified by plans
+      const capMem = Number(node.capacityMemoryMb ?? 0);
+      const capDisk = Number(node.capacityDiskMb ?? 0) || Number.MAX_SAFE_INTEGER; // disk optional
+
+      const u = usage.get(node.id)!;
+      const nextCpu = u.cpu + cpuUnits;
+      const nextMem = u.ramMB + ramMB;
+      const nextDisk = u.diskMB + diskMB;
+
+      // Hard-fail if RAM or Disk would exceed 100%
+      if ((capMem && nextMem > capMem) || (capDisk && nextDisk > capDisk)) {
+        continue;
       }
+
+      // Allow CPU up to 150%
+      const cpuRatio = capCpu ? nextCpu / capCpu : 0;
+      if (capCpu && cpuRatio > 1.5) {
+        continue;
+      }
+
+      // Weighted score: prefer location, then least-loaded
+      const ramRatio = capMem ? nextMem / capMem : 0;
+      const diskRatio = capDisk ? nextDisk / capDisk : 0;
+      // Weigh RAM highest, then CPU, then disk
+      let score = ramRatio * 0.5 + Math.min(cpuRatio, 1.5) * 0.35 + diskRatio * 0.15;
+
+      // Location preference bonus
+      if (preferLoc && node.location && node.location.toLowerCase() === preferLoc) {
+        score -= 0.1;
+      }
+
+      candidates.push({ id: node.id, score, nodeLoc: node.location });
     }
-    if (!chosen) {
-      throw new BadRequestException('Insufficient node capacity');
+
+    if (!candidates.length) {
+      throw new BadRequestException('Insufficient node capacity (RAM/Disk/CPU)');
+    }
+
+    // Pick the lowest score; fallback to first (round-robin by ordered asc ids) if tie
+    candidates.sort((a, b) => a.score - b.score || a.id - b.id);
+    const chosenId = candidates[0].id;
+
+    // Soft-warn thresholds: 80% usage on chosen node
+    const u = usage.get(chosenId)!;
+    const nodeCap = nodes.find(n => n.id === chosenId)!;
+    const capCpu = Number(nodeCap.capacityCpuCores ?? 0) * 100;
+    const capMem = Number(nodeCap.capacityMemoryMb ?? 0);
+    const capDisk = Number(nodeCap.capacityDiskMb ?? 0) || Number.MAX_SAFE_INTEGER;
+
+    const cpuRatio = capCpu ? (u.cpu + cpuUnits) / capCpu : 0;
+    const memRatio = capMem ? (u.ramMB + ramMB) / capMem : 0;
+    const diskRatio = capDisk ? (u.diskMB + diskMB) / capDisk : 0;
+
+    const warnThreshold = 0.8;
+    if ((memRatio > warnThreshold) || (capDisk && diskRatio > warnThreshold) || (capCpu && cpuRatio > warnThreshold)) {
+      await this.prisma.log.create({
+        data: {
+          userId: null,
+          action: 'plan_change',
+          metadata: {
+            event: 'capacity_warn',
+            nodeId: chosenId,
+            cpuRatio: Number(cpuRatio.toFixed(3)),
+            memRatio: Number(memRatio.toFixed(3)),
+            diskRatio: Number(diskRatio.toFixed(3)),
+          },
+        },
+      });
     }
 
     const server = await this.prisma.server.create({
@@ -189,17 +300,17 @@ export class ServersService {
         planId: plan.id,
         name: n,
         status: 'stopped',
-        nodeId: chosen.id,
+        nodeId: chosenId,
       },
     });
 
     await this.prisma.log.create({
-      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosen.id, image: imageOverride || null } },
+      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosenId, image: imageOverride || null } },
     });
 
     // Enqueue async provision + start
     await this.prisma.log.create({
-      data: { userId, action: 'plan_change', metadata: { event: 'provision_request', serverId: server.id, nodeId: chosen.id } },
+      data: { userId, action: 'plan_change', metadata: { event: 'provision_request', serverId: server.id, nodeId: chosenId } },
     });
     await this.queue.enqueueProvision(server.id);
 

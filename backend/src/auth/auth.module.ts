@@ -6,6 +6,19 @@ import { AuthController } from './auth.controller';
 import { JwtStrategy } from './jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { DiscordStrategy } from './strategies/discord.strategy';
+import * as fs from 'fs';
+
+function readJwtSecret(): string {
+  const filePath = process.env.JWT_SECRET_FILE;
+  if (filePath && fs.existsSync(filePath)) {
+    try {
+      return fs.readFileSync(filePath, 'utf8').trim();
+    } catch {
+      // ignore
+    }
+  }
+  return process.env.JWT_SECRET || 'change_this_in_production';
+}
 
 const oauthProviders: any[] = [];
 if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
@@ -19,7 +32,7 @@ if (process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET) {
   imports: [
     PassportModule.register({ defaultStrategy: 'jwt', session: false }),
     JwtModule.register({
-      secret: process.env.JWT_SECRET || 'change_this_in_production',
+      secret: readJwtSecret(),
       signOptions: { expiresIn: process.env.JWT_EXPIRES_IN || '7d' },
     }),
   ],

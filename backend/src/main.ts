@@ -11,6 +11,11 @@ import { QueueService } from './queue/queue.service';
 import { ExpressAdapter } from '@bull-board/express';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
+import cookieParser from 'cookie-parser';
+// csurf types may not be present at build; import as any-compatible
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const csurf = require('csurf');
+import * as client from 'prom-client';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -40,6 +45,11 @@ async function bootstrap() {
     credentials: true,
   });
 
+  // CSRF for cookie-posted web forms only (not for API JWT requests)
+  const express = app.getHttpAdapter().getInstance();
+  express.use('/web', cookieParser());
+  express.use('/web', csurf({ cookie: true }));
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,
@@ -66,15 +76,31 @@ async function bootstrap() {
     // ignore
   }
 
+  // Prometheus metrics
+  try {
+    client.collectDefaultMetrics();
+    express.get('/metrics', async (_req: any, res: any) => {
+      try {
+        res.set('Content-Type', client.register.contentType);
+        res.end(await client.register.metrics());
+      } catch (e: any) {
+        res.status(500).json({ error: e?.message || 'metrics_error' });
+      }
+    });
+    // eslint-disable-next-line no-console
+    console.log('Metrics available at /metrics');
+  } catch (e) {
+    // ignore metrics init errors
+  }
+
   // Bull Board UI (RBAC: ADMIN/OWNER only)
   try {
-    const express = app.getHttpAdapter().getInstance();
     const jwt = app.get(JwtService);
     const queues = app.get(QueueService) as QueueService;
     const serverAdapter = new ExpressAdapter();
     serverAdapter.setBasePath('/api/admin/queues/ui');
 
-    const { addQueue, removeQueue } = createBullBoard({
+    const { addQueue } = createBullBoard({
       queues: [],
       serverAdapter,
     });

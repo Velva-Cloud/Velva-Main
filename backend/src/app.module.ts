@@ -17,6 +17,8 @@ import { DunningModule } from './dunning/dunning.module';
 import { FinanceModule } from './finance/finance.module';
 import { SettingsModule } from './settings/settings.module';
 import { QueueModule } from './queue/queue.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { EventsModule } from './events/events.module';
 
 @Module({
   imports: [
@@ -25,6 +27,7 @@ import { QueueModule } from './queue/queue.module';
       { name: 'auth-std', ttl: 60, limit: 10 },
       { name: 'auth-low', ttl: 60, limit: 5 },
     ]),
+    ScheduleModule.forRoot(),
     PrismaModule,
     AuthModule,
     UsersModule,
@@ -41,6 +44,7 @@ import { QueueModule } from './queue/queue.module';
     FinanceModule,
     SettingsModule,
     QueueModule,
+    EventsModule,
   ],
   providers: [
     { provide: APP_GUARD, useClass: ThrottlerGuard },

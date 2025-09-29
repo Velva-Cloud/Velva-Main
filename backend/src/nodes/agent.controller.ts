@@ -2,6 +2,7 @@ import { BadRequestException, Body, Controller, Headers, Post } from '@nestjs/co
 import { ApiTags, ApiOperation } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { PkiService } from '../common/pki.service';
+import { Throttle } from '@nestjs/throttler';
 
 // Node.js < 19 workaround for crypto.getRandomValues
 import * as nodeCrypto from 'crypto';
@@ -16,6 +17,7 @@ export class NodesAgentController {
 
   @ApiOperation({ summary: 'Daemon registration (supports one-time join codes)' })
   @Post('register')
+  @Throttle(20, 60)
   async register(
     @Headers('x-registration-secret') secret: string | undefined,
     @Headers('x-join-code') joinCodeHeader: string | undefined,
@@ -128,6 +130,7 @@ export class NodesAgentController {
 
   @ApiOperation({ summary: 'Daemon poll for approval and certificates' })
   @Post('poll')
+  @Throttle(20, 60)
   async poll(
     @Body()
     body: {
@@ -153,6 +156,7 @@ export class NodesAgentController {
 
   @ApiOperation({ summary: 'Daemon heartbeat' })
   @Post('heartbeat')
+  @Throttle(20, 60)
   async heartbeat(
     @Body()
     body: {

@@ -1,19 +1,37 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Queue, Worker, JobsOptions } from 'bullmq';
+import { Queue, Worker, JobsOptions, WorkerOptions } from 'bullmq';
 import IORedis, { RedisOptions } from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from '../servers/agent-client.service';
 import { EventEmitter } from 'events';
+import * as client from 'prom-client';
+import { Interval } from '@nestjs/schedule';
 
 function backoffOptions(): JobsOptions {
   const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
   const attempts = Number(process.env.JOBS_MAX_ATTEMPTS || 3);
   return {
     attempts,
-    backoff: { type: 'exponential', delay: base },
+    // Use custom backoff so we can skip retries for hard-fail errors
+    backoff: { type: 'vcExpo', delay: base } as any,
     removeOnComplete: true,
     removeOnFail: false,
   };
+}
+
+function isHardProvisionError(err: any): boolean {
+  const msg = (err?.message || err?.response?.data?.error || err?.response?.data || '').toString().toLowerCase();
+  return (
+    msg.includes('no space left on device') || // disk full
+    msg.includes('enospc') ||
+    msg.includes('insufficient memory') ||
+    msg.includes('out of memory') ||
+    msg.includes('oom') ||
+    msg.includes('manifest unknown') ||
+    msg.includes('not found: manifest unknown') ||
+    msg.includes('image not found') ||
+    msg.includes('manifest invalid')
+  );
 }
 
 @Injectable()
@@ -21,6 +39,10 @@ export class QueueService implements OnModuleInit {
   private readonly logger = new Logger(QueueService.name);
   private readonly connection: IORedis;
   private ready = false;
+
+  // Prometheus metrics
+  private jobCompleted = new client.Counter({ name: 'vc_jobs_completed_total', help: 'Total jobs completed', labelNames: ['queue'] });
+  private jobFailed = new client.Counter({ name: 'vc_jobs_failed_total', help: 'Total jobs failed', labelNames: ['queue'] });
 
   isReady() {
     return this.ready === true;
@@ -32,6 +54,7 @@ export class QueueService implements OnModuleInit {
   private stopQ: Queue;
   private restartQ: Queue;
   private deleteQ: Queue;
+  private maintenanceQ: Queue;
 
   // Events
   private emitter = new EventEmitter();
@@ -51,6 +74,7 @@ export class QueueService implements OnModuleInit {
     this.stopQ = new Queue('stop', { connection: this.connection });
     this.restartQ = new Queue('restart', { connection: this.connection });
     this.deleteQ = new Queue('delete', { connection: this.connection });
+    this.maintenanceQ = new Queue('maintenance', { connection: this.connection });
     // QueueSchedulers were required in older BullMQ versions for delayed jobs/retries.
     // In modern BullMQ, Workers manage this internally; no explicit scheduler is needed.
   }
@@ -73,10 +97,45 @@ export class QueueService implements OnModuleInit {
     } catch {}
   }
 
+  private async recordEvent(serverId: number | null, type: string, message?: string, data?: any, userId?: number | null) {
+    try {
+      if (!serverId) return;
+      await this.prisma.serverEvent.create({
+        data: {
+          serverId,
+          userId: userId ?? null,
+          type,
+          message: message || null,
+          data: data ?? {},
+        },
+      });
+    } catch {
+      // ignore
+    }
+  }
+
   private async bootstrapWorkers() {
     const workerConn = new IORedis(process.env.REDIS_URL || 'redis://localhost:6379', {
       maxRetriesPerRequest: null,
     });
+
+    const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
+    const workerSettings: WorkerOptions = {
+      connection: workerConn,
+      // Custom backoff that skips retries for known hard-fail errors
+      settings: {
+        backoffStrategies: {
+          vcExpo: (attemptsMade: number, err: Error) => {
+            if (err && isHardProvisionError(err)) {
+              // Skip retries for non-recoverable errors
+              return -1 as any;
+            }
+            const delay = Math.max(base, base * Math.pow(2, Math.max(0, attemptsMade - 1)));
+            return delay;
+          },
+        } as any,
+      } as any,
+    };
 
     // Concurrency defaults, configurable via env
     const provisionConc = Number(process.env.Q_PROVISION_CONCURRENCY || 3);
@@ -84,6 +143,7 @@ export class QueueService implements OnModuleInit {
     const stopConc = Number(process.env.Q_STOP_CONCURRENCY || 10);
     const restartConc = Number(process.env.Q_RESTART_CONCURRENCY || 5);
     const deleteConc = Number(process.env.Q_DELETE_CONCURRENCY || 5);
+    const maintenanceConc = Number(process.env.Q_MAINTENANCE_CONCURRENCY || 2);
 
     const wProvision = new Worker(
       'provision',
@@ -111,11 +171,22 @@ export class QueueService implements OnModuleInit {
         }
 
         const baseURL = await this.nodeBaseUrl(s.nodeId);
-        await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB });
+        try {
+          await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB });
+        } catch (e: any) {
+          if (isHardProvisionError(e)) {
+            await this.prisma.log.create({
+              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'provision_failed_hard', serverId: s.id, error: e?.message || String(e) } },
+            });
+            await this.recordEvent(s.id, 'provision_failed_hard', e?.message || String(e));
+          }
+          throw e;
+        }
 
         await this.prisma.log.create({
           data: { userId: s.userId, action: 'plan_change', metadata: { event: 'provision_ok', serverId: s.id } },
         });
+        await this.recordEvent(s.id, 'provision_ok');
 
         // Auto-start
         await this.agents.start(baseURL, s.id);
@@ -123,10 +194,11 @@ export class QueueService implements OnModuleInit {
         await this.prisma.log.create({
           data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
         });
+        await this.recordEvent(s.id, 'server_status_change', 'running');
 
         return { ok: true };
       },
-      { connection: workerConn, concurrency: provisionConc },
+      { ...workerSettings, concurrency: provisionConc },
     );
 
     const wStart = new Worker(
@@ -141,9 +213,10 @@ export class QueueService implements OnModuleInit {
         await this.prisma.log.create({
           data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
         });
+        await this.recordEvent(s.id, 'server_status_change', 'running', undefined, actorUserId ?? null);
         return { ok: true };
       },
-      { connection: workerConn, concurrency: startConc },
+      { ...workerSettings, concurrency: startConc },
     );
 
     const wStop = new Worker(
@@ -158,9 +231,10 @@ export class QueueService implements OnModuleInit {
         await this.prisma.log.create({
           data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'stopped' } },
         });
+        await this.recordEvent(s.id, 'server_status_change', 'stopped', undefined, actorUserId ?? null);
         return { ok: true };
       },
-      { connection: workerConn, concurrency: stopConc },
+      { ...workerSettings, concurrency: stopConc },
     );
 
     const wRestart = new Worker(
@@ -176,9 +250,10 @@ export class QueueService implements OnModuleInit {
         await this.prisma.log.create({
           data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
         });
+        await this.recordEvent(s.id, 'server_status_change', 'running', undefined, actorUserId ?? null);
         return { ok: true };
       },
-      { connection: workerConn, concurrency: restartConc },
+      { ...workerSettings, concurrency: restartConc },
     );
 
     const wDelete = new Worker(
@@ -190,7 +265,7 @@ export class QueueService implements OnModuleInit {
           const baseURL = await this.nodeBaseUrl(s.nodeId);
           try {
             await this.agents.delete(baseURL, s.id);
-          } catch (e) {
+          } catch {
             // ignore agent failure on delete
           }
           await this.prisma.server.delete({ where: { id: s.id } });
@@ -198,16 +273,79 @@ export class QueueService implements OnModuleInit {
             data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_deleted', serverId },
             },
           });
+          await this.recordEvent(serverId, 'server_deleted', undefined, undefined, actorUserId ?? null);
         }
         return { ok: true };
       },
-      { connection: workerConn, concurrency: deleteConc },
+      { ...workerSettings, concurrency: deleteConc },
+    );
+
+    const wMaintenance = new Worker(
+      'maintenance',
+      async job => {
+        const { nodeId } = job.data as { nodeId: number };
+        const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
+        if (!node) return { ok: false, reason: 'node_not_found' };
+        const baseURL = await this.nodeBaseUrl(nodeId);
+        let inv: { containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> } | null = null;
+        try {
+          inv = await this.agents.inventory(baseURL);
+        } catch (e: any) {
+          this.logger.warn(`Maintenance inventory failed for node ${nodeId}: ${e?.message || e}`);
+          return { ok: false, reason: 'inventory_failed' };
+        }
+        const got = inv?.containers || [];
+        const containerServerIds = new Set<number>();
+        for (const c of got) {
+          if (typeof c.serverId === 'number') containerServerIds.add(c.serverId);
+        }
+        const servers = await this.prisma.server.findMany({ where: { nodeId }, select: { id: true, status: true, userId: true } });
+
+        // DB -> Daemon reconciliation
+        for (const s of servers) {
+          const present = got.find(c => c.serverId === s.id);
+          if (!present) {
+            // Missing container: schedule provision + start for running servers
+            await this.recordEvent(s.id, 'reconcile_missing_container', `server ${s.id} missing on node ${nodeId}`);
+            await this.enqueueProvision(s.id);
+          } else {
+            // State mismatch
+            if (s.status === 'running' && !present.running) {
+              await this.recordEvent(s.id, 'reconcile_start', `server ${s.id} should be running`);
+              await this.enqueueStart(s.id);
+            }
+            if (s.status === 'stopped' && present.running) {
+              await this.recordEvent(s.id, 'reconcile_stop', `server ${s.id} should be stopped`);
+              await this.enqueueStop(s.id);
+            }
+          }
+        }
+
+        // Daemon -> DB: stray containers
+        for (const c of got) {
+          if (!c.serverId) continue;
+          const exists = servers.find(s => s.id === c.serverId);
+          if (!exists) {
+            await this.recordEvent(c.serverId, 'reconcile_stray_container', `stray container for ${c.serverId}, scheduling delete`);
+            await this.enqueueDelete(c.serverId);
+          }
+        }
+
+        return { ok: true, checked: servers.length, containers: got.length };
+      },
+      { ...workerSettings, concurrency: maintenanceConc },
     );
 
     const attach = (worker: Worker, name: string) => {
       worker.on('active', job => this.emit('job_active', { queue: name, id: job.id, data: job.data }));
-      worker.on('completed', job => this.emit('job_completed', { queue: name, id: job.id, returnvalue: job.returnvalue }));
-      worker.on('failed', (job, err) => this.emit('job_failed', { queue: name, id: job?.id, reason: err?.message || String(err) }));
+      worker.on('completed', job => {
+        this.jobCompleted.inc({ queue: name });
+        this.emit('job_completed', { queue: name, id: job.id, returnvalue: job.returnvalue });
+      });
+      worker.on('failed', (job, err) => {
+        this.jobFailed.inc({ queue: name });
+        this.emit('job_failed', { queue: name, id: job?.id, reason: err?.message || String(err) });
+      });
       // 'waiting' is not a typed Worker event in BullMQ; omit to satisfy TS types.
       worker.on('error', err => this.emit('worker_error', { queue: name, reason: err?.message || String(err) }));
     };
@@ -217,6 +355,20 @@ export class QueueService implements OnModuleInit {
     attach(wStop, 'stop');
     attach(wRestart, 'restart');
     attach(wDelete, 'delete');
+    attach(wMaintenance, 'maintenance');
+  }
+
+  // Periodic reconciliation across nodes
+  @Interval(60_000)
+  async periodicReconcile() {
+    try {
+      const nodes = await this.prisma.node.findMany({ where: { approved: true, status: 'online' as any }, select: { id: true } });
+      for (const n of nodes) {
+        await this.maintenanceQ.add('reconcile_node', { nodeId: n.id }, { jobId: `reconcile_${n.id}`, removeOnComplete: true, removeOnFail: true });
+      }
+    } catch (e) {
+      // ignore
+    }
   }
 
   // Admin job visibility
@@ -227,6 +379,7 @@ export class QueueService implements OnModuleInit {
       { name: 'stop' },
       { name: 'restart' },
       { name: 'delete' },
+      { name: 'maintenance' },
     ];
   }
 
@@ -288,6 +441,8 @@ export class QueueService implements OnModuleInit {
         return this.restartQ;
       case 'delete':
         return this.deleteQ;
+      case 'maintenance':
+        return this.maintenanceQ;
       default:
         throw new Error('unknown_queue');
     }

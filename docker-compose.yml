@@ -48,6 +48,8 @@ services:
       DAEMON_CA: /app/certs/ca.crt
       DAEMON_CLIENT_CERT: /app/certs/panel.crt
       DAEMON_CLIENT_KEY: /app/certs/panel.key
+      # Optional API key (phase 4) for panel->daemon in addition to mTLS
+      AGENT_API_KEY: dev-panel-key
       # Agent registration (local dev)
       NODE_REGISTRATION_SECRET: localdev
       AUTO_APPROVE_NODES: "true"
@@ -117,6 +119,8 @@ services:
       # TLS output and listen port
       CERTS_DIR: /data/certs
       DAEMON_PORT: 9443
+      # API key to accept panel calls in addition to mTLS (dev)
+      PANEL_API_KEY: dev-panel-key
     depends_on:
       backend:
         condition: service_healthy
@@ -132,6 +136,30 @@ services:
       default:
         aliases:
           - local-node
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: hosting_prometheus
+    restart: unless-stopped
+    volumes:
+      - ./deploy/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+    depends_on:
+      - backend
+
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: hosting_grafana
+    restart: unless-stopped
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    depends_on:
+      - prometheus
 
 # Remove caddy here to avoid port 80/443 conflicts with your existing site.
 # Configure your existing web server to reverse proxy the subdomain instead.
