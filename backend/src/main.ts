@@ -11,7 +11,9 @@ import { QueueService } from './queue/queue.service';
 import { ExpressAdapter } from '@bull-board/express';
 import { createBullBoard } from '@bull-board/api';
 import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
-import cookieParser from 'cookie-parser';
+// Use require to avoid CJS/ESM interop issues with cookie-parser in Node20 CJS build
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const cookieParser = require('cookie-parser');
 // csurf types may not be present at build; import as any-compatible
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const csurf = require('csurf');
