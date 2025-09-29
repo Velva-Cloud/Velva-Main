@@ -260,6 +260,42 @@ export class QueueService implements OnModuleInit {
     }
   }
 
+  async retryJob(name: string, id: number) {
+    const q = this.getQueueByName(name);
+    const job = await q.getJob(String(id));
+    if (!job) return { ok: false, error: 'job_not_found' };
+    await job.retry();
+    return { ok: true };
+  }
+
+  async removeJob(name: string, id: number) {
+    const q = this.getQueueByName(name);
+    const job = await q.getJob(String(id));
+    if (!job) return { ok: false, error: 'job_not_found' };
+    await job.remove();
+    return { ok: true };
+  }
+
+  async promoteJob(name: string, id: number) {
+    const q = this.getQueueByName(name);
+    const job = await q.getJob(String(id));
+    if (!job) return { ok: false, error: 'job_not_found' };
+    await job.promote();
+    return { ok: true };
+  }
+
+  async pauseQueue(name: string) {
+    const q = this.getQueueByName(name);
+    await q.pause();
+    return { ok: true };
+  }
+
+  async resumeQueue(name: string) {
+    const q = this.getQueueByName(name);
+    await q.resume();
+    return { ok: true };
+  }
+
   async enqueueProvision(serverId: number) {
     return this.provisionQ.add('provision', { serverId }, backoffOptions());
   }

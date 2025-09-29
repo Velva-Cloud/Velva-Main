@@ -1,4 +1,4 @@
-import { Controller, Get, Param, ParseIntPipe, Query, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, ParseIntPipe, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { RolesGuard } from '../common/roles.guard';
@@ -34,5 +34,36 @@ export class QueueController {
   @Get(':name/:id')
   async getJob(@Param('name') name: string, @Param('id', ParseIntPipe) id: number) {
     return this.queues.getJob(name, id);
+  }
+
+  // Admin actions
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':name/:id/retry')
+  async retry(@Param('name') name: string, @Param('id', ParseIntPipe) id: number) {
+    return this.queues.retryJob(name, id);
+  }
+
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':name/:id/remove')
+  async remove(@Param('name') name: string, @Param('id', ParseIntPipe) id: number) {
+    return this.queues.removeJob(name, id);
+  }
+
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':name/:id/promote')
+  async promote(@Param('name') name: string, @Param('id', ParseIntPipe) id: number) {
+    return this.queues.promoteJob(name, id);
+  }
+
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':name/pause')
+  async pause(@Param('name') name: string) {
+    return this.queues.pauseQueue(name);
+  }
+
+  @Roles(Role.ADMIN, Role.OWNER)
+  @Post(':name/resume')
+  async resume(@Param('name') name: string) {
+    return this.queues.resumeQueue(name);
   }
 }

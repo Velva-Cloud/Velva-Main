@@ -6,6 +6,11 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import helmet from 'helmet';
 import { json, raw } from 'express';
 import { PkiService } from './common/pki.service';
+import { JwtService } from '@nestjs/jwt';
+import { QueueService } from './queue/queue.service';
+import { ExpressAdapter } from '@bull-board/express';
+import { createBullBoard } from '@bull-board/api';
+import { BullMQAdapter } from '@bull-board/api/bullMQAdapter';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -59,6 +64,49 @@ async function bootstrap() {
     await pki.ensurePanelClientCertIfRequested();
   } catch {
     // ignore
+  }
+
+  // Bull Board UI (RBAC: ADMIN/OWNER only)
+  try {
+    const express = app.getHttpAdapter().getInstance();
+    const jwt = app.get(JwtService);
+    const queues = app.get(QueueService) as QueueService;
+    const serverAdapter = new ExpressAdapter();
+    serverAdapter.setBasePath('/api/admin/queues/ui');
+
+    const { addQueue, removeQueue } = createBullBoard({
+      queues: [],
+      serverAdapter,
+    });
+
+    // Register queues from QueueService
+    const qDefs = await queues.listQueues();
+    qDefs.forEach(def => {
+      const q = (queues as any)[`${def.name}Q`];
+      if (q) addQueue(new BullMQAdapter(q));
+    });
+
+    // JWT + role check middleware
+    const authMiddleware = (req: any, res: any, next: any) => {
+      try {
+        const auth = req.headers['authorization'] || '';
+        const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+        if (!token) return res.status(401).json({ error: 'unauthorized' });
+        const payload: any = jwt.verify(token);
+        const role = payload?.role;
+        if (!['ADMIN', 'OWNER'].includes(role)) return res.status(403).json({ error: 'forbidden' });
+        next();
+      } catch {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+    };
+
+    express.use('/api/admin/queues/ui', authMiddleware, serverAdapter.getRouter());
+    // eslint-disable-next-line no-console
+    console.log('Bull Board available at /api/admin/queues/ui');
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.log('Bull Board init skipped:', (e as any)?.message || e);
   }
 
   const port = process.env.PORT || 4000;
