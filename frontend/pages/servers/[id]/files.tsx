@@ -111,7 +111,7 @@ export default function ServerFilesPage() {
           <div className="flex-1">
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-semibold">Files • {srvName}</h1>
-              <a href={`/servers/${id}`} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to overview</a>
+              <a href={sid ? `/servers/${sid}` : '#'} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to overview</a>
             </div>
             <section className="card p-4 mt-4">
               <div className="flex items-center justify-between">
