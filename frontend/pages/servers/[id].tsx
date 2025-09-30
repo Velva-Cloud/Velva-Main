@@ -310,6 +310,22 @@ export default function ServerPage() {
               <a href="/dashboard" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to dashboard</a>
             </div>
 
+            {/* Layout: sidebar + main content */}
+            <div className="flex gap-6">
+              {/* Sidebar */}
+              <div className="w-56 shrink-0">
+                {/** inline sidebar to avoid extra import; we add a component too */}
+                <div className="card p-3 sticky top-4">
+                  <div className="text-xs text-slate-400 mb-2">Server</div>
+                  <a className="block px-3 py-2 rounded bg-slate-800 border border-slate-700" href={`/servers/${srv.id}`}>Overview</a>
+                  <a className="block px-3 py-2 rounded hover:bg-slate-800/60 transition mt-1" href={`/servers/${srv.id}/files`}>Files</a>
+                  <a className="block px-3 py-2 rounded hover:bg-slate-800/60 transition mt-1" href={`/servers/${srv.id}/console`}>Console</a>
+                  <a className="block px-3 py-2 rounded hover:bg-slate-800/60 transition mt-1" href={`/servers/${srv.id}/users`}>Users &amp; Access</a>
+                </div>
+              </div>
+              {/* Main content */}
+              <div className="flex-1">
+
             {err && <div className="mb-4 text-red-400">{err}</div>}
 
             <section className="card p-4 mb-6">
@@ -410,52 +426,63 @@ export default function ServerPage() {
               )}
             </section>
 
+            {/* Overview content */}
             <section className="card p-4 mb-6">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Console</h2>
-                <div className="flex gap-2">
-                  <button onClick={() => { setConsoleLines([]); startConsole(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
-                  <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
+              <h2 className="font-semibold mb-3">Actions</h2>
+              {canControl && (
+                <div>
+                  {role === 'SUPPORT' && (
+                    <div className="mb-2">
+                      <div className="text-sm mb-1">Reason (required for support)</div>
+                      <input
+                        className="input w-full"
+                        value={reason}
+                        onChange={(e) => setReason(e.target.value)}
+                        placeholder="Reason for action"
+                      />
+                    </div>
+                  )}
+                  <div className="flex flex-wrap gap-2">
+                    <button onClick={() => call('start')} disabled={busy} className={`px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
+                    <button onClick={() => call('stop')} disabled={busy} className={`px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
+                    <button onClick={() => call('restart')} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
+                    <button onClick={retryProvision} disabled={busy} className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Retry provision</button>
+                  </div>
                 </div>
-              </div>
-              <pre className="mt-3 text-xs bg-slate-800/70 rounded p-3 overflow-auto" style={{ minHeight: 200, maxHeight: 360 }}>
-                {consoleLines.length ? consoleLines.join('\n') : 'Connecting…'}
-              </pre>
-              <div className="mt-3 flex gap-2">
-                <input value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="Enter command" className="input flex-1" onKeyDown={(e) => { if (e.key === 'Enter') runCmd(); }} />
-                <button onClick={runCmd} disabled={busy || !cmd.trim()} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Run</button>
-              </div>
+              )}
             </section>
 
             <section className="card p-4">
-              <div className="flex items-center justify-between">
-                <h2 className="font-semibold">Files</h2>
-                <div className="flex items-center gap-2">
-                  <button onClick={upDir} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Up</button>
-                  <span className="text-sm text-slate-400">{fmPath}</span>
-                  <label className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 cursor-pointer ${uploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
-                    <input type="file" className="hidden" onChange={(e) => handleUpload(e.target.files)} disabled={uploading} />
-                    Upload
-                  </label>
+              <h2 className="font-semibold mb-3">Statistics</h2>
+              <div className="grid gap-3 md:grid-cols-2">
+                <div>
+                  <div className="text-sm text-slate-400">Status</div>
+                  <div className="font-semibold">{srv.status}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400">Plan</div>
+                  <div className="font-semibold">{(srv as any).planName ? `${(srv as any).planName} (#${srv.planId})` : `#${srv.planId}`}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400">Node</div>
+                  <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400">Mock IP</div>
+                  <div className="font-semibold">{srv.mockIp || 'Loading…'}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400">Created</div>
+                  <div className="font-semibold">{new Date(srv.createdAt).toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-sm text-slate-400">Provision</div>
+                  <div className="font-semibold">{renderProvisionBadge(srv.provisionStatus || null)}</div>
                 </div>
               </div>
-              <div className="mt-3 grid grid-cols-1 gap-1">
-                {fmItems.map((it) => (
-                  <div key={`${fmPath}/${it.name}`} className="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/50">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs px-1.5 py-0.5 rounded border border-slate-700">{it.type === 'dir' ? 'DIR' : 'FILE'}</span>
-                      <button onClick={() => goTo(it.name, it.type)} className="hover:underline text-left">{it.name}</button>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {it.type === 'file' && (
-                        <button onClick={() => downloadItem(it.name)} className="text-xs px-2 py-0.5 rounded border border-slate-800 hover:bg-slate-800">Download</button>
-                      )}
-                    </div>
-                  </div>
-                ))}
-                {!fmItems.length && <div className="text-sm text-slate-400">Empty directory</div>}
-              </div>
             </section>
+              </div>
+            </div>
           </>
         )}
       </main>
