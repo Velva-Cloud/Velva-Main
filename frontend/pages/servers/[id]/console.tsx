@@ -13,6 +13,7 @@ export default function ServerConsolePage() {
   const toast = useToast();
   const router = useRouter();
   const { id } = router.query;
+  const sid = Array.isArray(id) ? (id[0] || '') : (id ?? '');
 
   const role = useMemo(() => getUserRole(), []);
   const [srvName, setSrvName] = useState<string>('');
@@ -110,7 +111,7 @@ export default function ServerConsolePage() {
       <NavBar />
       <main className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex gap-6">
-          <ServerSidebar serverId={id || ''} current="console" />
+          <ServerSidebar serverId={sid} current="console" />
           <div className="flex-1">
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-semibold">Console • {srvName}</h1>
