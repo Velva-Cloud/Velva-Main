@@ -53,17 +53,20 @@ export class StatusService {
   async updatePlatform(includeDaemon = false) {
     // Call all approved nodes; if none, fall back to configured DAEMON_URL
     const nodes = await this.prisma.node.findMany({ where: { approved: true }, select: { apiUrl: true } });
-    const urls = nodes.map(n => n.apiUrl).filter(Boolean) as string[];
-    if (urls.length === 0 && process.env.DAEMON_URL) urls.push(process.env.DAEMON_URL);
-    const results = [];
+    const urls = nodes.map(n => n.apiUrl).filter((u): u is string => !!u);
+    if (urls.length === 0 && process.env.DAEMON_URL) urls.push(process.env.DAEMON_URL as string);
+    type NodeUpdateResult = { url: string; ok: boolean; restarted?: Record<string, number> | null; error?: string };
+    const results: NodeUpdateResult[] = [];
     for (const url of urls) {
       try {
         const r = await this.agent.platformUpdate(url, includeDaemon);
-        results.push({ url, ok: true, restarted: r?.restarted || null });
+        const restarted = (r?.restarted && typeof r.restarted === 'object') ? (r.restarted as Record<string, number>) : null;
+        results.push({ url, ok: true, restarted });
       } catch (e: any) {
         results.push({ url, ok: false, error: e?.message || 'update_failed' });
       }
     }
-    return { ok: results.some(r => r.ok), results };
+    const anyOk = results.some((x) => x.ok);
+    return { ok: anyOk, results };
   }
 }
