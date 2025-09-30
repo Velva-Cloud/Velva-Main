@@ -63,6 +63,7 @@ model User {
   resetTokens   PasswordResetToken[]
   transactions  Transaction[]
   events        ServerEvent[]
+  access        ServerAccess[]
 }
 
 model Plan {
@@ -129,6 +130,7 @@ model Server {
   plan Plan @relation(fields: [planId], references: [id])
   node Node? @relation(fields: [nodeId], references: [id])
   events ServerEvent[]
+  access ServerAccess[]
 }
 
 model Log {
@@ -200,4 +202,26 @@ model ServerEvent {
 
   @@index([serverId, createdAt])
   @@index([type, createdAt])
+}
+
+enum ServerAccessRole {
+  VIEWER
+  OPERATOR
+  ADMIN
+}
+
+model ServerAccess {
+  id        Int              @id @default(autoincrement())
+  serverId  Int
+  userId    Int
+  role      ServerAccessRole @default(VIEWER)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  server Server @relation(fields: [serverId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([serverId, userId])
+  @@index([serverId])
+  @@index([userId])
 }

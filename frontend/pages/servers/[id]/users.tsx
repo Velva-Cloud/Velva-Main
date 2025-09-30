@@ -33,10 +33,15 @@ export default function ServerUsersPage() {
 
   useEffect(() => { fetchServer(); }, [id]);
 
-  // Placeholder: backend endpoints TBD
   const loadUsers = async () => {
-    // TODO: replace with real endpoint when available
-    setUsers([]); // empty until backend implemented
+    if (!id) return;
+    try {
+      const res = await api.get(`/servers/${id}/access`);
+      const items = (res.data || []) as Array<{ userId: number; email: string; role: 'VIEWER' | 'OPERATOR' | 'ADMIN' }>;
+      setUsers(items.map(i => ({ id: i.userId, email: i.email, role: i.role })));
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to load access list', 'error');
+    }
   };
 
   useEffect(() => { loadUsers(); }, [id]);
@@ -44,8 +49,9 @@ export default function ServerUsersPage() {
   const addUser = async () => {
     setBusy(true);
     try {
-      // TODO: call backend endpoint to add user
-      toast.show('User access management is coming soon (UI ready, backend TBD).', 'info');
+      await api.post(`/servers/${id}/access`, { email: email.trim(), role: perm });
+      toast.show('Access granted', 'success');
+      await loadUsers();
     } catch (e: any) {
       toast.show(e?.response?.data?.message || 'Failed to add user', 'error');
     } finally {
@@ -58,8 +64,9 @@ export default function ServerUsersPage() {
   const removeUser = async (uid: number) => {
     setBusy(true);
     try {
-      // TODO: call backend endpoint to remove user
-      toast.show('User removal is coming soon (UI ready, backend TBD).', 'info');
+      await api.delete(`/servers/${id}/access/${uid}`);
+      toast.show('Access removed', 'success');
+      await loadUsers();
     } catch (e: any) {
       toast.show(e?.response?.data?.message || 'Failed to remove user', 'error');
     } finally {

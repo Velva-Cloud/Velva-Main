@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from './agent-client.service';
 import { QueueService } from '../queue/queue.service';
@@ -110,6 +110,91 @@ export class ServersService {
       nodeName: node?.name ?? null,
       provisionStatus,
     };
+  }
+
+  // Server-level access control
+
+  async getAccessRole(serverId: number, userId: number): Promise<'VIEWER' | 'OPERATOR' | 'ADMIN' | null> {
+    const a = await this.prisma.serverAccess.findUnique({
+      where: { serverId_userId: { serverId, userId } },
+      select: { role: true },
+    } as any);
+    return (a?.role as any) || null;
+  }
+
+  async listAccess(serverId: number) {
+    const items = await this.prisma.serverAccess.findMany({
+      where: { serverId },
+      include: { user: { select: { id: true, email: true } } },
+      orderBy: { id: 'asc' },
+    });
+    return items.map(a => ({ userId: a.user.id, email: a.user.email, role: a.role }));
+  }
+
+  async addAccess(serverId: number, actorUserId: number, email: string, role: 'VIEWER' | 'OPERATOR' | 'ADMIN') {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const actor = await this.prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true } });
+    if (!actor) throw new BadRequestException('actor_not_found');
+    // Only server owner or global admin/owner may manage access
+    if (s.userId !== actorUserId && !(actor.role === 'ADMIN' || actor.role === 'OWNER')) {
+      throw new ForbiddenException();
+    }
+    const target = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (!target) throw new BadRequestException('user_not_found');
+    if (target.id === s.userId) throw new BadRequestException('cannot_change_owner_access');
+
+    const existing = await this.prisma.serverAccess.findUnique({
+      where: { serverId_userId: { serverId, userId: target.id } },
+      select: { serverId: true },
+    } as any);
+    if (existing) {
+      await this.prisma.serverAccess.update({
+        where: { serverId_userId: { serverId, userId: target.id } },
+        data: { role: role as any },
+      } as any);
+    } else {
+      await this.prisma.serverAccess.create({
+        data: { serverId, userId: target.id, role: role as any },
+      });
+    }
+    return { ok: true };
+  }
+
+  async updateAccess(serverId: number, actorUserId: number, targetUserId: number, role: 'VIEWER' | 'OPERATOR' | 'ADMIN') {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const actor = await this.prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true } });
+    if (!actor) throw new BadRequestException('actor_not_found');
+    if (s.userId !== actorUserId && !(actor.role === 'ADMIN' || actor.role === 'OWNER')) {
+      throw new ForbiddenException();
+    }
+    if (targetUserId === s.userId) throw new BadRequestException('cannot_change_owner_access');
+    const exists = await this.prisma.serverAccess.findUnique({
+      where: { serverId_userId: { serverId, userId: targetUserId } },
+      select: { serverId: true },
+    } as any);
+    if (!exists) throw new BadRequestException('access_not_found');
+    await this.prisma.serverAccess.update({
+      where: { serverId_userId: { serverId, userId: targetUserId } },
+      data: { role: role as any },
+    } as any);
+    return { ok: true };
+  }
+
+  async removeAccess(serverId: number, actorUserId: number, targetUserId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const actor = await this.prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true } });
+    if (!actor) throw new BadRequestException('actor_not_found');
+    if (s.userId !== actorUserId && !(actor.role === 'ADMIN' || actor.role === 'OWNER')) {
+      throw new ForbiddenException();
+    }
+    if (targetUserId === s.userId) throw new BadRequestException('cannot_remove_owner_access');
+    await this.prisma.serverAccess.delete({
+      where: { serverId_userId: { serverId, userId: targetUserId } },
+    } as any);
+    return { ok: true };
   }
 
   private toMb(val: number | undefined, assumeGbIfLarge = false): number {

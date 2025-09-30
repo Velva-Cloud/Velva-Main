@@ -116,6 +116,20 @@ async function main() {
       });
       console.log('Created demo server');
     }
+    // Create an operator user and grant access to demo server
+    let ops = await prisma.user.findUnique({ where: { email: 'ops@example.com' } });
+    if (!ops) {
+      ops = await prisma.user.create({ data: { email: 'ops@example.com', password: null, role: 'USER' } });
+      console.log('Created ops user');
+    }
+    const server = await prisma.server.findFirst({ where: { userId: demo.id }, orderBy: { id: 'asc' } });
+    if (server && ops) {
+      const existingAccess = await prisma.serverAccess.findUnique({ where: { serverId_userId: { serverId: server.id, userId: ops.id } } });
+      if (!existingAccess) {
+        await prisma.serverAccess.create({ data: { serverId: server.id, userId: ops.id, role: 'OPERATOR' } });
+        console.log('Granted OPERATOR access to ops@example.com for demo server');
+      }
+    }
   }
 
   console.log('Seed completed');
