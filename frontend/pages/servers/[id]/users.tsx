@@ -15,6 +15,7 @@ export default function ServerUsersPage() {
   const toast = useToast();
   const router = useRouter();
   const { id } = router.query;
+  const sid = Array.isArray(id) ? (id[0] || '') : (id ?? '');
 
   const role = useMemo(() => getUserRole(), []);
   const [srvName, setSrvName] = useState<string>('');
@@ -24,19 +25,19 @@ export default function ServerUsersPage() {
   const [busy, setBusy] = useState(false);
 
   const fetchServer = async () => {
-    if (!id) return;
+    if (!sid) return;
     try {
-      const res = await api.get(`/servers/${id}`);
-      setSrvName(res.data?.name || String(id));
+      const res = await api.get(`/servers/${sid}`);
+      setSrvName(res.data?.name || String(sid));
     } catch {}
   };
 
-  useEffect(() => { fetchServer(); }, [id]);
+  useEffect(() => { fetchServer(); }, [sid]);
 
   const loadUsers = async () => {
-    if (!id) return;
+    if (!sid) return;
     try {
-      const res = await api.get(`/servers/${id}/access`);
+      const res = await api.get(`/servers/${sid}/access`);
       const items = (res.data || []) as Array<{ userId: number; email: string; role: 'VIEWER' | 'OPERATOR' | 'ADMIN' }>;
       setUsers(items.map(i => ({ id: i.userId, email: i.email, role: i.role })));
     } catch (e: any) {
@@ -44,12 +45,12 @@ export default function ServerUsersPage() {
     }
   };
 
-  useEffect(() => { loadUsers(); }, [id]);
+  useEffect(() => { loadUsers(); }, [sid]);
 
   const addUser = async () => {
     setBusy(true);
     try {
-      await api.post(`/servers/${id}/access`, { email: email.trim(), role: perm });
+      await api.post(`/servers/${sid}/access`, { email: email.trim(), role: perm });
       toast.show('Access granted', 'success');
       await loadUsers();
     } catch (e: any) {
@@ -64,7 +65,7 @@ export default function ServerUsersPage() {
   const removeUser = async (uid: number) => {
     setBusy(true);
     try {
-      await api.delete(`/servers/${id}/access/${uid}`);
+      await api.delete(`/servers/${sid}/access/${uid}`);
       toast.show('Access removed', 'success');
       await loadUsers();
     } catch (e: any) {
@@ -80,7 +81,7 @@ export default function ServerUsersPage() {
       <NavBar />
       <main className="max-w-5xl mx-auto px-6 py-10">
         <div className="flex gap-6">
-          <ServerSidebar serverId={id || ''} current="users" />
+          <ServerSidebar serverId={sid} current="users" />
           <div className="flex-1">
             <div className="flex items-center justify-between">
               <h1 className="text-2xl font-semibold">Users & Access • {srvName}</h1>
