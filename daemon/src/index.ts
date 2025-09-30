@@ -425,7 +425,7 @@ function startHttpsServer() {
   });
 
   app.post('/provision', async (req, res) => {
-    const { serverId, name, image = 'nginx:alpine', cpu, ramMB } = req.body || {};
+    const { serverId, name, image = 'nginx:alpine', cpu, ramMB, env = {}, mountPath = '/srv', cmd = [], exposePorts = [] } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
     const containerName = `vc-${serverId}`;
@@ -436,7 +436,7 @@ function startHttpsServer() {
         const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
         if (Array.isArray(matches) && matches.length > 0) {
           const info = matches[0];
-          return res.json({ ok: true, id: info.Id, existed: true });
+          return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath });
         }
       } catch {
         // ignore pre-check failures and proceed
@@ -455,6 +455,21 @@ function startHttpsServer() {
       });
 
       try {
+        // Environment variables: flatten object to ["KEY=value"]
+        const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];
+        if (env && typeof env === 'object') {
+          for (const [k, v] of Object.entries(env)) {
+            envArr.push(`${k}=${String(v)}`);
+          }
+        }
+
+        // Exposed ports
+        const exposed: Record<string, {}> = {};
+        for (const p of exposePorts || []) {
+          const port = String(p).includes('/') ? String(p) : `${String(p)}/tcp`;
+          exposed[port] = {};
+        }
+
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
@@ -464,15 +479,16 @@ function startHttpsServer() {
           AttachStdout: true,
           AttachStderr: true,
           HostConfig: {
-            Binds: [`${srvDir}:/srv`],
+            Binds: [`${srvDir}:${mountPath}`],
             NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
             Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
             RestartPolicy: { Name: 'unless-stopped' },
           },
-          Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
-          Cmd: [],
-        });
-        return res.json({ ok: true, id: container.id, existed: false, volume: '/srv' });
+          Env: envArr,
+          ExposedPorts: Object.keys(exposed).length ? exposed : undefined,
+          Cmd: Array.isArray(cmd) ? cmd : [],
+        } as any);
+        return res.json({ ok: true, id: container.id, existed: false, volume: mountPath });
       } catch (e: any) {
         // If name conflict happened due to a race, treat as existed
         const msg = String(e?.message || '');
@@ -482,18 +498,18 @@ function startHttpsServer() {
             const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
             if (Array.isArray(matches) && matches.length > 0) {
               const info = matches[0];
-              return res.json({ ok: true, id: info.Id, existed: true, volume: '/srv' });
+              return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath });
             }
             // Fallback to inspect by name with and without leading slash
             try {
               const c1 = docker.getContainer(containerName);
               await c1.inspect();
-              return res.json({ ok: true, id: c1.id, existed: true, volume: '/srv' });
+              return res.json({ ok: true, id: c1.id, existed: true, volume: mountPath });
             } catch {}
             try {
               const c2 = docker.getContainer(`/${containerName}`);
               await c2.inspect();
-              return res.json({ ok: true, id: c2.id, existed: true, volume: '/srv' });
+              return res.json({ ok: true, id: c2.id, existed: true, volume: mountPath });
             } catch {}
           } catch {
             // ignore and fall through to error

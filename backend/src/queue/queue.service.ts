@@ -157,6 +157,10 @@ export class QueueService implements OnModuleInit {
         const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
         const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
         let image = typeof resources.image === 'string' ? resources.image : 'nginx:alpine';
+        const env = (resources.env && typeof resources.env === 'object') ? resources.env : undefined;
+        const mountPath = typeof resources.mountPath === 'string' ? resources.mountPath : (typeof resources.dataDir === 'string' ? resources.dataDir : undefined);
+        const exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
+        const cmd = Array.isArray(resources.cmd) ? resources.cmd : undefined;
 
         // Check if an image override was provided at creation
         const recentCreates = await this.prisma.log.findMany({
@@ -172,7 +176,7 @@ export class QueueService implements OnModuleInit {
 
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
-          await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB });
+          await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd });
         } catch (e: any) {
           if (isHardProvisionError(e)) {
             await this.prisma.log.create({

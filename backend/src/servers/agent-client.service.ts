@@ -68,7 +68,20 @@ export class AgentClientService {
     return client;
   }
 
-  async provision(baseURL: string | undefined, data: { serverId: number; name: string; image?: string; cpu?: number; ramMB?: number }) {
+  async provision(
+    baseURL: string | undefined,
+    data: {
+      serverId: number;
+      name: string;
+      image?: string;
+      cpu?: number;
+      ramMB?: number;
+      env?: Record<string, string | number | boolean>;
+      mountPath?: string;
+      cmd?: string[];
+      exposePorts?: Array<number | string>;
+    },
+  ) {
     try {
       const res = await this.getClient(baseURL).post('/provision', data);
       return res.data;
