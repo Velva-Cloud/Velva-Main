@@ -354,6 +354,11 @@ function startHttpsServer() {
       container.logs(opts, (err: any, stream: any) => {
         if (err || !stream) {
           clearInterval(ping);
+          const code = err?.statusCode;
+          const msg = String(err?.message || '');
+          if (code === 404 || /no such container/i.test(msg)) {
+            return res.status(404).json({ error: 'container_not_found' });
+          }
           return res.status(500).json({ error: err?.message || 'logs_failed' });
         }
 
@@ -394,6 +399,11 @@ function startHttpsServer() {
         }
       });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
       res.status(500).json({ error: e?.message || 'logs_failed' });
     }
   });
@@ -470,6 +480,18 @@ function startHttpsServer() {
           exposed[port] = {};
         }
 
+        // CPU units to NanoCpus:
+        // Treat 'cpu' as plan units where 100 units = 1 core by default (configurable).
+        // Clamp to host core count to satisfy Docker engine constraints.
+        let nanoCpus: number | undefined = undefined;
+        if (typeof cpu === 'number' && isFinite(cpu) && cpu > 0) {
+          const unitsPerCore = Number(process.env.CPU_UNITS_PER_CORE || 100);
+          const coresAvail = Math.max(1, (os.cpus()?.length || 1));
+          let coreLimit = cpu / (unitsPerCore > 0 ? unitsPerCore : 100);
+          coreLimit = Math.max(0.01, Math.min(coresAvail, coreLimit));
+          nanoCpus = Math.round(coreLimit * 1e9);
+        }
+
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
@@ -480,7 +502,7 @@ function startHttpsServer() {
           AttachStderr: true,
           HostConfig: {
             Binds: [`${srvDir}:${mountPath}`],
-            NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
+            NanoCpus: nanoCpus,
             Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
             RestartPolicy: { Name: 'unless-stopped' },
           },
