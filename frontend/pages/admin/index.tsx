@@ -2,9 +2,28 @@ import Head from 'next/head';
 import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
 import SystemStatus from '../../components/SystemStatus';
+import { useState } from 'react';
+import { useToast } from '../../components/Toast';
+import api from '../../utils/api';
 
 export default function AdminIndex() {
   useRequireAdmin();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [includeDaemon, setIncludeDaemon] = useState(false);
+
+  const updatePlatform = async () => {
+    setBusy(true);
+    try {
+      const res = await api.post('/status/platform/update', { includeDaemon });
+      const restarted = res.data?.results?.map((r: any) => `${r.url || 'default'}: ${r.ok ? 'ok' : 'failed'}`).join(', ');
+      toast.show(`Update requested${restarted ? ` • ${restarted}` : ''}`, 'success');
+    } catch (e: any) {
+      toast.show(e?.response?.data?.message || 'Failed to update platform', 'error');
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <>
@@ -19,6 +38,23 @@ export default function AdminIndex() {
             <SystemStatus />
           </div>
         </div>
+
+        {/* Platform update card */}
+        <section className="card p-4 mb-6">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="font-semibold">Platform update</h3>
+              <p className="text-slate-400 text-sm">Restart backend and frontend containers on all approved nodes. Optionally restart daemon.</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-1 text-sm">
+                <input type="checkbox" checked={includeDaemon} onChange={(e) => setIncludeDaemon(e.target.checked)} />
+                Include daemon
+              </label>
+              <button onClick={updatePlatform} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Update</button>
+            </div>
+          </div>
+        </section>
 
         <section className="grid md:grid-cols-2 gap-4">
           <a href="/admin/plans" className="card p-5 hover:bg-slate-800/60">

@@ -2,10 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import IORedis from 'ioredis';
 import { QueueService } from '../queue/queue.service';
+import { AgentClientService } from '../servers/agent-client.service';
 
 @Injectable()
 export class StatusService {
-  constructor(private prisma: PrismaService, private queues: QueueService) {}
+  constructor(private prisma: PrismaService, private queues: QueueService, private agent: AgentClientService) {}
 
   async getSystemStatus() {
     // DB status
@@ -47,5 +48,22 @@ export class StatusService {
       uptimeSec: Math.floor(process.uptime()),
       timestamp: new Date().toISOString(),
     };
+  }
+
+  async updatePlatform(includeDaemon = false) {
+    // Call all approved nodes; if none, fall back to configured DAEMON_URL
+    const nodes = await this.prisma.node.findMany({ where: { approved: true }, select: { apiUrl: true } });
+    const urls = nodes.map(n => n.apiUrl).filter(Boolean) as string[];
+    if (urls.length === 0 && process.env.DAEMON_URL) urls.push(process.env.DAEMON_URL);
+    const results = [];
+    for (const url of urls) {
+      try {
+        const r = await this.agent.platformUpdate(url, includeDaemon);
+        results.push({ url, ok: true, restarted: r?.restarted || null });
+      } catch (e: any) {
+        results.push({ url, ok: false, error: e?.message || 'update_failed' });
+      }
+    }
+    return { ok: results.some(r => r.ok), results };
   }
 }

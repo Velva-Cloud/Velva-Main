@@ -130,6 +130,11 @@ export class AgentClientService {
     return res.data;
   }
 
+  async platformUpdate(baseURL: string | undefined, includeDaemon = false) {
+    const res = await this.getClient(baseURL).post('/platform/update', { includeDaemon });
+    return res.data;
+  }
+
   // Stream logs via SSE from agent to client response
   async streamLogs(baseURL: string | undefined, serverId: number, res: any) {
     const client = this.getClient(baseURL);

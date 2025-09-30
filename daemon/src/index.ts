@@ -278,6 +278,61 @@ function startHttpsServer() {
     }
   });
 
+  // Platform update: restart platform containers (backend/frontend; optionally daemon)
+  app.post('/platform/update', async (req, res) => {
+    try {
+      const includeDaemon = !!(req.body?.includeDaemon);
+      const list = await docker.listContainers({ all: true });
+      const wants = new Set(['backend', 'frontend']);
+      if (includeDaemon) wants.add('daemon');
+      const selfId = process.env.HOSTNAME || '';
+      const delayed: string[] = [];
+      let restarted = { backend: 0, frontend: 0, daemon: 0 };
+      for (const info of list) {
+        const labels = info.Labels || {};
+        const service = labels['com.docker.compose.service'] || '';
+        if (!wants.has(service)) continue;
+        try {
+          const c = docker.getContainer(info.Id);
+          // Pull image if RepoTags exist (optional best-effort)
+          const imageRef = info.Image || info.ImageID;
+          try {
+            if (imageRef && typeof imageRef === 'string' && imageRef.includes(':')) {
+              await new Promise<void>((resolve) => {
+                docker.pull(imageRef, (err: any, stream: any) => {
+                  if (err) return resolve(); // ignore pull errors for locally built images
+                  docker.modem.followProgress(stream, (_err2: any) => resolve());
+                });
+              });
+            }
+          } catch {
+            // ignore
+          }
+          if (service === 'daemon' && info.Id && info.Id.startsWith(selfId)) {
+            // Schedule self restart after the response
+            delayed.push(info.Id);
+          } else {
+            await c.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) } as any);
+            (restarted as any)[service] = (restarted as any)[service] + 1;
+          }
+        } catch {
+          // ignore individual container restart errors
+        }
+      }
+      res.json({ ok: true, restarted, scheduled: delayed.length });
+      // Perform delayed restarts
+      for (const id of delayed) {
+        setTimeout(async () => {
+          try {
+            await docker.getContainer(id).restart({ t: Number(process.env.RESTART_TIMEOUT || 5) } as any);
+          } catch {}
+        }, 1000);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'platform_update_failed' });
+    }
+  });
+
   // Console: stream logs via SSE
   app.get('/logs/:id', async (req, res) => {
     const id = req.params.id;

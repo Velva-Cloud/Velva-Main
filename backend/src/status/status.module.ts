@@ -4,9 +4,10 @@ import { StatusController } from './status.controller';
 import { PrismaModule } from '../prisma/prisma.module';
 import { QueueModule } from '../queue/queue.module';
 import { MonitorService } from './monitor.service';
+import { AgentClientModule } from '../servers/agent-client.module';
 
 @Module({
-  imports: [PrismaModule, QueueModule],
+  imports: [PrismaModule, QueueModule, AgentClientModule],
   controllers: [StatusController],
   providers: [StatusService, MonitorService],
 })
