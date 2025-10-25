@@ -48,6 +48,8 @@ services:
       DAEMON_CA: /app/certs/ca.crt
       DAEMON_CLIENT_CERT: /app/certs/panel.crt
       DAEMON_CLIENT_KEY: /app/certs/panel.key
+      # Optional API key (phase 4) for panel->daemon in addition to mTLS
+      AGENT_API_KEY: dev-panel-key
       # Agent registration (local dev)
       NODE_REGISTRATION_SECRET: localdev
       AUTO_APPROVE_NODES: "true"
@@ -116,16 +118,23 @@ services:
       NODE_LOCATION: local
       # TLS output and listen port
       CERTS_DIR: /data/certs
+      DATA_DIR: /data
       DAEMON_PORT: 9443
+      # API key to accept panel calls in addition to mTLS (dev)
+      PANEL_API_KEY: dev-panel-key
+      # SFTP
+      SFTP_PORT: 2222
+      SFTP_PASSWORD: dev-sftp
     depends_on:
       backend:
         condition: service_healthy
     volumes:
-      - daemon_certs:/data/certs
+      - daemon_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
-    # Do not publish the daemon port to host to avoid conflicts.
-    # The daemon only needs to reach the panel; inbound mTLS calls from panel
-    # are not required in Phase 1–3.
+    # Publish SFTP to host
+    ports:
+      - "2223:2222"
+    # Do not publish the daemon TLS port to host
     expose:
       - "9443"
     networks:
@@ -133,10 +142,7 @@ services:
         aliases:
           - local-node
 
-# Remove caddy here to avoid port 80/443 conflicts with your existing site.
-# Configure your existing web server to reverse proxy the subdomain instead.
-
 volumes:
   mysql_data:
-  daemon_certs:
+  daemon_data:
   redis_data:

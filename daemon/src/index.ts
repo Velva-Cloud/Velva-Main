@@ -5,24 +5,51 @@ import path from 'path';
 import os from 'os';
 import Docker from 'dockerode';
 import forge from 'node-forge';
+import { PassThrough } from 'stream';
+
+// Runtime helpers for archives and uploads
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const tar = require('tar-stream');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const multer = require('multer');
+// eslint-disable-next-line @typescript-eslint/no-var-requires
+const { Server: SSHServer } = require('ssh2');
 
 const app = express();
 app.use(express.json());
 
 const PORT = Number(process.env.DAEMON_PORT || 9443);
 const CERTS_DIR = process.env.CERTS_DIR || '/certs';
+const DATA_DIR = process.env.DATA_DIR || '/data';
+const SERVERS_DIR = path.join(DATA_DIR, 'servers');
+const SSH_DIR = path.join(DATA_DIR, 'ssh');
 const PANEL_URL = process.env.PANEL_URL || '';
 const REGISTRATION_SECRET = process.env.REGISTRATION_SECRET || '';
 const JOIN_CODE = process.env.JOIN_CODE || '';
 const PUBLIC_IP_ENV = process.env.PUBLIC_IP || '';
+const PANEL_API_KEY = process.env.PANEL_API_KEY || process.env.AGENT_API_KEY || '';
+const SFTP_PORT = Number(process.env.SFTP_PORT || 2222);
+const SFTP_PASSWORD = process.env.SFTP_PASSWORD || PANEL_API_KEY || '';
 
 const CERT_PATH = process.env.DAEMON_TLS_CERT || path.join(CERTS_DIR, 'agent.crt');
 const KEY_PATH = process.env.DAEMON_TLS_KEY || path.join(CERTS_DIR, 'agent.key');
 const CA_PATH = process.env.DAEMON_TLS_CA || path.join(CERTS_DIR, 'ca.crt');
 
 function ensureDir(p: string) {
-  const dir = path.dirname(p);
-  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+}
+
+function serverDir(serverId: number | string) {
+  return path.join(SERVERS_DIR, String(serverId));
+}
+
+function safeResolve(base: string, reqPath: string | undefined) {
+  const req = reqPath || '';
+  const full = path.resolve(base, '.' + (req.startsWith('/') ? req : `/${req}`));
+  if (!full.startsWith(base)) {
+    throw new Error('invalid_path');
+  }
+  return full;
 }
 
 const docker = new Docker({ socketPath: process.env.DOCKER_SOCKET || '/var/run/docker.sock' });
@@ -60,17 +87,35 @@ function signMessage(privateKeyPem: string, message: string): string {
   return forge.util.encode64(sigBytes);
 }
 
+async function ensureHostKey(): Promise<string> {
+  ensureDir(SSH_DIR);
+  const hostKeyPath = path.join(SSH_DIR, 'host_rsa.key');
+  if (fs.existsSync(hostKeyPath)) return hostKeyPath;
+  const keys = forge.pki.rsa.generateKeyPair(2048);
+  const privPem = forge.pki.privateKeyToPem(keys.privateKey);
+  fs.writeFileSync(hostKeyPath, privPem, { mode: 0o600 });
+  return hostKeyPath;
+}
+
 async function bootstrapIfNeeded(): Promise<void> {
   const { cert, key, ca } = loadTls();
-  if (cert && key && ca) return;
+  if (cert && key && ca) {
+    ensureDir(SERVERS_DIR);
+    ensureDir(DATA_DIR);
+    ensureDir(SSH_DIR);
+    return;
+  }
   if (!PANEL_URL || (!JOIN_CODE && !REGISTRATION_SECRET)) {
     console.error('TLS files missing and PANEL_URL plus JOIN_CODE or REGISTRATION_SECRET not set. Cannot bootstrap.');
     process.exit(1);
   }
   try {
-    ensureDir(KEY_PATH);
-    ensureDir(CERT_PATH);
-    ensureDir(CA_PATH);
+    ensureDir(path.dirname(KEY_PATH));
+    ensureDir(path.dirname(CERT_PATH));
+    ensureDir(path.dirname(CA_PATH));
+    ensureDir(SERVERS_DIR);
+    ensureDir(DATA_DIR);
+    ensureDir(SSH_DIR);
 
     // Keypair and CSR
     const keys = forge.pki.rsa.generateKeyPair(2048);
@@ -123,7 +168,7 @@ async function bootstrapIfNeeded(): Promise<void> {
     if (JOIN_CODE) headers['x-join-code'] = JOIN_CODE;
     else headers['x-registration-secret'] = REGISTRATION_SECRET;
 
-    const regRes = await fetch(`${PANEL_URL.replace(/\/+$/, '')}/nodes/agent/register`, {
+    const regRes = await fetch(`${PANEL_URL.replace(/\/*$/, '')}/nodes/agent/register`, {
       method: 'POST',
       headers,
       body: JSON.stringify(registerBody),
@@ -137,7 +182,7 @@ async function bootstrapIfNeeded(): Promise<void> {
 
     // Poll for approval
     let approved = reg.approved;
-    const pollUrl = `${PANEL_URL.replace(/\/+$/, '')}/nodes/agent/poll`;
+    const pollUrl = `${PANEL_URL.replace(/\/*$/, '')}/nodes/agent/poll`;
     for (let attempt = 0; attempt < 60; attempt++) {
       const signatureBase64 = signMessage(privPem, nonce);
       const pollRes = await fetch(pollUrl, {
@@ -191,12 +236,15 @@ function startHttpsServer() {
     rejectUnauthorized: true,
   };
 
-  // mTLS auth
+  // Auth: allow either mTLS client certificate (preferred) or API key header
   app.use((req, res, next) => {
     const tlsSocket = req.socket as any; // TLSSocket at runtime
-    const certInfo = tlsSocket.getPeerCertificate?.();
-    if (!tlsSocket.authorized || !certInfo) {
-      return res.status(401).json({ error: 'mTLS required' });
+    const hasCert = tlsSocket.getPeerCertificate?.();
+    const mtlsOk = tlsSocket.authorized && !!hasCert;
+    const apiKey = req.headers['x-panel-api-key'];
+    const apiOk = PANEL_API_KEY && typeof apiKey === 'string' && apiKey === PANEL_API_KEY;
+    if (!mtlsOk && !apiOk) {
+      return res.status(401).json({ error: 'unauthorized' });
     }
     next();
   });
@@ -214,23 +262,201 @@ function startHttpsServer() {
     }
   });
 
+  app.get('/inventory', async (_req, res) => {
+    try {
+      const list = await docker.listContainers({ all: true });
+      const containers = list.map(info => {
+        const name = (info.Names && info.Names[0]) ? info.Names[0].replace(/^\//, '') : info.Id.substring(0, 12);
+        const m = name.match(/^vc-(\d+)$/);
+        const serverId = m ? Number(m[1]) : undefined;
+        const running = info.State === 'running';
+        return { id: info.Id, name, serverId, running };
+      });
+      res.json({ containers });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'inventory_failed' });
+    }
+  });
+
+  // Platform update: restart platform containers (backend/frontend; optionally daemon)
+  app.post('/platform/update', async (req, res) => {
+    try {
+      const includeDaemon = !!(req.body?.includeDaemon);
+      const list = await docker.listContainers({ all: true });
+      const wants = new Set(['backend', 'frontend']);
+      if (includeDaemon) wants.add('daemon');
+      const selfId = process.env.HOSTNAME || '';
+      const delayed: string[] = [];
+      let restarted = { backend: 0, frontend: 0, daemon: 0 };
+      for (const info of list) {
+        const labels = info.Labels || {};
+        const service = labels['com.docker.compose.service'] || '';
+        if (!wants.has(service)) continue;
+        try {
+          const c = docker.getContainer(info.Id);
+          // Pull image if RepoTags exist (optional best-effort)
+          const imageRef = info.Image || info.ImageID;
+          try {
+            if (imageRef && typeof imageRef === 'string' && imageRef.includes(':')) {
+              await new Promise<void>((resolve) => {
+                docker.pull(imageRef, (err: any, stream: any) => {
+                  if (err) return resolve(); // ignore pull errors for locally built images
+                  docker.modem.followProgress(stream, (_err2: any) => resolve());
+                });
+              });
+            }
+          } catch {
+            // ignore
+          }
+          if (service === 'daemon' && info.Id && info.Id.startsWith(selfId)) {
+            // Schedule self restart after the response
+            delayed.push(info.Id);
+          } else {
+            await c.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) } as any);
+            (restarted as any)[service] = (restarted as any)[service] + 1;
+          }
+        } catch {
+          // ignore individual container restart errors
+        }
+      }
+      res.json({ ok: true, restarted, scheduled: delayed.length });
+      // Perform delayed restarts
+      for (const id of delayed) {
+        setTimeout(async () => {
+          try {
+            await docker.getContainer(id).restart({ t: Number(process.env.RESTART_TIMEOUT || 5) } as any);
+          } catch {}
+        }, 1000);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'platform_update_failed' });
+    }
+  });
+
+  // Console: stream logs via SSE
+  app.get('/logs/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+      const follow = req.query.follow === '1' || req.query.follow === 'true';
+      const tail = Number(req.query.tail || 200);
+      const opts = { follow, stdout: true, stderr: true, tail } as any;
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const ping = setInterval(() => {
+        try { res.write(': ping\n\n'); } catch {}
+      }, 25000);
+
+      // Use callback overload to obtain a stream and satisfy TS types
+      container.logs(opts, (err: any, stream: any) => {
+        if (err || !stream) {
+          clearInterval(ping);
+          const code = err?.statusCode;
+          const msg = String(err?.message || '');
+          if (code === 404 || /no such container/i.test(msg)) {
+            return res.status(404).json({ error: 'container_not_found' });
+          }
+          return res.status(500).json({ error: err?.message || 'logs_failed' });
+        }
+
+        // Demux stdout/stderr when needed
+        const out = new PassThrough();
+        const errOut = new PassThrough();
+        try {
+          (docker as any).modem.demuxStream(stream, out, errOut);
+        } catch {
+          // If not multiplexed (TTY), just use the stream directly
+          stream.on('data', (chunk: Buffer) => {
+            const line = chunk.toString('utf8');
+            res.write(`data: ${JSON.stringify(line)}\n\n`);
+          });
+        }
+
+        const onChunk = (chunk: Buffer) => {
+          const line = chunk.toString('utf8');
+          res.write(`data: ${JSON.stringify(line)}\n\n`);
+        };
+        out.on('data', onChunk);
+        errOut.on('data', onChunk);
+
+        const endAll = () => {
+          clearInterval(ping);
+          try { out.destroy(); } catch {}
+          try { errOut.destroy(); } catch {}
+          try { stream.destroy(); } catch {}
+          try { res.end(); } catch {}
+        };
+
+        stream.on('end', endAll);
+        stream.on('error', endAll);
+
+        const reqRaw = (res as any).req || undefined;
+        if (reqRaw && typeof reqRaw.on === 'function') {
+          reqRaw.on('close', endAll);
+        }
+      });
+    } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
+      res.status(500).json({ error: e?.message || 'logs_failed' });
+    }
+  });
+
+  // Console: run a command via docker exec and return its output
+  app.post('/exec/:id', async (req, res) => {
+    const id = req.params.id;
+    const cmd = (req.body?.cmd || '').toString();
+    if (!cmd || cmd.length > 1000) return res.status(400).json({ error: 'invalid_cmd' });
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+      const exec = await container.exec({
+        AttachStdout: true,
+        AttachStderr: true,
+        Tty: false,
+        Cmd: ['/bin/sh', '-lc', cmd],
+      } as any);
+      const stream = await exec.start({ hijack: true, stdin: false } as any);
+      let output = '';
+      await new Promise<void>((resolve, reject) => {
+        stream.on('data', (d: Buffer) => (output += d.toString('utf8')));
+        stream.on('end', resolve);
+        stream.on('error', reject);
+      });
+      res.json({ ok: true, output });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'exec_failed' });
+    }
+  });
+
   app.post('/provision', async (req, res) => {
-    const { serverId, name, image = 'nginx:alpine', cpu, ramMB } = req.body || {};
+    const { serverId, name, image = 'nginx:alpine', cpu, ramMB, env = {}, mountPath = '/srv', cmd = [], exposePorts = [] } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
     const containerName = `vc-${serverId}`;
 
     try {
-      // Idempotency: if a container already exists with this name, return success
+      // Idempotency: robust existence check by name via listContainers
       try {
-        const existing = docker.getContainer(containerName);
-        await existing.inspect();
-        return res.json({ ok: true, id: existing.id, existed: true });
+        const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+        if (Array.isArray(matches) && matches.length > 0) {
+          const info = matches[0];
+          return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath });
+        }
       } catch {
-        // not found, proceed to create
+        // ignore pre-check failures and proceed
       }
 
-      // Ensure image is present
+      // Ensure persistent server directory and image presence
+      const srvDir = serverDir(serverId);
+      ensureDir(SERVERS_DIR);
+      ensureDir(srvDir);
+
       await new Promise<void>((resolve, reject) => {
         docker.pull(image, (err: any, stream: any) => {
           if (err) return reject(err);
@@ -239,27 +465,77 @@ function startHttpsServer() {
       });
 
       try {
+        // Environment variables: flatten object to ["KEY=value"]
+        const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];
+        if (env && typeof env === 'object') {
+          for (const [k, v] of Object.entries(env)) {
+            envArr.push(`${k}=${String(v)}`);
+          }
+        }
+
+        // Exposed ports
+        const exposed: Record<string, {}> = {};
+        for (const p of exposePorts || []) {
+          const port = String(p).includes('/') ? String(p) : `${String(p)}/tcp`;
+          exposed[port] = {};
+        }
+
+        // CPU units to NanoCpus:
+        // Treat 'cpu' as plan units where 100 units = 1 core by default (configurable).
+        // Clamp to host core count to satisfy Docker engine constraints.
+        let nanoCpus: number | undefined = undefined;
+        if (typeof cpu === 'number' && isFinite(cpu) && cpu > 0) {
+          const unitsPerCore = Number(process.env.CPU_UNITS_PER_CORE || 100);
+          const coresAvail = Math.max(1, (os.cpus()?.length || 1));
+          let coreLimit = cpu / (unitsPerCore > 0 ? unitsPerCore : 100);
+          coreLimit = Math.max(0.01, Math.min(coresAvail, coreLimit));
+          nanoCpus = Math.round(coreLimit * 1e9);
+        }
+
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
+          Tty: true,
+          OpenStdin: true,
+          AttachStdin: true,
+          AttachStdout: true,
+          AttachStderr: true,
           HostConfig: {
-            NanoCpus: typeof cpu === 'number' ? Math.round(cpu * 1e9) : undefined,
+            Binds: [`${srvDir}:${mountPath}`],
+            NanoCpus: nanoCpus,
             Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
             RestartPolicy: { Name: 'unless-stopped' },
           },
-          Env: [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`],
-          Cmd: [],
-        });
-        return res.json({ ok: true, id: container.id, existed: false });
+          Env: envArr,
+          ExposedPorts: Object.keys(exposed).length ? exposed : undefined,
+          Cmd: Array.isArray(cmd) ? cmd : [],
+        } as any);
+        return res.json({ ok: true, id: container.id, existed: false, volume: mountPath });
       } catch (e: any) {
         // If name conflict happened due to a race, treat as existed
         const msg = String(e?.message || '');
         if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
           try {
-            const existing = docker.getContainer(containerName);
-            await existing.inspect();
-            return res.json({ ok: true, id: existing.id, existed: true });
-          } catch {}
+            // Try listContainers to resolve by name
+            const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+            if (Array.isArray(matches) && matches.length > 0) {
+              const info = matches[0];
+              return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath });
+            }
+            // Fallback to inspect by name with and without leading slash
+            try {
+              const c1 = docker.getContainer(containerName);
+              await c1.inspect();
+              return res.json({ ok: true, id: c1.id, existed: true, volume: mountPath });
+            } catch {}
+            try {
+              const c2 = docker.getContainer(`/${containerName}`);
+              await c2.inspect();
+              return res.json({ ok: true, id: c2.id, existed: true, volume: mountPath });
+            } catch {}
+          } catch {
+            // ignore and fall through to error
+          }
         }
         console.error('provision_error:', e);
         return res.status(500).json({ error: e?.message || 'provision_failed' });
@@ -277,6 +553,16 @@ function startHttpsServer() {
       await container.start();
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      // Treat already started (304) as success
+      if (code === 304 || /already started/i.test(msg) || /not modified/i.test(msg)) {
+        return res.json({ ok: true, already: true });
+      }
+      // Propagate not found as 404 with a stable error code
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
       res.status(500).json({ error: e?.message || 'start_failed' });
     }
   });
@@ -288,6 +574,16 @@ function startHttpsServer() {
       await container.stop({ t: Number(process.env.STOP_TIMEOUT || 10) });
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      // Treat already stopped (304) as success
+      if (code === 304 || /not running/i.test(msg) || /not modified/i.test(msg)) {
+        return res.json({ ok: true, already: true });
+      }
+      // If container is missing, treat stop as a no-op success
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.json({ ok: true, missing: true });
+      }
       res.status(500).json({ error: e?.message || 'stop_failed' });
     }
   });
@@ -299,6 +595,11 @@ function startHttpsServer() {
       await container.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) });
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
       res.status(500).json({ error: e?.message || 'restart_failed' });
     }
   });
@@ -310,15 +611,402 @@ function startHttpsServer() {
       await container.remove({ force: true });
       res.json({ ok: true });
     } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      // Deleting a missing container is idempotent success
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.json({ ok: true, missing: true });
+      }
       res.status(500).json({ error: e?.message || 'delete_failed' });
+    }
+  });
+
+  // Simple file manager on persistent volume /data/servers/<id> mounted at /srv inside containers
+  const upload = multer({ storage: multer.memoryStorage() });
+  app.get('/fs/:id/list', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const target = safeResolve(root, (req.query.path as string) || '/');
+      const entries = await fs.promises.readdir(target, { withFileTypes: true });
+      const items = await Promise.all(entries.map(async (ent) => {
+        const full = path.join(target, ent.name);
+        const st = await fs.promises.stat(full);
+        return {
+          name: ent.name,
+          type: ent.isDirectory() ? 'dir' : 'file',
+          size: ent.isDirectory() ? null : st.size,
+          mtime: st.mtime,
+        };
+      }));
+      res.json({ path: target.replace(root, '') || '/', items });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'list_failed' });
+    }
+  });
+
+  app.get('/fs/:id/download', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const target = safeResolve(root, (req.query.path as string) || '/');
+      const st = await fs.promises.stat(target);
+      if (st.isDirectory()) {
+        // Return a tar archive of the directory
+        const pack = tar.pack();
+        const base = target;
+        const walk = async (dir: string, rel: string) => {
+          const ents = await fs.promises.readdir(dir, { withFileTypes: true });
+          for (const ent of ents) {
+            const full = path.join(dir, ent.name);
+            const relPath = path.join(rel, ent.name);
+            const stat = await fs.promises.stat(full);
+            if (ent.isDirectory()) {
+              await new Promise<void>((resolve) => pack.entry({ name: relPath + '/', type: 'directory', mode: stat.mode }, resolve));
+              await walk(full, relPath);
+            } else {
+              const data = await fs.promises.readFile(full);
+              await new Promise<void>((resolve) => pack.entry({ name: relPath, size: data.length, mode: stat.mode }, data, resolve));
+            }
+          }
+        };
+        await walk(base, '');
+        pack.finalize();
+        res.setHeader('Content-Type', 'application/x-tar');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(target)}.tar"`);
+        pack.pipe(res);
+      } else {
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${path.basename(target)}"`);
+        fs.createReadStream(target).pipe(res);
+      }
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'download_failed' });
+    }
+  });
+
+  app.post('/fs/:id/upload', upload.single('file'), async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const dirPath = safeResolve(root, (req.query.path as string) || '/');
+      await fs.promises.mkdir(dirPath, { recursive: true });
+      const file = (req as any).file;
+      if (!file) return res.status(400).json({ error: 'file_required' });
+      const dest = path.join(dirPath, file.originalname);
+      await fs.promises.writeFile(dest, file.buffer);
+      res.json({ ok: true, path: dest.replace(root, '') });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'upload_failed' });
+    }
+  });
+
+  app.post('/fs/:id/mkdir', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const dirPath = safeResolve(root, (req.body?.path as string) || '/');
+      await fs.promises.mkdir(dirPath, { recursive: true });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'mkdir_failed' });
+    }
+  });
+
+  app.post('/fs/:id/delete', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const p = safeResolve(root, (req.body?.path as string) || '/');
+      await fs.promises.rm(p, { recursive: true, force: true });
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'delete_failed' });
+    }
+  });
+
+  app.post('/fs/:id/rename', async (req, res) => {
+    try {
+      const root = serverDir(req.params.id);
+      ensureDir(root);
+      const from = safeResolve(root, (req.body?.from as string) || '/');
+      const to = safeResolve(root, (req.body?.to as string) || '/');
+      await fs.promises.rename(from, to);
+      res.json({ ok: true });
+    } catch (e: any) {
+      res.status(500).json({ error: e?.message || 'rename_failed' });
     }
   });
 
   const server = https.createServer(tlsOpts, app);
   server.listen(PORT, () => {
     console.log(`VelvaCloud daemon listening on https://0.0.0.0:${PORT}`);
+    console.log(`Persistent server data at ${SERVERS_DIR} (mounted into containers at /srv)`);
   });
 }
+
+function statToAttrs(st: fs.Stats) {
+  return {
+    mode: st.mode,
+    uid: (st as any).uid || 0,
+    gid: (st as any).gid || 0,
+    size: st.size,
+    atime: Math.floor(st.atimeMs / 1000),
+    mtime: Math.floor(st.mtimeMs / 1000),
+  };
+}
+
+function startSftpServer() {
+  if (!SFTP_PASSWORD) {
+    console.warn('SFTP disabled (SFTP_PASSWORD not set)');
+    return;
+  }
+  const hostKeyPathPromise = ensureHostKey();
+  hostKeyPathPromise.then((hostKeyPath) => {
+    const server = new SSHServer(
+      {
+        hostKeys: [fs.readFileSync(hostKeyPath)],
+        ident: 'VelvaCloud-sftp',
+      },
+      (client: any) => {
+        let srvId: number | null = null;
+        client
+          .on('authentication', (ctx: any) => {
+            try {
+              const m = (ctx.username || '').match(/^(server|srv)\-(\d+)$/i);
+              if (!m) return ctx.reject(['password']);
+              srvId = Number(m[2]);
+              if (ctx.method === 'password' && SFTP_PASSWORD && ctx.password === SFTP_PASSWORD) {
+                return ctx.accept();
+              }
+              return ctx.reject(['password']);
+            } catch {
+              return ctx.reject(['password']);
+            }
+          })
+          .on('ready', () => {
+            if (!srvId) {
+              client.end();
+              return;
+            }
+            const root = serverDir(srvId);
+            ensureDir(root);
+            client.on('session', (accept: any, _reject: any) => {
+              const session = accept();
+              session.on('sftp', (acceptSftp: any, _rejectSftp: any) => {
+                const sftp = acceptSftp();
+                const handles = new Map<string, any>();
+                let handleCount = 0;
+                const newHandle = (obj: any) => {
+                  const h = Buffer.alloc(4);
+                  h.writeUInt32BE(++handleCount, 0);
+                  handles.set(h.toString('hex'), obj);
+                  return h;
+                };
+                const getHandle = (h: Buffer) => handles.get(h.toString('hex'));
+
+                sftp.on('REALPATH', (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p || '/');
+                    const rel = '/' + path.relative(root, full).replace(/\\/g, '/');
+                    sftp.name(reqid, [{ filename: rel, longname: rel, attrs: {} }]);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('STAT', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    const st = await fs.promises.stat(full);
+                    sftp.attrs(reqid, statToAttrs(st));
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('LSTAT', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    const st = await fs.promises.lstat(full);
+                    sftp.attrs(reqid, statToAttrs(st));
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('OPENDIR', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    const entries = await fs.promises.readdir(full, { withFileTypes: true });
+                    const handle = newHandle({ type: 'dir', path: full, entries, idx: 0 });
+                    sftp.handle(reqid, handle);
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('READDIR', async (reqid: number, handle: Buffer) => {
+                  const h = getHandle(handle);
+                  if (!h || h.type !== 'dir') return sftp.status(reqid, 4);
+                  const batch = [];
+                  for (let i = 0; i < 50 && h.idx < h.entries.length; i++, h.idx++) {
+                    const ent = h.entries[h.idx];
+                    const full = path.join(h.path, ent.name);
+                    let st: fs.Stats | null = null;
+                    try {
+                      st = await fs.promises.stat(full);
+                    } catch {}
+                    batch.push({
+                      filename: ent.name,
+                      longname: ent.name,
+                      attrs: st ? statToAttrs(st) : {},
+                    });
+                  }
+                  if (batch.length > 0) {
+                    sftp.name(reqid, batch);
+                  } else {
+                    sftp.status(reqid, 1);
+                  }
+                });
+
+                sftp.on('OPEN', async (reqid: number, p: string, flags: number, _attrs: any) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    // Translate SFTP flags to Node flags
+                    const SSH_FXF_READ = 0x00000001;
+                    const SSH_FXF_WRITE = 0x00000002;
+                    const SSH_FXF_APPEND = 0x00000004;
+                    const SSH_FXF_CREAT = 0x00000008;
+                    const SSH_FXF_TRUNC = 0x00000010;
+                    const SSH_FXF_EXCL = 0x00000020;
+
+                    let nodeFlags = 'r';
+                    const canRead = !!(flags & SSH_FXF_READ);
+                    const canWrite = !!(flags & SSH_FXF_WRITE);
+                    const append = !!(flags & SSH_FXF_APPEND);
+                    const creat = !!(flags & SSH_FXF_CREAT);
+                    const trunc = !!(flags & SSH_FXF_TRUNC);
+                    const excl = !!(flags & SSH_FXF_EXCL);
+
+                    if (append) nodeFlags = canRead ? 'a+' : 'a';
+                    else if (trunc || creat) nodeFlags = canRead ? 'w+' : 'w';
+                    else if (canRead && canWrite) nodeFlags = 'r+';
+                    else if (canWrite) nodeFlags = 'w';
+                    else nodeFlags = 'r';
+
+                    // Ensure directory exists on create
+                    if (creat) {
+                      ensureDir(path.dirname(full));
+                    }
+
+                    const fd = await fs.promises.open(full, nodeFlags, 0o644);
+                    const handle = newHandle({ type: 'file', fd });
+                    sftp.handle(reqid, handle);
+                  } catch (e: any) {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('READ', async (reqid: number, handle: Buffer, offset: number, length: number) => {
+                  const h = getHandle(handle);
+                  if (!h || h.type !== 'file') return sftp.status(reqid, 4);
+                  try {
+                    const buf = Buffer.alloc(length);
+                    const { bytesRead } = await h.fd.read(buf, 0, length, offset);
+                    if (bytesRead > 0) sftp.data(reqid, buf.subarray(0, bytesRead));
+                    else sftp.status(reqid, 1); // EOF
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('WRITE', async (reqid: number, handle: Buffer, offset: number, data: Buffer) => {
+                  const h = getHandle(handle);
+                  if (!h || h.type !== 'file') return sftp.status(reqid, 4);
+                  try {
+                    await h.fd.write(data, 0, data.length, offset);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('CLOSE', async (reqid: number, handle: Buffer) => {
+                  const h = getHandle(handle);
+                  if (h && h.type === 'file') {
+                    try { await h.fd.close(); } catch {}
+                  }
+                  handles.delete(handle.toString('hex'));
+                  sftp.status(reqid, 0);
+                });
+
+                sftp.on('REMOVE', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    await fs.promises.unlink(full);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 2);
+                  }
+                });
+
+                sftp.on('RMDIR', async (reqid: number, p: string) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    await fs.promises.rmdir(full);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('MKDIR', async (reqid: number, p: string, _attrs: any) => {
+                  try {
+                    const full = safeResolve(root, p);
+                    await fs.promises.mkdir(full, { recursive: false });
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('RENAME', async (reqid: number, from: string, to: string) => {
+                  try {
+                    const f = safeResolve(root, from);
+                    const t = safeResolve(root, to);
+                    await fs.promises.rename(f, t);
+                    sftp.status(reqid, 0);
+                  } catch {
+                    sftp.status(reqid, 4);
+                  }
+                });
+
+                sftp.on('READLINK', (reqid: number, _p: string) => {
+                  sftp.status(reqid, 4);
+                });
+
+                sftp.on('SETSTAT', (reqid: number, _p: string, _attrs: any) => {
+                  // silently accept basic metadata updates
+                  sftp.status(reqid, 0);
+                });
+              });
+            });
+          })
+          .on('end', () => {})
+          .on('close', () => {})
+          .on('error', (_e: any) => {});
+      },
+    );
+    server.listen(SFTP_PORT, '0.0.0.0', () => {
+      console.log(`SFTP server listening on 0.0.0.0:${SFTP_PORT} (username: server-<id>, password: [SFTP_PASSWORD])`);
+    });
+  }).catch((e) => {
+    console.error('SFTP host key generation failed:', e?.message || e);
+  });
+}
+
+// removed duplicate bootstrap/start; see unified bootstrap at end of file
 
 async function startHeartbeat() {
   try {
@@ -357,5 +1045,6 @@ async function startHeartbeat() {
 (async () => {
   await bootstrapIfNeeded();
   startHttpsServer();
+  startSftpServer();
   startHeartbeat();
 })();

@@ -6,6 +6,7 @@ import { ApiTags } from '@nestjs/swagger';
 import { AuthGuard } from '@nestjs/passport';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { ResetPasswordDto } from './dto/reset-password.dto';
+import { Throttle } from '@nestjs/throttler';
 
 function resolveFrontendBase(req: any): string {
   const envBase = process.env.FRONTEND_URL;
@@ -21,21 +22,25 @@ export class AuthController {
   constructor(private auth: AuthService) {}
 
   @Post('register')
+  @Throttle({ 'auth-register': { limit: 3, ttl: 60 * 60 * 1000 } })
   async register(@Body() dto: RegisterDto) {
     return this.auth.register(dto.email, dto.password);
   }
 
   @Post('login')
+  @Throttle({ 'auth-login': { limit: 5, ttl: 15 * 60 * 1000 } })
   async login(@Body() dto: LoginDto) {
     return this.auth.login(dto.email, dto.password);
   }
 
   @Post('forgot-password')
+  @Throttle({ 'auth-login': { limit: 5, ttl: 15 * 60 * 1000 } })
   async forgotPassword(@Body() dto: ForgotPasswordDto) {
     return this.auth.requestPasswordReset(dto.email);
   }
 
   @Post('reset-password')
+  @Throttle({ 'auth-login': { limit: 5, ttl: 15 * 60 * 1000 } })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(dto.token, dto.password);
   }

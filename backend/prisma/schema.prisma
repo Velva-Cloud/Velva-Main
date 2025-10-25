@@ -62,6 +62,8 @@ model User {
   logs          Log[]
   resetTokens   PasswordResetToken[]
   transactions  Transaction[]
+  events        ServerEvent[]
+  access        ServerAccess[]
 }
 
 model Plan {
@@ -127,6 +129,8 @@ model Server {
   user User @relation(fields: [userId], references: [id])
   plan Plan @relation(fields: [planId], references: [id])
   node Node? @relation(fields: [nodeId], references: [id])
+  events ServerEvent[]
+  access ServerAccess[]
 }
 
 model Log {
@@ -182,4 +186,42 @@ model NodeJoinCode {
   usedAt       DateTime?
   usedNodeId   Int?
   createdById  Int?
+}
+
+model ServerEvent {
+  id        Int      @id @default(autoincrement())
+  serverId  Int
+  userId    Int?
+  type      String
+  message   String?
+  data      Json?
+  createdAt DateTime @default(now())
+
+  server Server @relation(fields: [serverId], references: [id])
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([serverId, createdAt])
+  @@index([type, createdAt])
+}
+
+enum ServerAccessRole {
+  VIEWER
+  OPERATOR
+  ADMIN
+}
+
+model ServerAccess {
+  id        Int              @id @default(autoincrement())
+  serverId  Int
+  userId    Int
+  role      ServerAccessRole @default(VIEWER)
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+
+  server Server @relation(fields: [serverId], references: [id])
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@unique([serverId, userId])
+  @@index([serverId])
+  @@index([userId])
 }

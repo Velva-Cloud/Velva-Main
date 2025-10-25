@@ -79,6 +79,35 @@ async function main() {
     }
   }
 
+  // Add a Minecraft Paper plan using itzg/minecraft-server
+  const mcPlanName = 'Minecraft Java • Paper';
+  let mc = await prisma.plan.findFirst({ where: { name: mcPlanName } });
+  if (!mc) {
+    mc = await prisma.plan.create({
+      data: {
+        name: mcPlanName,
+        pricePerMonth: '10.00',
+        resources: {
+          cpu: 200,
+          ramMB: 4096,
+          diskGB: 20,
+          image: 'itzg/minecraft-server:latest',
+          mountPath: '/data',
+          env: {
+            EULA: 'TRUE',
+            MEMORY: '4096M',
+            VERSION: 'latest',
+            TYPE: 'PAPER',
+            ENABLE_RCON: 'false',
+          },
+          exposePorts: [25565],
+        },
+        isActive: true,
+      },
+    });
+    console.log('Created Minecraft Paper plan');
+  }
+
   // Demo user, subscription, and a server (if none)
   let demo = await prisma.user.findUnique({ where: { email: 'demo@example.com' } });
   if (!demo) {
@@ -115,6 +144,20 @@ async function main() {
         data: { userId: demo.id, planId: plan.id, name: 'demo-server', status: 'stopped' },
       });
       console.log('Created demo server');
+    }
+    // Create an operator user and grant access to demo server
+    let ops = await prisma.user.findUnique({ where: { email: 'ops@example.com' } });
+    if (!ops) {
+      ops = await prisma.user.create({ data: { email: 'ops@example.com', password: null, role: 'USER' } });
+      console.log('Created ops user');
+    }
+    const server = await prisma.server.findFirst({ where: { userId: demo.id }, orderBy: { id: 'asc' } });
+    if (server && ops) {
+      const existingAccess = await prisma.serverAccess.findUnique({ where: { serverId_userId: { serverId: server.id, userId: ops.id } } });
+      if (!existingAccess) {
+        await prisma.serverAccess.create({ data: { serverId: server.id, userId: ops.id, role: 'OPERATOR' } });
+        console.log('Granted OPERATOR access to ops@example.com for demo server');
+      }
     }
   }
 

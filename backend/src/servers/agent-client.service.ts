@@ -58,12 +58,30 @@ export class AgentClientService {
         : {}),
     } as https.AgentOptions);
 
-    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs() });
+    const headers: Record<string, string> = {};
+    if (process.env.AGENT_API_KEY) {
+      headers['x-panel-api-key'] = process.env.AGENT_API_KEY;
+    }
+
+    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs(), headers });
     this.clients.set(url, client);
     return client;
   }
 
-  async provision(baseURL: string | undefined, data: { serverId: number; name: string; image?: string; cpu?: number; ramMB?: number }) {
+  async provision(
+    baseURL: string | undefined,
+    data: {
+      serverId: number;
+      name: string;
+      image?: string;
+      cpu?: number;
+      ramMB?: number;
+      env?: Record<string, string | number | boolean>;
+      mountPath?: string;
+      cmd?: string[];
+      exposePorts?: Array<number | string>;
+    },
+  ) {
     try {
       const res = await this.getClient(baseURL).post('/provision', data);
       return res.data;
@@ -78,7 +96,14 @@ export class AgentClientService {
       const res = await this.getClient(baseURL).post(`/start/${serverId}`);
       return res.data;
     } catch (e: any) {
-      this.logger.warn(`Start failed for server ${serverId}: ${e?.message || e}`);
+      const status = e?.response?.status;
+      const err = e?.response?.data?.error;
+      if (status === 404 && err === 'container_not_found') {
+        // Pass through a stable error for upstream logic
+        throw new Error('container_not_found');
+      }
+      const detail = err ? ` (${err})` : '';
+      this.logger.warn(`Start failed for server ${serverId}: ${e?.message || e}${detail}`);
       throw e;
     }
   }
@@ -111,5 +136,89 @@ export class AgentClientService {
       this.logger.warn(`Delete failed for server ${serverId}: ${e?.message || e}`);
       throw e;
     }
+  }
+
+  async inventory(baseURL: string | undefined): Promise<{ containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> }> {
+    const res = await this.getClient(baseURL).get('/inventory');
+    return res.data;
+  }
+
+  async platformUpdate(baseURL: string | undefined, includeDaemon = false) {
+    const res = await this.getClient(baseURL).post('/platform/update', { includeDaemon });
+    return res.data;
+  }
+
+  // Stream logs via SSE from agent to client response
+  async streamLogs(baseURL: string | undefined, serverId: number, res: any) {
+    try {
+      const client = this.getClient(baseURL);
+      const agentRes = await client.get(`/logs/${serverId}?follow=1&tail=200`, { responseType: 'stream' });
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      agentRes.data.pipe(res);
+    } catch (e: any) {
+      const status = e?.response?.status;
+      const err = e?.response?.data?.error;
+      if (status === 404 && err === 'container_not_found') {
+        return res.status(404).end();
+      }
+      return res.status(500).json({ error: e?.message || 'logs_failed' });
+    }
+  }
+
+  async exec(baseURL: string | undefined, serverId: number, cmd: string): Promise<{ ok: boolean; output: string }> {
+    const res = await this.getClient(baseURL).post(`/exec/${serverId}`, { cmd });
+    return res.data;
+  }
+
+  async fsList(baseURL: string | undefined, serverId: number, path: string) {
+    const res = await this.getClient(baseURL).get(`/fs/${serverId}/list`, { params: { path } });
+    return res.data;
+  }
+
+  async fsDownloadStream(
+    baseURL: string | undefined,
+    serverId: number,
+    path: string,
+  ): Promise<{ headers: Record<string, any>; stream: any }> {
+    const res = await this.getClient(baseURL).get(`/fs/${serverId}/download`, {
+      params: { path },
+      responseType: 'stream',
+    });
+    // Avoid exposing Axios internal header types in declaration output
+    const headers = res.headers as any;
+    return { headers, stream: res.data as any };
+  }
+
+  async fsUpload(baseURL: string | undefined, serverId: number, dirPath: string, filename: string, content: Buffer) {
+    // Minimal multipart body using form-data
+    // eslint-disable-next-line @typescript-eslint/no-var-requires
+    const FormData = require('form-data');
+    const form = new FormData();
+    form.append('file', content, { filename });
+    const headers = form.getHeaders();
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/upload`, form, {
+      params: { path: dirPath },
+      headers,
+      maxContentLength: Infinity,
+      maxBodyLength: Infinity,
+    });
+    return res.data;
+  }
+
+  async fsMkdir(baseURL: string | undefined, serverId: number, dirPath: string) {
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/mkdir`, { path: dirPath });
+    return res.data;
+  }
+
+  async fsDelete(baseURL: string | undefined, serverId: number, targetPath: string) {
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/delete`, { path: targetPath });
+    return res.data;
+  }
+
+  async fsRename(baseURL: string | undefined, serverId: number, from: string, to: string) {
+    const res = await this.getClient(baseURL).post(`/fs/${serverId}/rename`, { from, to });
+    return res.data;
   }
 }
