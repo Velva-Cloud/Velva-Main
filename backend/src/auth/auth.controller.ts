@@ -40,6 +40,23 @@ export class AuthController {
     return this.auth.resetPassword(dto.token, dto.password);
   }
 
+  // Diagnostics: which OAuth providers are enabled at runtime
+  @Get('providers')
+  async providers() {
+    const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+    const discordEnabled = Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET);
+    return {
+      google: {
+        enabled: googleEnabled,
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/google/callback',
+      },
+      discord: {
+        enabled: discordEnabled,
+        callbackURL: process.env.DISCORD_CALLBACK_URL || 'http://localhost:4000/api/auth/discord/callback',
+      },
+    };
+  }
+
   // Google OAuth
   @Get('google')
   @UseGuards(AuthGuard('google'))
