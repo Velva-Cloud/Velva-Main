@@ -38,9 +38,9 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
-      # Use the actual public host served by Caddy
-      FRONTEND_URL: https://velvacloud.com
-      # Ensure OAuth providers call back to the public host that Caddy serves
+      # Allow multiple frontend origins (comma-separated)
+      FRONTEND_URL: https://velvacloud.com,https://www.velvacloud.com,https://panel.velvacloud.com,https://www.panel.velvacloud.com
+      # Ensure OAuth providers call back to a public host your proxy serves
       GOOGLE_CALLBACK_URL: https://velvacloud.com/api/auth/google/callback
       DISCORD_CALLBACK_URL: https://velvacloud.com/api/auth/discord/callback
       PORT: 4000

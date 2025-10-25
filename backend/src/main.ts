@@ -33,10 +33,12 @@ async function bootstrap() {
     },
   }));
 
-  // CORS restricted to configured frontend URL
-  const frontend = process.env.FRONTEND_URL || 'http://localhost:3000';
+  // CORS restricted to configured frontend URL(s)
+  // Support comma-separated list of allowed origins
+  const frontendEnv = process.env.FRONTEND_URL || 'http://localhost:3000';
+  const origins = frontendEnv.split(',').map(s => s.trim()).filter(Boolean);
   app.enableCors({
-    origin: [frontend],
+    origin: origins,
     credentials: true,
   });
 
