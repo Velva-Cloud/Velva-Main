@@ -39,10 +39,10 @@ services:
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
       # Allow multiple frontend origins (comma-separated)
-      FRONTEND_URL: https://velvacloud.com,https://www.velvacloud.com,https://panel.velvacloud.com,https://www.panel.velvacloud.com
-      # Ensure OAuth providers call back to a public host your proxy serves
-      GOOGLE_CALLBACK_URL: https://velvacloud.com/api/auth/google/callback
-      DISCORD_CALLBACK_URL: https://velvacloud.com/api/auth/discord/callback
+      FRONTEND_URL: https://velvacloud.com,https://panel.velvacloud.com,https://www.panel.velvacloud.com
+      # Ensure OAuth providers call back to the panel subdomain
+      GOOGLE_CALLBACK_URL: https://panel.velvacloud.com/api/auth/google/callback
+      DISCORD_CALLBACK_URL: https://panel.velvacloud.com/api/auth/discord/callback
       PORT: 4000
       SEED_ON_BOOT: "true"
       # PKI (persist CA so it doesn't regenerate on restart)
