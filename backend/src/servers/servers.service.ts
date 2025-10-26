@@ -404,7 +404,7 @@ export class ServersService {
           <p>You can manage it from your <a href="${process.env.PANEL_URL || ''}/servers/${server.id}">dashboard</a>.</p>
         </div>
       `;
-      await this.mail.send(user.email, subj, html);
+      await this.mail.send(user.email, subj, html, undefined, 'no_reply');
     } catch (e) {
       this.logger.warn(`Mail send failed for server create: ${e}`);
     }

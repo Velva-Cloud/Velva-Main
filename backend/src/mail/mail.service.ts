@@ -11,6 +11,8 @@ type MailSettings = {
   pass?: string;
   fromEmail: string;
   fromName?: string;
+  supportEmail?: string;
+  noReplyEmail?: string;
 };
 
 @Injectable()
@@ -60,15 +62,24 @@ export class MailService {
     return this.transporter;
   }
 
-  async send(to: string, subject: string, html: string, text?: string) {
+  private buildFrom(kind: 'default' | 'support' | 'no_reply' = 'default'): string {
+    const s = this.cachedSettings!;
+    const email =
+      kind === 'support'
+        ? (s.supportEmail || s.fromEmail)
+        : kind === 'no_reply'
+        ? (s.noReplyEmail || s.fromEmail)
+        : s.fromEmail;
+    return s.fromName ? `"${s.fromName}" <${email}>` : email;
+  }
+
+  async send(to: string, subject: string, html: string, text?: string, kind: 'default' | 'support' | 'no_reply' = 'default') {
     const tx = await this.getTransporter();
     if (!tx || !this.cachedSettings) {
       this.logger.warn('Skipping email, mail transport unavailable');
       return { skipped: true };
     }
-    const from = this.cachedSettings.fromName
-      ? `"${this.cachedSettings.fromName}" <${this.cachedSettings.fromEmail}>`
-      : this.cachedSettings.fromEmail;
+    const from = this.buildFrom(kind);
     await tx.sendMail({
       from,
       to,

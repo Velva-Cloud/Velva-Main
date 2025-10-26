@@ -14,6 +14,7 @@ export default function AdminMail() {
   const [subject, setSubject] = useState('');
   const [html, setHtml] = useState('<p>Hello from VelvaCloud</p>');
   const [text, setText] = useState('');
+  const [fromKind, setFromKind] = useState<'default' | 'support' | 'no_reply'>('support');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -25,7 +26,7 @@ export default function AdminMail() {
     }
     setSending(true);
     try {
-      await api.post('/settings/mail/send', { to: to.trim(), subject: subject.trim(), html, text: text.trim() || undefined });
+      await api.post('/settings/mail/send', { to: to.trim(), subject: subject.trim(), html, text: text.trim() || undefined, fromKind });
       toast.show('Email sent', 'success');
     } catch (e: any) {
       const msg = e?.response?.data?.message || 'Failed to send email';
@@ -50,6 +51,13 @@ export default function AdminMail() {
             </FormField>
             <FormField label="Subject">
               <input className="input" value={subject} onChange={(e) => setSubject(e.target.value)} placeholder="Subject" />
+            </FormField>
+            <FormField label="From identity">
+              <select className="input" value={fromKind} onChange={(e) => setFromKind(e.target.value as any)}>
+                <option value="support">Support (internal)</option>
+                <option value="no_reply">No-reply (events)</option>
+                <option value="default">Default (fromEmail)</option>
+              </select>
             </FormField>
             <div className="md:col-span-2">
               <FormField label="HTML">

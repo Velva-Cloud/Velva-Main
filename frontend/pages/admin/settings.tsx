@@ -14,6 +14,8 @@ type MailSettings = {
   pass?: string;
   fromEmail: string;
   fromName?: string;
+  supportEmail?: string;
+  noReplyEmail?: string;
 };
 
 export default function AdminSettings() {
@@ -55,6 +57,8 @@ export default function AdminSettings() {
         pass: data.pass || '',
         fromEmail: data.fromEmail || '',
         fromName: data.fromName || '',
+        supportEmail: data.supportEmail || '',
+        noReplyEmail: data.noReplyEmail || '',
       });
       setBillingGraceDays(Number(billingRes.data?.graceDays || 3));
     } catch (e: any) {
@@ -74,12 +78,15 @@ export default function AdminSettings() {
     try {
       await Promise.all([
         api.post('/settings/mail', {
-          ...mail,
+          host: mail.host,
           port: Number(mail.port),
           secure: !!mail.secure,
           user: mail.user || undefined,
           pass: mail.pass || undefined,
+          fromEmail: mail.fromEmail,
           fromName: mail.fromName || undefined,
+          supportEmail: mail.supportEmail || undefined,
+          noReplyEmail: mail.noReplyEmail || undefined,
         }),
         api.post('/settings/billing', { graceDays: Number(billingGraceDays || 3) }),
       ]);
@@ -153,6 +160,12 @@ export default function AdminSettings() {
                 </FormField>
                 <FormField label="From name (optional)">
                   <input className="input" value={mail.fromName || ''} onChange={e => setMail(m => ({ ...m, fromName: e.target.value }))} placeholder="VelvaCloud" />
+                </FormField>
+                <FormField label="Support email (internal)">
+                  <input className="input" value={mail.supportEmail || ''} onChange={e => setMail(m => ({ ...m, supportEmail: e.target.value }))} placeholder="support@example.com" />
+                </FormField>
+                <FormField label="No-reply email (events)">
+                  <input className="input" value={mail.noReplyEmail || ''} onChange={e => setMail(m => ({ ...m, noReplyEmail: e.target.value }))} placeholder="no-reply@example.com" />
                 </FormField>
 
                 <div className="md:col-span-2 mt-2 flex flex-wrap items-center gap-2">

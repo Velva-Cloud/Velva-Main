@@ -31,6 +31,8 @@ export class MailController {
       pass?: string;
       fromEmail: string;
       fromName?: string;
+      supportEmail?: string;
+      noReplyEmail?: string;
     },
   ) {
     return this.mail.saveSettings({
@@ -41,6 +43,8 @@ export class MailController {
       pass: body.pass || undefined,
       fromEmail: body.fromEmail,
       fromName: body.fromName || undefined,
+      supportEmail: body.supportEmail || undefined,
+      noReplyEmail: body.noReplyEmail || undefined,
     });
   }
 
@@ -57,15 +61,16 @@ export class MailController {
 
   @Post('send')
   @Roles(Role.ADMIN, Role.OWNER)
-  async send(@Body() body: { to: string; subject: string; html?: string; text?: string }) {
+  async send(@Body() body: { to: string; subject: string; html?: string; text?: string; fromKind?: 'default' | 'support' | 'no_reply' }) {
     const to = (body?.to || '').trim();
     const subject = (body?.subject || '').trim();
     const html = body?.html || '';
     const text = body?.text || undefined;
+    const fromKind = body?.fromKind || 'default';
     if (!to || !subject || (!html && !text)) {
       return { ok: false, message: 'to, subject and html or text are required' };
     }
-    await this.mail.send(to, subject, html || (text as string), text);
+    await this.mail.send(to, subject, html || (text as string), text, fromKind);
     return { ok: true };
   }
 }
