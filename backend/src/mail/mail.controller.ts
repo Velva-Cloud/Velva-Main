@@ -1,17 +1,18 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Post, UseGuards, Req } from '@nestjs/common';
 import { MailService } from './mail.service';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { RolesGuard } from '../common/roles.guard';
 import { Roles } from '../common/roles.decorator';
 import { Role } from '../common/roles.enum';
 import { AuthGuard } from '@nestjs/passport';
+import { PrismaService } from '../prisma/prisma.service';
 
 @ApiTags('mail')
 @ApiBearerAuth()
 @UseGuards(AuthGuard('jwt'), RolesGuard)
 @Controller('settings/mail')
 export class MailController {
-  constructor(private mail: MailService) {}
+  constructor(private mail: MailService, private prisma: PrismaService) {}
 
   @Get()
   @Roles(Role.ADMIN, Role.OWNER)
@@ -59,9 +60,11 @@ export class MailController {
     return { ok: true };
   }
 
+  // Staff send + store message
   @Post('send')
-  @Roles(Role.ADMIN, Role.OWNER)
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
   async send(
+    @Req() req: any,
     @Body()
     body: {
       to: string;
@@ -81,7 +84,39 @@ export class MailController {
     if (!to || !subject || (!html && !text)) {
       return { ok: false, message: 'to, subject and html or text are required' };
     }
+    const userId = req?.user?.userId as number;
     await this.mail.send(to, subject, html || (text as string), text, { kind: fromKind, fromLocal });
+    // Store outbound message
+    const settings = await this.mail.getSettings();
+    const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'velvacloud.com').trim();
+    const local = fromLocal || ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'no-reply');
+    const from = `${local}@${domain}`;
+    await this.prisma.emailMessage.create({
+      data: {
+        userId,
+        direction: 'outbound' as any,
+        from,
+        to,
+        subject,
+        html: html || null,
+        text: text || null,
+        read: true,
+      },
+    });
     return { ok: true };
   }
+
+  // Inbox list for current user
+  @Get('inbox')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async inbox(@Req() req: any) {
+    const userId = req?.user?.userId as number;
+    const items = await this.prisma.emailMessage.findMany({
+      where: { userId },
+      orderBy: { createdAt: 'desc' },
+      take: 100,
+    });
+    return { items };
+  }
+}
 }
