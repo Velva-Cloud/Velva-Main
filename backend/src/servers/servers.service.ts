@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger } from '@ne
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from './agent-client.service';
 import { QueueService } from '../queue/queue.service';
+import { MailService } from '../mail/mail.service';
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -34,7 +35,7 @@ type Resources = { cpu?: number; ramMB?: number; diskMB?: number; diskGB?: numbe
 export class ServersService {
   private readonly logger = new Logger(ServersService.name);
 
-  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService, private mail: import('../mail/mail.service').MailService) {}
+  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService, private mail: MailService) {}
 
   async nodeBaseUrl(nodeId?: number | null): Promise<string | undefined> {
     // In development, allow overriding per-node URLs with a global DAEMON_URL
