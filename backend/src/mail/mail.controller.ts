@@ -120,4 +120,17 @@ export class MailController {
     });
     return { items };
   }
+
+  // Sender alias for current user
+  @Get('alias')
+  @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
+  async alias(@Req() req: any) {
+    const userId = req?.user?.userId as number;
+    const staff = await this.prisma.staffEmail.findFirst({ where: { userId } });
+    if (staff?.email) return { email: staff.email };
+    const settings = await this.mail.getSettings();
+    const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'velvacloud.com').trim();
+    const local = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'support');
+    return { email: `${local}@${domain}` };
+  }
 }

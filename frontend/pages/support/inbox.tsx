@@ -24,6 +24,7 @@ export default function SupportInbox() {
   const [msgs, setMsgs] = useState<Msg[]>([]);
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
+  const [alias, setAlias] = useState<string>('');
 
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
@@ -45,6 +46,12 @@ export default function SupportInbox() {
 
   useEffect(() => {
     loadInbox();
+    (async () => {
+      try {
+        const a = await api.get('/settings/mail/alias');
+        setAlias(a.data?.email || '');
+      } catch {}
+    })();
   }, []);
 
   const send = async () => {
@@ -90,6 +97,7 @@ export default function SupportInbox() {
 
         <section className="card p-4 mb-6">
           <h2 className="font-semibold mb-3">Compose</h2>
+          <div className="subtle text-sm mb-2">From: <span className="text-slate-200 font-medium">{alias || 'your-alias@velvacloud.com'}</span></div>
           <div className="grid gap-3 md:grid-cols-2">
             <div>
               <div className="text-sm mb-1">To</div>
