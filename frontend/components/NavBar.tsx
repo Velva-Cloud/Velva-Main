@@ -1,5 +1,5 @@
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getUserRole } from '../utils/auth';
 
 export default function NavBar() {
@@ -7,6 +7,7 @@ export default function NavBar() {
   const [role, setRole] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const [openConsole, setOpenConsole] = useState(false);
+  const consoleRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -15,6 +16,22 @@ export default function NavBar() {
       setRole(getUserRole());
     }
   }, []);
+
+  // Close Console dropdown when clicking outside
+  useEffect(() => {
+    const handler = (ev: MouseEvent) => {
+      if (!consoleRef.current) return;
+      const target = ev.target as Node;
+      if (consoleRef.current.contains(target)) return;
+      setOpenConsole(false);
+    };
+    if (openConsole) {
+      document.addEventListener('mousedown', handler);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handler);
+    };
+  }, [openConsole]);
 
   const logout = () => {
     localStorage.removeItem('token');
@@ -43,11 +60,10 @@ export default function NavBar() {
             {token && <Link href="/billing" className="nav-link">Billing</Link>}
 
             {(canSupport || canAdmin) && (
-              <div className="relative">
+              <div className="relative" ref={consoleRef}>
                 <button
                   className="nav-link inline-flex items-center gap-1"
                   onClick={() => setOpenConsole((v) => !v)}
-                  onBlur={() => setOpenConsole(false)}
                 >
                   Console
                   <svg width="16" height="16" viewBox="0 0 20 20" className={`transition-transform ${openConsole ? 'rotate-180' : ''}`}>
