@@ -10,10 +10,15 @@ import { Throttle } from '@nestjs/throttler';
 
 function resolveFrontendBase(req: any): string {
   const envBase = process.env.FRONTEND_URL;
-  if (envBase) return envBase;
+  if (envBase) {
+    // Support comma-separated list; pick the first valid URL
+    const candidates = envBase.split(',').map(s => s.trim()).filter(Boolean);
+    const firstValid = candidates.find(u => /^https?:\/\/.+/i.test(u)) || candidates[0];
+    if (firstValid) return firstValid.replace(/\/$/, '');
+  }
   const xfProto = (req?.headers?.['x-forwarded-proto'] as string) || req?.protocol || 'http';
   const xfHost = (req?.headers?.['x-forwarded-host'] as string) || (req?.headers?.host as string) || 'localhost:3000';
-  return `${xfProto}://${xfHost}`;
+  return `${xfProto}://${xfHost}`.replace(/\/$/, '');
 }
 
 @ApiTags('auth')
@@ -43,6 +48,23 @@ export class AuthController {
   @Throttle({ 'auth-login': { limit: 5, ttl: 15 * 60 * 1000 } })
   async resetPassword(@Body() dto: ResetPasswordDto) {
     return this.auth.resetPassword(dto.token, dto.password);
+  }
+
+  // Diagnostics: which OAuth providers are enabled at runtime
+  @Get('providers')
+  async providers() {
+    const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+    const discordEnabled = Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET);
+    return {
+      google: {
+        enabled: googleEnabled,
+        callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/google/callback',
+      },
+      discord: {
+        enabled: discordEnabled,
+        callbackURL: process.env.DISCORD_CALLBACK_URL || 'http://localhost:4000/api/auth/discord/callback',
+      },
+    };
   }
 
   // Google OAuth

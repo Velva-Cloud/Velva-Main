@@ -38,7 +38,11 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
+      # Use a single canonical origin for redirects
       FRONTEND_URL: https://panel.velvacloud.com
+      # Ensure OAuth providers call back to the panel subdomain
+      GOOGLE_CALLBACK_URL: https://panel.velvacloud.com/api/auth/google/callback
+      DISCORD_CALLBACK_URL: https://panel.velvacloud.com/api/auth/discord/callback
       PORT: 4000
       SEED_ON_BOOT: "true"
       # PKI (persist CA so it doesn't regenerate on restart)

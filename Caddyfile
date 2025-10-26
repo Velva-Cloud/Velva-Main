@@ -2,7 +2,8 @@
   email hill.l.ethan6066@gmail.com
 }
 
-velvacloud.com, www.velvacloud.com {
+# Root domain - serve the app
+velvacloud.com {
   encode gzip
   @api path /api* /api/*
 
@@ -13,4 +14,28 @@ velvacloud.com, www.velvacloud.com {
   handle {
     reverse_proxy frontend:3000
   }
+}
+
+# Force non-www for root domain
+www.velvacloud.com {
+  redir https://velvacloud.com{uri}
+}
+
+# Panel subdomain - serve the app
+panel.velvacloud.com {
+  encode gzip
+  @api path /api* /api/*
+
+  handle @api {
+    reverse_proxy backend:4000
+  }
+
+  handle {
+    reverse_proxy frontend:3000
+  }
+}
+
+# Force non-www for panel subdomain
+www.panel.velvacloud.com {
+  redir https://panel.velvacloud.com{uri}
 }
