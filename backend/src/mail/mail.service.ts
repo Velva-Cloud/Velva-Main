@@ -197,7 +197,8 @@ export class MailService {
   }
 
   async sendServerCreated(to: string, context: { name: string; planName: string; nodeName: string; dashboardUrl: string }) {
-    const subject = `Your server \"${context.name}\" has been created`;
+    const subject = `Your server \\\"${context.name}\\\" has been created`;
     const { html, text } = this.compileTemplate('server_created', { ...context, subject });
     return this.send(to, subject, html, text, { kind: 'no_reply' });
   }
+}
