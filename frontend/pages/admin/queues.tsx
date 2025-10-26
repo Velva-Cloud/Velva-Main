@@ -1,8 +1,10 @@
 import Head from 'next/head';
-import NavBar from '../../components/NavBar';
 import { useEffect, useRef, useState } from 'react';
 import { useRequireAuth } from '../../utils/guards';
 import api from '../../utils/api';
+import AdminLayout from '../../components/AdminLayout';
+import FormField from '../../components/FormField';
+import Table from '../../components/Table';
 
 type QueueDef = { name: string };
 type JobItem = {
@@ -133,65 +135,57 @@ export default function AdminQueues() {
       <Head>
         <title>Admin • Queues</title>
       </Head>
-      <NavBar />
-      <main className="max-w-6xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Job Queues</h1>
-          <div className="flex items-center gap-2">
-            <select value={selected} onChange={e => setSelected(e.target.value)} className="px-2 py-1 rounded bg-slate-800 border border-slate-700">
-              {queues.map(q => <option key={q.name} value={q.name}>{q.name}</option>)}
-            </select>
-            <select value={state} onChange={e => setState(e.target.value)} className="px-2 py-1 rounded bg-slate-800 border border-slate-700">
-              {states.map(s => <option key={s} value={s}>{s}</option>)}
-            </select>
-            <button onClick={() => setPage(1)} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Refresh</button>
+      <AdminLayout
+        title="Job Queues"
+        actions={
+          <div className="card p-3">
+            <div className="flex items-center gap-3 flex-wrap">
+              <FormField label="Queue">
+                <select value={selected} onChange={e => setSelected(e.target.value)} className="input w-48">
+                  {queues.map(q => <option key={q.name} value={q.name}>{q.name}</option>)}
+                </select>
+              </FormField>
+              <FormField label="State">
+                <select value={state} onChange={e => setState(e.target.value)} className="input w-40">
+                  {states.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </FormField>
+              <button onClick={() => setPage(1)} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Refresh</button>
+              <div className="ml-auto flex flex-wrap gap-2">
+                <button onClick={() => op('pause')} disabled={busy} className="px-3 py-1 rounded border border-amber-700 hover:bg-amber-900/40">Pause</button>
+                <button onClick={() => op('resume')} disabled={busy} className="px-3 py-1 rounded border border-emerald-700 hover:bg-emerald-900/40">Resume</button>
+                <button onClick={() => op('drain')} disabled={busy} className="px-3 py-1 rounded border border-cyan-700 hover:bg-cyan-900/40">Drain</button>
+                <button onClick={() => op('clean_completed')} disabled={busy} className="px-3 py-1 rounded border border-indigo-700 hover:bg-indigo-900/40">Clean completed</button>
+                <button onClick={() => op('clean_failed')} disabled={busy} className="px-3 py-1 rounded border border-pink-700 hover:bg-pink-900/40">Clean failed</button>
+              </div>
+            </div>
           </div>
-        </div>
-
+        }
+      >
         {err && <div className="mb-3 text-red-400">{err}</div>}
 
-        <div className="mb-4 flex flex-wrap gap-2">
-          <button onClick={() => op('pause')} disabled={busy} className="px-3 py-1 rounded border border-amber-700 hover:bg-amber-900/40">Pause</button>
-          <button onClick={() => op('resume')} disabled={busy} className="px-3 py-1 rounded border border-emerald-700 hover:bg-emerald-900/40">Resume</button>
-          <button onClick={() => op('drain')} disabled={busy} className="px-3 py-1 rounded border border-cyan-700 hover:bg-cyan-900/40">Drain</button>
-          <button onClick={() => op('clean_completed')} disabled={busy} className="px-3 py-1 rounded border border-indigo-700 hover:bg-indigo-900/40">Clean completed</button>
-          <button onClick={() => op('clean_failed')} disabled={busy} className="px-3 py-1 rounded border border-pink-700 hover:bg-pink-900/40">Clean failed</button>
-        </div>
-
-        <div className="rounded border border-slate-800">
-          <table className="w-full text-left">
-            <thead className="bg-slate-900">
-              <tr>
-                <th className="p-2">Job ID</th>
-                <th className="p-2">Name</th>
-                <th className="p-2">Attempts</th>
-                <th className="p-2">State</th>
-                <th className="p-2">Error</th>
-                <th className="p-2">Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.length === 0 ? (
-                <tr><td className="p-3 text-slate-400" colSpan={6}>No jobs</td></tr>
-              ) : jobs.map(j => (
-                <tr key={String(j.id)} className="border-t border-slate-800">
-                  <td className="p-2">{j.id}</td>
-                  <td className="p-2">{j.name}</td>
-                  <td className="p-2">{j.attemptsMade}</td>
-                  <td className="p-2">{j.state}</td>
-                  <td className="p-2 text-red-400">{j.failedReason || ''}</td>
-                  <td className="p-2">
-                    <div className="flex flex-wrap gap-2">
-                      <button onClick={() => op('retry', j.id)} disabled={busy || j.state !== 'failed'} className="px-2 py-1 rounded border border-amber-700 hover:bg-amber-900/40 disabled:opacity-50 disabled:cursor-not-allowed">Retry</button>
-                      <button onClick={() => op('remove', j.id)} disabled={busy} className="px-2 py-1 rounded border border-red-700 hover:bg-red-900/40">Remove</button>
-                      <button onClick={() => op('promote', j.id)} disabled={busy || j.state !== 'delayed'} className="px-2 py-1 rounded border border-cyan-700 hover:bg-cyan-900/40 disabled:opacity-50 disabled:cursor-not-allowed">Promote</button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <Table
+          headers={['Job ID', 'Name', 'Attempts', 'State', 'Error', 'Actions']}
+        >
+          {jobs.length === 0 ? (
+            <tr><td className="p-3 text-slate-400" colSpan={6}>No jobs</td></tr>
+          ) : jobs.map(j => (
+            <tr key={String(j.id)} className="bg-slate-900/40">
+              <td className="px-3 py-2">{j.id}</td>
+              <td className="px-3 py-2">{j.name}</td>
+              <td className="px-3 py-2">{j.attemptsMade}</td>
+              <td className="px-3 py-2">{j.state}</td>
+              <td className="px-3 py-2 text-red-400">{j.failedReason || ''}</td>
+              <td className="px-3 py-2">
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => op('retry', j.id)} disabled={busy || j.state !== 'failed'} className="px-2 py-1 rounded border border-amber-700 hover:bg-amber-900/40 disabled:opacity-50 disabled:cursor-not-allowed">Retry</button>
+                  <button onClick={() => op('remove', j.id)} disabled={busy} className="px-2 py-1 rounded border border-red-700 hover:bg-red-900/40">Remove</button>
+                  <button onClick={() => op('promote', j.id)} disabled={busy || j.state !== 'delayed'} className="px-2 py-1 rounded border border-cyan-700 hover:bg-cyan-900/40 disabled:opacity-50 disabled:cursor-not-allowed">Promote</button>
+                </div>
+              </td>
+            </tr>
+          ))}
+        </Table>
 
         <div className="flex items-center justify-between mt-4">
           <div />
@@ -200,7 +194,7 @@ export default function AdminQueues() {
             <button onClick={() => setPage(p => p + 1)} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Next</button>
           </div>
         </div>
-      </main>
+      </AdminLayout>
     </>
   );
 }

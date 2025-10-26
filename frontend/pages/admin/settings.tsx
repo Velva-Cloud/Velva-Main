@@ -1,10 +1,10 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
-import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
-import SystemStatus from '../../components/SystemStatus';
 import api from '../../utils/api';
 import { useToast } from '../../components/Toast';
+import AdminLayout from '../../components/AdminLayout';
+import FormField from '../../components/FormField';
 
 type MailSettings = {
   host: string;
@@ -112,24 +112,7 @@ export default function AdminSettings() {
       <Head>
         <title>Admin • Settings</title>
       </Head>
-      <NavBar />
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Admin • Settings</h1>
-          <div className="w-full max-w-sm ml-4">
-            <SystemStatus />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
-          <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
-          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
-          <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
-          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
-          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
-          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Settings</a>
-        </div>
-
+      <AdminLayout title="Admin • Settings">
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
         <section className="card p-4 mb-6">
@@ -146,38 +129,31 @@ export default function AdminSettings() {
           ) : (
             <>
               <div className="grid gap-3 md:grid-cols-2">
-                <label className="block">
-                  <div className="text-sm mb-1">Host</div>
+                <FormField label="Host">
                   <input className="input" value={mail.host} onChange={e => setMail(m => ({ ...m, host: e.target.value }))} placeholder="mail.example.com" />
-                </label>
-                <label className="block">
-                  <div className="text-sm mb-1">Port</div>
+                </FormField>
+                <FormField label="Port">
                   <input className="input" type="number" value={mail.port} onChange={e => setMail(m => ({ ...m, port: Number(e.target.value) }))} placeholder="587" />
-                </label>
-                <label className="block">
-                  <div className="text-sm mb-1">Secure (TLS)</div>
+                </FormField>
+                <FormField label="Secure (TLS)">
                   <select className="input" value={mail.secure ? '1' : '0'} onChange={e => setMail(m => ({ ...m, secure: e.target.value === '1' }))}>
                     <option value="0">No</option>
                     <option value="1">Yes</option>
                   </select>
-                </label>
+                </FormField>
                 <div />
-                <label className="block">
-                  <div className="text-sm mb-1">Username</div>
+                <FormField label="Username">
                   <input className="input" value={mail.user || ''} onChange={e => setMail(m => ({ ...m, user: e.target.value }))} placeholder="user@example.com" />
-                </label>
-                <label className="block">
-                  <div className="text-sm mb-1">Password</div>
+                </FormField>
+                <FormField label="Password">
                   <input className="input" type="password" value={mail.pass || ''} onChange={e => setMail(m => ({ ...m, pass: e.target.value }))} placeholder="••••••••" />
-                </label>
-                <label className="block">
-                  <div className="text-sm mb-1">From email</div>
+                </FormField>
+                <FormField label="From email">
                   <input className="input" value={mail.fromEmail} onChange={e => setMail(m => ({ ...m, fromEmail: e.target.value }))} placeholder="no-reply@example.com" />
-                </label>
-                <label className="block">
-                  <div className="text-sm mb-1">From name (optional)</div>
+                </FormField>
+                <FormField label="From name (optional)">
                   <input className="input" value={mail.fromName || ''} onChange={e => setMail(m => ({ ...m, fromName: e.target.value }))} placeholder="VelvaCloud" />
-                </label>
+                </FormField>
 
                 <div className="md:col-span-2 mt-2 flex flex-wrap items-center gap-2">
                   <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>
@@ -196,16 +172,15 @@ export default function AdminSettings() {
         <section className="card p-4">
           <h2 className="font-semibold mb-3">Billing</h2>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="block">
-              <div className="text-sm mb-1">Grace period (days)</div>
+            <FormField label="Grace period (days)">
               <input className="input" type="number" min={1} max={60} value={billingGraceDays} onChange={e => setBillingGraceDays(Number(e.target.value))} />
-            </label>
+            </FormField>
           </div>
           <div className="mt-3">
             <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>Save</button>
           </div>
         </section>
-      </main>
+      </AdminLayout>
     </>
   );
 }
