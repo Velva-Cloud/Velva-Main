@@ -306,7 +306,4 @@ export default function AdminLogs() {
     </>
   );
 }
-      </main>
-    </>
-  );
-}
+      
