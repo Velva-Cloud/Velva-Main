@@ -87,7 +87,7 @@ export class MailService {
       }
     }
 
-    return s.fromName ? `"${s.fromName}" <${baseEmail}>` : baseEmail;
+    return s.fromName ? `\"${s.fromName}\" <${baseEmail}>` : baseEmail;
   }
 
   async send(
@@ -95,7 +95,7 @@ export class MailService {
     subject: string,
     html: string,
     text?: string,
-    opts?: { kind?: 'default' | 'support' | 'no_reply'; fromLocal?: string; fromOverride?: string },
+    opts?: { kind?: 'default' | 'support' | 'no_reply'; fromLocal?: string; fromOverride?: string; replyTo?: string },
   ) {
     const tx = await this.getTransporter();
     if (!tx || !this.cachedSettings) {
@@ -112,6 +112,7 @@ export class MailService {
       subject,
       html,
       text: text || html.replace(/<[^>]+>/g, ''),
+      replyTo: opts?.replyTo || undefined,
     });
     return { sent: true };
   }
@@ -130,6 +131,17 @@ export class MailService {
     const text = bodyHtml.replace(/<[^>]+>/g, '');
     const subject = context.subject || 'VelvaCloud';
     return { subject, html, text };
+  }
+
+  // Staff outbound template sender
+  async sendStaffOutbound(to: string, context: { staffName: string; staffEmail: string; subject: string; messageHtml: string; staffTitle?: string; companyName?: string; disclaimer?: string }) {
+    const { html, text } = this.compileTemplate('staff_outbound', {
+      ...context,
+      companyName: context.companyName || 'VelvaCloud',
+      staffTitle: context.staffTitle || 'Support',
+      disclaimer: context.disclaimer || 'This message may contain confidential information intended only for the recipient. If you received it in error, please notify the sender and delete it.',
+    });
+    return this.send(to, context.subject, html, text, { kind: 'support', fromOverride: context.staffEmail, replyTo: context.staffEmail });
   }
 
   // Convenience templates

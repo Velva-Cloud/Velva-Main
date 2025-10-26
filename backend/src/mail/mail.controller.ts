@@ -91,7 +91,7 @@ export class MailController {
       const local = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'support');
       return `${local}@${domain}`;
     })());
-    await this.mail.send(to, subject, html || (text as string), text, { kind: fromKind, fromOverride: fromAlias });
+    await this.mail.sendStaffOutbound(to, { staffName: (req?.user?.email || '').split('@')[0].replace('.', ' '), staffEmail: fromAlias, subject, messageHtml: html || `<p>${text || ''}</p>` });
     // Store outbound message
     await this.prisma.emailMessage.create({
       data: {

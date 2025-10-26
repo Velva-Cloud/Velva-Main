@@ -1,0 +1,21 @@
+<div style="margin:0;padding:0;">
+  <div style="font-weight:600;margin-bottom:8px;color:#cbd5e1;">
+    From: {{staffName}} | {{companyName}}
+  </div>
+  <div style="margin-bottom:12px;color:#94a3b8;font-size:14px;">
+    Email: <span style="color:#e5e7eb;">{{staffEmail}}</span>
+  </div>
+  <div style="margin:12px 0 8px 0;color:#cbd5e1;font-weight:600;">Subject</div>
+  <div style="margin-bottom:16px;color:#e5e7eb;">{{subject}}</div>
+  <div style="margin:12px 0 8px 0;color:#cbd5e1;font-weight:600;">Reply-To</div>
+  <div style="margin-bottom:16px;color:#e5e7eb;">{{staffEmail}}</div>
+  <div style="margin:12px 0 8px 0;color:#cbd5e1;font-weight:600;">Body</div>
+  <div style="color:#e5e7eb;">
+    {{{messageHtml}}}
+  </div>
+  <hr style="border:none;border-top:1px solid #1e293b;margin:20px 0;" />
+  <div style="font-size:12px;color:#94a3b8;">
+    {{staffName}}{{#if staffTitle}}, {{staffTitle}}{{/if}} • {{companyName}}<br />
+    {{disclaimer}}
+  </div>
+</div>
