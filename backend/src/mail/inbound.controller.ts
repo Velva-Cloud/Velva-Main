@@ -13,7 +13,7 @@ export class MailInboundController {
   // Expected fields: to, from, subject, html, text. Attachments ignored for now.
   @Post()
   @UseInterceptors(FileFieldsInterceptor([{ name: 'attachments', maxCount: 20 }]))
-  async receive(@Req() req: any, @Body() body: any, @UploadedFiles() files: Record<string, Express.Multer.File[]>) {
+  async receive(@Req() req: any, @Body() body: any, @UploadedFiles() files: Record<string, any[]>) {
     try {
       // Normalize "to"
       let toField = String(body?.to || '').toLowerCase();
