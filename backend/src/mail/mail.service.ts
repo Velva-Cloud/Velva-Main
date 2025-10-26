@@ -119,9 +119,28 @@ export class MailService {
 
   // Templating
   private compileTemplate(name: string, context: Record<string, any>): { subject: string; html: string; text: string } {
-    const baseDir = path.join(process.cwd(), 'src', 'mail', 'templates');
-    const layoutPath = path.join(baseDir, 'layout.hbs');
-    const tplPath = path.join(baseDir, `${name}.hbs`);
+    // Resolve templates in a robust way for both dev (src) and prod (dist)
+    const candidateBaseDirs = [
+      path.join(__dirname, 'templates'),                             // dist runtime: /dist/src/mail/templates
+      path.join(process.cwd(), 'dist', 'src', 'mail', 'templates'),  // prod alternative
+      path.join(process.cwd(), 'src', 'mail', 'templates'),          // dev: ts-node
+    ];
+
+    const resolveExisting = (rel: string): string | null => {
+      for (const base of candidateBaseDirs) {
+        const full = path.join(base, rel);
+        if (fs.existsSync(full)) return full;
+      }
+      return null;
+    };
+
+    const layoutPath = resolveExisting('layout.hbs');
+    const tplPath = resolveExisting(`${name}.hbs`);
+    if (!layoutPath || !tplPath) {
+      this.logger.warn(`Template not found: layout=${layoutPath} tpl=${tplPath}`);
+      throw new Error('Email templates not found');
+    }
+
     const layoutSrc = fs.readFileSync(layoutPath, 'utf8');
     const tplSrc = fs.readFileSync(tplPath, 'utf8');
     const bodyTpl = Handlebars.compile(tplSrc);
