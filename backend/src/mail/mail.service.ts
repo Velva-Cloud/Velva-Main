@@ -133,10 +133,37 @@ export class MailService {
     return { subject, html, text };
   }
 
+  // Basic sanitizer to keep HTML simple and reduce spam risk
+  private sanitizeHtmlForEmail(html: string): string {
+    let h = html || '';
+    // Remove <script> tags and event handlers
+    h = h.replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '');
+    h = h.replace(/\son[a-z]+\s*=\s*["'][^"']*["']/gi, '');
+    // Strip style attributes to avoid excessive inline styles
+    h = h.replace(/\sstyle\s*=\s*["'][^"']*["']/gi, '');
+    // Normalize images: limit to width and auto height
+    h = h.replace(/<img([^>]*?)>/gi, (m, attrs) => {
+      // Remove data URLs
+      if (/src\s*=\s*["']data:/i.test(attrs)) return '';
+      // Ensure https links
+      attrs = attrs.replace(/src\s*=\s*["']http:\/\//i, 'src="https://');
+      // Add safe sizing
+      if (!/width=|height=|style=/.test(attrs)) {
+        attrs += ' style="max-width:600px;height:auto"';
+      }
+      return `<img${attrs}>`;
+    });
+    // Prefer https in links
+    h = h.replace(/href\s*=\s*["']http:\/\//gi, 'href="https://');
+    return h;
+  }
+
   // Staff outbound template sender
   async sendStaffOutbound(to: string, context: { staffName: string; staffEmail: string; subject: string; messageHtml: string; staffTitle?: string; companyName?: string; disclaimer?: string }) {
+    const safeBody = this.sanitizeHtmlForEmail(context.messageHtml);
     const { html, text } = this.compileTemplate('staff_outbound', {
       ...context,
+      messageHtml: safeBody,
       companyName: context.companyName || 'VelvaCloud',
       staffTitle: context.staffTitle || 'Support',
       disclaimer: context.disclaimer || 'This message may contain confidential information intended only for the recipient. If you received it in error, please notify the sender and delete it.',
