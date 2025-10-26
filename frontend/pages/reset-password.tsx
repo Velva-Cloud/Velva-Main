@@ -47,23 +47,45 @@ export default function ResetPassword() {
         <title>Reset Password • VelvaCloud</title>
       </Head>
       <NavBar />
-      <main className="max-w-md mx-auto px-6 py-12">
-        <div className="card p-6">
-          <h1 className="text-2xl font-semibold mb-6">Reset your password</h1>
-          {done ? (
-            <div className="text-slate-300">Password updated. Redirecting…</div>
-          ) : (
-            <form onSubmit={onSubmit} className="space-y-4">
-              {err && <p className="text-red-400">{err}</p>}
-              <input type="password" placeholder="New password (min 8 chars)" className="input" value={password} onChange={(e) => setPassword(e.target.value)} aria-invalid={!!passwordError} />
-              {passwordError && <div className="text-xs text-red-400 -mt-2">{passwordError}</div>}
-              <input type="password" placeholder="Confirm new password" className="input" value={confirm} onChange={(e) => setConfirm(e.target.value)} aria-invalid={!!confirmError} />
-              {confirmError && <div className="text-xs text-red-400 -mt-2">{confirmError}</div>}
-              <button className={`btn btn-primary w-full ${loading ? 'opacity-70 cursor-not-allowed' : ''}`} disabled={loading} aria-busy={loading}>
-                {loading ? 'Updating…' : 'Update password'}
-              </button>
-            </form>
-          )}
+      <main className="container px-6 py-12">
+        <div className="max-w-md mx-auto">
+          <div className="text-center mb-6">
+            <h1 className="text-3xl font-extrabold heading-gradient">Reset your password</h1>
+            <p className="subtle mt-2">Enter a new password and confirm.</p>
+          </div>
+          <div className="card p-6">
+            {done ? (
+              <div className="subtle">Password updated. Redirecting…</div>
+            ) : (
+              <form onSubmit={onSubmit} className="space-y-4">
+                {err && <p className="text-red-400">{err}</p>}
+                <input
+                  type="password"
+                  placeholder="New password (min 8 chars)"
+                  className="input"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  aria-invalid={!!passwordError}
+                />
+                {passwordError && <div className="text-xs text-red-400 -mt-2">{passwordError}</div>}
+                <input
+                  type="password"
+                  placeholder="Confirm new password"
+                  className="input"
+                  value={confirm}
+                  onChange={(e) => setConfirm(e.target.value)}
+                  aria-invalid={!!confirmError}
+                />
+                {confirmError && <div className="text-xs text-red-400 -mt-2">{confirmError}</div>}
+                <button className={`btn btn-primary w-full ${loading ? 'opacity-70 cursor-not-allowed' : ''}`} disabled={loading} aria-busy={loading}>
+                  {loading ? 'Updating…' : 'Update password'}
+                </button>
+                <div className="text-sm subtle">
+                  Remembered your password? <a href="/login" className="text-sky-400 hover:underline">Back to login</a>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       </main>
     </>

@@ -141,136 +141,169 @@ export default function Dashboard() {
     }
   };
 
+  const planSummary = (() => {
+    const ramMB = Number(sub?.plan?.resources?.ramMB) || 0;
+    const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
+    const cpu = sub?.plan?.resources?.cpu;
+    const disk = sub?.plan?.resources?.diskGB;
+    return ramGB ? `${ramGB} GB RAM${cpu ? ` • ${cpu} CPU` : ''}${disk ? ` • ${disk} GB SSD` : ''}` : sub?.plan?.name || '—';
+  })();
+
   return (
     <>
       <Head>
         <title>Dashboard • VelvaCloud</title>
       </Head>
       <NavBar />
-      <main className="max-w-4xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Your Servers</h1>
-          <div className="text-sm text-slate-400">Page {page} of {totalPages} • {total} total</div>
-        </div>
+      <main className="container px-6 py-10">
+        {/* Overview cards */}
+        <section className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="card p-4">
+            <div className="subtle text-sm">Total servers</div>
+            <div className="text-2xl font-semibold mt-1">{total}</div>
+          </div>
+          <div className="card p-4">
+            <div className="subtle text-sm">Subscription</div>
+            <div className="text-sm mt-1">{sub ? sub.status.toUpperCase() : 'NONE'}</div>
+          </div>
+          <div className="card p-4">
+            <div className="subtle text-sm">Plan</div>
+            <div className="text-sm mt-1">{planSummary}</div>
+          </div>
+          <div className="card p-4">
+            <div className="subtle text-sm">Usage</div>
+            <div className="text-sm mt-1">{sub ? `${Math.min(total, maxServers)} / ${maxServers}` : '—'}</div>
+          </div>
+        </section>
+
         {suspended && (
-          <div className="mb-4 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
+          <div className="mb-6 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
             Your account is currently suspended. You can view servers but cannot perform actions. Please contact support.
           </div>
         )}
 
-        {/* Plan usage / subscription indicator */}
-        <div className="mb-4 p-3 rounded border border-slate-800 bg-slate-900">
+        {/* Quick create */}
+        <section className="card p-5 mb-8">
           {!sub ? (
             <div className="flex items-center justify-between">
-              <div className="text-slate-300">No active subscription. Choose a server size to subscribe.</div>
-              <a className="px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500" href="/billing">Go to Billing</a>
+              <div className="subtle">No active subscription. Choose a server size to subscribe.</div>
+              <a className="btn btn-primary" href="/billing">Go to Billing</a>
             </div>
           ) : (
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-              <div className="text-slate-300">
-                <span className="font-semibold">Your plan:</span>{' '}
-                {(() => {
-                  const ramMB = Number(sub?.plan?.resources?.ramMB) || 0;
-                  const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
-                  const cpu = sub?.plan?.resources?.cpu;
-                  const disk = sub?.plan?.resources?.diskGB;
-                  return (
-                    <>
-                      {ramGB ? `${ramGB} GB RAM` : sub.plan?.name}
-                      {cpu ? ` • ${cpu} CPU units` : ''}
-                      {disk ? ` • ${disk} GB SSD` : ''}
-                    </>
-                  );
-                })()}
+            <>
+              <div className="grid md:grid-cols-4 gap-3 items-end">
+                <div className="md:col-span-2">
+                  <div className="text-sm mb-1">Server name</div>
+                  <input
+                    id="server-name"
+                    value={name}
+                    onChange={e => setName(e.target.value)}
+                    placeholder="e.g., my-server"
+                    className="input"
+                    aria-invalid={!!nameError}
+                    disabled={!sub || sub.status !== 'active' || limitReached}
+                  />
+                </div>
+                <div>
+                  <div className="text-sm mb-1">Plan</div>
+                  <select
+                    value={planId}
+                    onChange={e => setPlanId(Number(e.target.value))}
+                    className="input"
+                    aria-label="Select server size"
+                    disabled={!sub || sub.status !== 'active' || plans.length === 0 || limitReached}
+                  >
+                    {plans.map(p => {
+                      const ramMB = Number((p as any)?.resources?.ramMB) || 0;
+                      const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
+                      const label = ramGB ? `${ramGB} GB RAM • ${p.pricePerMonth}/mo` : p.name;
+                      return <option key={p.id} value={p.id}>{label}</option>;
+                    })}
+                  </select>
+                </div>
+                <div>
+                  <div className="text-sm mb-1">Image</div>
+                  <input
+                    value={image}
+                    onChange={e => setImage(e.target.value)}
+                    placeholder="ghcr.io/library/nginx:alpine"
+                    className="input"
+                    aria-label="Docker image"
+                    disabled={!sub || sub.status !== 'active' || limitReached}
+                  />
+                </div>
               </div>
-              <div className="text-slate-300">
-                Servers used: <span className={limitReached ? 'text-amber-400' : 'text-emerald-400'}>{total}</span> / {maxServers}
+              <div className="mt-3 flex items-center justify-between">
+                <div className="text-xs subtle">
+                  Your plan allows up to <span className="text-slate-200 font-medium">{maxServers}</span> server{maxServers > 1 ? 's' : ''}. You currently have {total}.
+                </div>
+                <button
+                  onClick={createServer}
+                  disabled={creating || !sub || sub.status !== 'active' || limitReached}
+                  className={`btn btn-primary ${creating || !sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}
+                >
+                  {creating ? 'Creating…' : 'Create server'}
+                </button>
               </div>
-            </div>
+              {(err || nameError) && <div className="text-red-400 mt-2">{err || nameError}</div>}
+            </>
           )}
-        </div>
+        </section>
 
-        <div className="mb-6 flex flex-wrap items-center gap-2">
-          <input
-            id="server-name"
-            value={name}
-            onChange={e => setName(e.target.value)}
-            placeholder="Server name"
-            className="px-3 py-2 rounded bg-slate-800 border border-slate-700"
-            aria-invalid={!!nameError}
-            disabled={!sub || sub.status !== 'active' || limitReached}
-          />
-          <select
-            value={planId}
-            onChange={e => setPlanId(Number(e.target.value))}
-            className="px-3 py-2 rounded bg-slate-800 border border-slate-700"
-            aria-label="Select server size"
-            disabled={!sub || sub.status !== 'active' || plans.length === 0 || limitReached}
-          >
-            {plans.map(p => {
-              const ramMB = Number((p as any)?.resources?.ramMB) || 0;
-              const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
-              const label = ramGB ? `${ramGB} GB RAM • ${p.pricePerMonth}/mo` : p.name;
-              return <option key={p.id} value={p.id}>{label}</option>;
-            })}
-          </select>
-          <input
-            value={image}
-            onChange={e => setImage(e.target.value)}
-            placeholder="Docker image (e.g., ghcr.io/library/nginx:alpine)"
-            className="px-3 py-2 rounded bg-slate-800 border border-slate-700 w-full sm:w-auto flex-1"
-            aria-label="Docker image"
-            disabled={!sub || sub.status !== 'active' || limitReached}
-          />
-          <button
-            onClick={createServer}
-            disabled={creating || !sub || sub.status !== 'active' || limitReached}
-            className={`bg-indigo-600 hover:bg-indigo-500 px-4 py-2 rounded ${creating || !sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}
-          >
-            {creating ? 'Creating…' : 'Create server'}
-          </button>
-          {(err || nameError) && <div className="text-red-400 w-full">{err || nameError}</div>}
-          <div className="text-xs text-slate-400 w-full mt-1">
-            Your plan allows up to <span className="text-slate-200 font-medium">{maxServers}</span> server{maxServers > 1 ? 's' : ''}. You currently have {total}.
+        {/* Server list */}
+        <section>
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="text-xl font-semibold">Your Servers</h2>
+            <div className="text-sm subtle">Page {page} of {totalPages} • {total} total</div>
           </div>
-        </div>
 
-        {servers.length === 0 ? (
-          <div className="relative overflow-hidden card p-10 text-center">
-            <div
-              className="absolute inset-0 -z-10 opacity-40"
-              style={{
-                background:
-                  'radial-gradient(500px 200px at 20% 0%, rgba(109,40,217,0.25), transparent 60%), radial-gradient(500px 200px at 80% 100%, rgba(6,182,212,0.25), transparent 60%)',
-              }}
-            />
-            <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
-            <h3 className="text-xl font-semibold mb-2">No servers yet</h3>
-            <p className="text-slate-400 mb-5">Use the form above to create your first server on VelvaCloud.</p>
-            <button onClick={createServer} disabled={creating || !sub || sub.status !== 'active' || limitReached} className={`btn btn-primary ${creating || !sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create server'}</button>
-          </div>
-        ) : (
-          <>
-            <ul className="space-y-3">
-              {servers.map(s => (
-                <li key={s.id} className="p-4 bg-slate-900 rounded border border-slate-800">
-                  <div className="font-semibold"><a className="hover:underline" href={`/servers/${s.id}`}>{s.name}</a></div>
-                  <div className="text-sm text-slate-300">
-                    Status: {s.status} • Plan {s.plan?.name ? `${s.plan.name} (#${s.planId})` : `#${s.planId}`}
-                    {s.node ? <> • Node {s.node.name} (#{s.node.id})</> : null}
-                  </div>
-                </li>
-              ))}
-            </ul>
-            <div className="flex items-center justify-between mt-4">
-              <div />
-              <div className="flex items-center gap-2">
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
-              </div>
+          {servers.length === 0 ? (
+            <div className="relative overflow-hidden card p-10 text-center">
+              <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
+              <h3 className="text-xl font-semibold mb-2">No servers yet</h3>
+              <p className="subtle mb-5">Use the quick create above to spin up your first server.</p>
+              <button onClick={createServer} disabled={creating || !sub || sub.status !== 'active' || limitReached} className={`btn btn-primary ${creating || !sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create server'}</button>
             </div>
-          </>
-        )}
+          ) : (
+            <>
+              <ul className="space-y-3">
+                {servers.map((s) => {
+                  const chipClass =
+                    s.status === 'running'
+                      ? 'bg-emerald-600/30 text-emerald-300 border border-emerald-700'
+                      : s.status === 'suspended'
+                      ? 'bg-amber-600/30 text-amber-200 border border-amber-700'
+                      : 'bg-slate-600/30 text-slate-300 border border-slate-700';
+                  return (
+                    <li key={s.id} className="p-4 card">
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="font-semibold break-words">
+                            <a className="hover:underline" href={`/servers/${s.id}`}>{s.name}</a>
+                            <span className={`ml-2 inline-block text-xs px-2 py-0.5 rounded-full ${chipClass}`}>{s.status}</span>
+                          </div>
+                          <div className="text-sm subtle">
+                            Plan {s.plan?.name ? `${s.plan.name} (#${s.planId})` : `#${s.planId}`}
+                            {s.node ? <> • Node {s.node.name} (#{s.node.id})</> : null}
+                          </div>
+                        </div>
+                        <div className="text-sm subtle">ID #{s.id}</div>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+
+              <div className="flex items-center justify-between mt-4">
+                <div />
+                <div className="flex items-center gap-2">
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page <= 1} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Prev</button>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page >= totalPages} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50 disabled:cursor-not-allowed">Next</button>
+                </div>
+              </div>
+            </>
+          )}
+        </section>
       </main>
     </>
   );
