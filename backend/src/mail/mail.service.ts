@@ -142,7 +142,7 @@ export class MailService {
         <p>If you have any questions, reply to this email.</p>
       `,
     });
-    return this.send(to, subject, html, text, 'support');
+    return this.send(to, subject, html, text, { kind: 'support' });
   }
 
   async sendPaymentFailed(to: string, planName?: string) {
@@ -155,7 +155,7 @@ export class MailService {
         <p>Please update your payment method in the billing portal.</p>
       `,
     });
-    return this.send(to, subject, html, text, 'support');
+    return this.send(to, subject, html, text, { kind: 'support' });
   }
 
   async sendSubscribed(to: string, planName: string) {
@@ -167,7 +167,7 @@ export class MailService {
         <p>Your subscription to <strong>${planName}</strong> is active.</p>
       `,
     });
-    return this.send(to, subject, html, text, 'support');
+    return this.send(to, subject, html, text, { kind: 'support' });
   }
 
   async sendCanceled(to: string, planName?: string) {
@@ -179,7 +179,7 @@ export class MailService {
         <p>Your subscription${planName ? ` to <strong>${planName}</strong>` : ''} has been canceled.</p>
       `,
     });
-    return this.send(to, subject, html, text, 'support');
+    return this.send(to, subject, html, text, { kind: 'support' });
   }
 
   async sendPastDueReminder(to: string, planName: string | undefined, graceUntil: Date) {
@@ -193,12 +193,11 @@ export class MailService {
         <p>Please update your payment method to avoid cancellation. Approximately <strong>${leftHours} hour(s)</strong> remain before cancellation.</p>
       `,
     });
-    return this.send(to, subject, html, text, 'support');
+    return this.send(to, subject, html, text, { kind: 'support' });
   }
 
   async sendServerCreated(to: string, context: { name: string; planName: string; nodeName: string; dashboardUrl: string }) {
-    const subject = `Your server "${context.name}" has been created`;
+    const subject = `Your server \"${context.name}\" has been created`;
     const { html, text } = this.compileTemplate('server_created', { ...context, subject });
-    return this.send(to, subject, html, text, 'no_reply');
+    return this.send(to, subject, html, text, { kind: 'no_reply' });
   }
-}
