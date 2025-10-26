@@ -79,49 +79,46 @@ export default function StaffProfiles() {
           </div>
         ) : (
           <div className="card p-4">
-            <Table>
-              <thead>
-                <tr>
-                  <th className="text-left">Email</th>
-                  <th className="text-left">Role</th>
-                  <th className="text-left">First name</th>
-                  <th className="text-left">Last name</th>
-                  <th className="text-left">Title</th>
-                  <th className="text-left">Actions</th>
+            <Table
+              headers={[
+                'Email',
+                'Role',
+                'First name',
+                'Last name',
+                'Title',
+                'Actions',
+              ]}
+            >
+              {items.map(u => (
+                <tr key={u.id}>
+                  <td className="align-top px-3 py-2">{u.email}</td>
+                  <td className="align-top px-3 py-2">{u.role}</td>
+                  <td className="align-top px-3 py-2">
+                    <FormField label="">
+                      <input className="input" value={u.firstName || ''} onChange={(e) => updateField(u.id, 'firstName', e.target.value)} placeholder="e.g., Ethan" />
+                    </FormField>
+                  </td>
+                  <td className="align-top px-3 py-2">
+                    <FormField label="">
+                      <input className="input" value={u.lastName || ''} onChange={(e) => updateField(u.id, 'lastName', e.target.value)} placeholder="e.g., Hill" />
+                    </FormField>
+                  </td>
+                  <td className="align-top px-3 py-2">
+                    <FormField label="">
+                      <input className="input" value={u.title || ''} onChange={(e) => updateField(u.id, 'title', e.target.value)} placeholder="e.g., Support Engineer" />
+                    </FormField>
+                  </td>
+                  <td className="align-top px-3 py-2">
+                    <button
+                      onClick={() => saveProfile(u)}
+                      className={`btn btn-primary ${savingId === u.id ? 'opacity-70 cursor-not-allowed' : ''}`}
+                      disabled={savingId === u.id}
+                    >
+                      {savingId === u.id ? 'Saving…' : 'Save'}
+                    </button>
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {items.map(u => (
-                  <tr key={u.id}>
-                    <td className="align-top">{u.email}</td>
-                    <td className="align-top">{u.role}</td>
-                    <td className="align-top">
-                      <FormField label="">
-                        <input className="input" value={u.firstName || ''} onChange={(e) => updateField(u.id, 'firstName', e.target.value)} placeholder="e.g., Ethan" />
-                      </FormField>
-                    </td>
-                    <td className="align-top">
-                      <FormField label="">
-                        <input className="input" value={u.lastName || ''} onChange={(e) => updateField(u.id, 'lastName', e.target.value)} placeholder="e.g., Hill" />
-                      </FormField>
-                    </td>
-                    <td className="align-top">
-                      <FormField label="">
-                        <input className="input" value={u.title || ''} onChange={(e) => updateField(u.id, 'title', e.target.value)} placeholder="e.g., Support Engineer" />
-                      </FormField>
-                    </td>
-                    <td className="align-top">
-                      <button
-                        onClick={() => saveProfile(u)}
-                        className={`btn btn-primary ${savingId === u.id ? 'opacity-70 cursor-not-allowed' : ''}`}
-                        disabled={savingId === u.id}
-                      >
-                        {savingId === u.id ? 'Saving…' : 'Save'}
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
+              ))}
             </Table>
           </div>
         )}
