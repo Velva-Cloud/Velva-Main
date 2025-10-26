@@ -8,6 +8,7 @@ const nav = [
   { href: '/admin/servers', label: 'Servers', icon: '🖥️' },
   { href: '/admin/users', label: 'Users', icon: '👥' },
   { href: '/admin/activity', label: 'Activity', icon: '📜' },
+  { href: '/admin/mail', label: 'Mail', icon: '📧' },
   { href: '/admin/settings', label: 'Settings', icon: '⚙️' },
   { href: '/admin/finance', label: 'Finance', icon: '💼' },
 ];

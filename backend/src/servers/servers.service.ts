@@ -34,7 +34,7 @@ type Resources = { cpu?: number; ramMB?: number; diskMB?: number; diskGB?: numbe
 export class ServersService {
   private readonly logger = new Logger(ServersService.name);
 
-  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService) {}
+  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService, private mail: import('../mail/mail.service').MailService) {}
 
   async nodeBaseUrl(nodeId?: number | null): Promise<string | undefined> {
     // In development, allow overriding per-node URLs with a global DAEMON_URL
@@ -392,6 +392,22 @@ export class ServersService {
     await this.prisma.log.create({
       data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosenId, image: imageOverride || null } },
     });
+
+    // Send no-reply email to user for server creation (best-effort)
+    try {
+      const subj = `Your server "${n}" has been created`;
+      const html = `
+        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+          <h2>Server created</h2>
+          <p>Your server <strong>${n}</strong> has been created and is being provisioned.</p>
+          <p>Plan: <strong>${plan.name}</strong> • Node: <strong>${nodes.find(nn => nn.id === chosenId)?.name || chosenId}</strong></p>
+          <p>You can manage it from your <a href="${process.env.PANEL_URL || ''}/servers/${server.id}">dashboard</a>.</p>
+        </div>
+      `;
+      await this.mail.send(user.email, subj, html);
+    } catch (e) {
+      this.logger.warn(`Mail send failed for server create: ${e}`);
+    }
 
     // Enqueue async provision + start
     await this.prisma.log.create({

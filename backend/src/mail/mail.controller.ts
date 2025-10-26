@@ -54,4 +54,18 @@ export class MailController {
     await this.mail.send(to, 'Test email from VelvaCloud', '<p>This is a test email confirming your SMTP settings.</p>');
     return { ok: true };
   }
+
+  @Post('send')
+  @Roles(Role.ADMIN, Role.OWNER)
+  async send(@Body() body: { to: string; subject: string; html?: string; text?: string }) {
+    const to = (body?.to || '').trim();
+    const subject = (body?.subject || '').trim();
+    const html = body?.html || '';
+    const text = body?.text || undefined;
+    if (!to || !subject || (!html && !text)) {
+      return { ok: false, message: 'to, subject and html or text are required' };
+    }
+    await this.mail.send(to, subject, html || (text as string), text);
+    return { ok: true };
+  }
 }
