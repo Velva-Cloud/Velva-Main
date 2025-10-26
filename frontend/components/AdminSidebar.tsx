@@ -4,12 +4,10 @@ import { useRouter } from 'next/router';
 const nav = [
   { href: '/admin', label: 'Overview', icon: '📊' },
   { href: '/admin/plans', label: 'Plans', icon: '🧩' },
-  { href: '/admin/nodes', label: 'Nodes', icon: '🧱' },
-  { href: '/admin/queues', label: 'Queues', icon: '📦' },
+  { href: '/admin/infrastructure', label: 'Infrastructure', icon: '🧱' },
   { href: '/admin/servers', label: 'Servers', icon: '🖥️' },
   { href: '/admin/users', label: 'Users', icon: '👥' },
-  { href: '/admin/logs', label: 'Logs', icon: '📜' },
-  { href: '/admin/transactions', label: 'Transactions', icon: '💳' },
+  { href: '/admin/activity', label: 'Activity', icon: '📜' },
   { href: '/admin/settings', label: 'Settings', icon: '⚙️' },
   { href: '/admin/finance', label: 'Finance', icon: '💼' },
 ];
