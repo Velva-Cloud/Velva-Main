@@ -95,7 +95,7 @@ export class MailService {
     subject: string,
     html: string,
     text?: string,
-    opts?: { kind?: 'default' | 'support' | 'no_reply'; fromLocal?: string },
+    opts?: { kind?: 'default' | 'support' | 'no_reply'; fromLocal?: string; fromOverride?: string },
   ) {
     const tx = await this.getTransporter();
     if (!tx || !this.cachedSettings) {
@@ -103,7 +103,9 @@ export class MailService {
       return { skipped: true };
     }
     const kind = opts?.kind || 'default';
-    const from = this.buildFrom(kind, opts?.fromLocal);
+    const from = opts?.fromOverride && opts.fromOverride.includes('@')
+      ? (this.cachedSettings?.fromName ? `"${this.cachedSettings.fromName}" <${opts.fromOverride}>` : opts.fromOverride)
+      : this.buildFrom(kind, opts?.fromLocal);
     await tx.sendMail({
       from,
       to,
