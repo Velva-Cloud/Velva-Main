@@ -1,9 +1,9 @@
 import Head from 'next/head';
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../utils/api';
-import NavBar from '../../components/NavBar';
-import SystemStatus from '../../components/SystemStatus';
 import { getUserRole } from '../../utils/auth';
+import AdminLayout from '../../components/AdminLayout';
+import FormField from '../../components/FormField';
 
 type Log = {
   id: number;
@@ -159,85 +159,64 @@ export default function AdminLogs() {
       <Head>
         <title>{isSupport ? 'Support • Logs' : 'Admin • Logs'}</title>
       </Head>
-      <NavBar />
-      <main className="max-w-6xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">{isSupport ? 'Support • Logs' : 'Admin • Logs'}</h1>
-          <div className="w-full max-w-sm ml-4">
-            <SystemStatus />
+      <AdminLayout
+        title={isSupport ? 'Support • Logs' : 'Admin • Logs'}
+        actions={
+          <div className="card p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <FormField label="Action">
+                <select value={action} onChange={e => setAction(e.target.value as ActionType)} className="input">
+                  <option value="">All</option>
+                  {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
+                </select>
+              </FormField>
+              {!isSupport ? (
+                <>
+                  <FormField label="User email contains">
+                    <input value={q} onChange={e => setQ(e.target.value)} className="input" placeholder="email@domain.com" />
+                  </FormField>
+                </>
+              ) : (
+                <>
+                  <FormField label="User ID">
+                    <input type="number" value={userId} onChange={e => setUserId(e.target.value === '' ? '' : Number(e.target.value))} className="input" placeholder="e.g. 42" />
+                  </FormField>
+                  <FormField label="Server ID">
+                    <input type="number" value={serverId} onChange={e => setServerId(e.target.value === '' ? '' : Number(e.target.value))} className="input" placeholder="e.g. 101" />
+                  </FormField>
+                </>
+              )}
+              <FormField label="From">
+                <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input" />
+              </FormField>
+              <FormField label="To">
+                <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
+              </FormField>
+              <FormField label="Group by">
+                <select value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)} className="input">
+                  <option value="none">None</option>
+                  <option value="action">Action</option>
+                  <option value="user">User</option>
+                  <option value="server">Server</option>
+                </select>
+              </FormField>
+              <button onClick={applyFilters} className="btn btn-primary">Apply</button>
+              {!isSupport && (
+                <div className="ml-auto">
+                  <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
+                </div>
+              )}
+              {groupBy !== 'none' && grouped && grouped.length > 0 && (
+                <div className="ml-auto flex items-center gap-2">
+                  <button onClick={() => setAll(true)} disabled={allExpanded} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50">Expand all</button>
+                  <button onClick={() => setAll(false)} disabled={allCollapsed} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50">Collapse all</button>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
-          <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
-          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
-          <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
-          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Logs</a>
-          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
-          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
-          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
-        </div>
+        }
+      >
         {err && <div className="mb-4 text-red-400">{err}</div>}
-
-        <div className="card p-3 mb-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="block">
-              <div className="text-xs mb-1">Action</div>
-              <select value={action} onChange={e => setAction(e.target.value as ActionType)} className="input">
-                <option value="">All</option>
-                {ACTIONS.map(a => <option key={a} value={a}>{a}</option>)}
-              </select>
-            </label>
-            {!isSupport ? (
-              <>
-                <label className="block">
-                  <div className="text-xs mb-1">User email contains</div>
-                  <input value={q} onChange={e => setQ(e.target.value)} className="input" placeholder="email@domain.com" />
-                </label>
-              </>
-            ) : (
-              <>
-                <label className="block">
-                  <div className="text-xs mb-1">User ID</div>
-                  <input type="number" value={userId} onChange={e => setUserId(e.target.value === '' ? '' : Number(e.target.value))} className="input" placeholder="e.g. 42" />
-                </label>
-                <label className="block">
-                  <div className="text-xs mb-1">Server ID</div>
-                  <input type="number" value={serverId} onChange={e => setServerId(e.target.value === '' ? '' : Number(e.target.value))} className="input" placeholder="e.g. 101" />
-                </label>
-              </>
-            )}
-            <label className="block">
-              <div className="text-xs mb-1">From</div>
-              <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input" />
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">To</div>
-              <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">Group by</div>
-              <select value={groupBy} onChange={e => setGroupBy(e.target.value as GroupBy)} className="input">
-                <option value="none">None</option>
-                <option value="action">Action</option>
-                <option value="user">User</option>
-                <option value="server">Server</option>
-              </select>
-            </label>
-            <button onClick={applyFilters} className="btn btn-primary">Apply</button>
-            {!isSupport && (
-              <div className="ml-auto">
-                <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
-              </div>
-            )}
-            {groupBy !== 'none' && grouped && grouped.length > 0 && (
-              <div className="ml-auto flex items-center gap-2">
-                <button onClick={() => setAll(true)} disabled={allExpanded} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50">Expand all</button>
-                <button onClick={() => setAll(false)} disabled={allCollapsed} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800 disabled:opacity-50">Collapse all</button>
-              </div>
-            )}
-          </div>
-        </div>
 
         {loading ? (
           <div className="space-y-3">
@@ -323,6 +302,10 @@ export default function AdminLogs() {
             </div>
           </>
         )}
+      </AdminLayout>
+    </>
+  );
+}
       </main>
     </>
   );

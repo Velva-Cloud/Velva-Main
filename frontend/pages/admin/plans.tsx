@@ -1,10 +1,10 @@
 import Head from 'next/head';
 import { useEffect, useMemo, useState } from 'react';
 import api from '../../utils/api';
-import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
 import { useToast } from '../../components/Toast';
-import SystemStatus from '../../components/SystemStatus';
+import AdminLayout from '../../components/AdminLayout';
+import FormField from '../../components/FormField';
 
 type Plan = {
   id: number;
@@ -205,51 +205,28 @@ export default function AdminPlans() {
       <Head>
         <title>Admin • Plans</title>
       </Head>
-      <NavBar />
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Admin • Plans</h1>
-          <div className="w-full max-w-sm ml-4">
-            <SystemStatus />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Plans</a>
-          <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
-          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
-          <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
-          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
-          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
-          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
-          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
-        </div>
-
+      <AdminLayout title="Admin • Plans">
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
         <section className="mb-8 p-4 card">
           <h2 className="font-semibold mb-3">Create plan</h2>
           <div className="grid gap-3 md:grid-cols-4">
-            <label className="block">
-              <div className="text-sm mb-1">Name</div>
+            <FormField label="Name" error={nameError}>
               <input value={name} onChange={(e) => setName(e.target.value)} className="input" aria-invalid={!!nameError} />
-              {nameError && <div className="mt-1 text-xs text-red-400">{nameError}</div>}
-            </label>
-            <label className="block">
-              <div className="text-sm mb-1">Price per month (GBP)</div>
+            </FormField>
+            <FormField label="Price per month (GBP)" error={priceError}>
               <input value={price} onChange={(e) => setPrice(e.target.value)} className="input" aria-invalid={!!priceError} placeholder="9.99" />
-              {priceError && <div className="mt-1 text-xs text-red-400">{priceError}</div>}
-            </label>
-            <label className="block">
-              <div className="text-sm mb-1">Active</div>
+            </FormField>
+            <FormField label="Active">
               <select value={isActive ? '1' : '0'} onChange={(e) => setIsActive(e.target.value === '1')} className="input">
                 <option value="1">Yes</option>
                 <option value="0">No</option>
               </select>
-            </label>
+            </FormField>
             <div className="md:col-span-4">
-              <div className="text-sm mb-1">Resources (JSON)</div>
-              <textarea value={resources} onChange={(e) => setResources(e.target.value)} rows={6} className="input font-mono text-xs" />
-              {resError && <div className="mt-1 text-xs text-red-400">{resError}</div>}
+              <FormField label="Resources (JSON)" error={resError}>
+                <textarea value={resources} onChange={(e) => setResources(e.target.value)} rows={6} className="input font-mono text-xs" />
+              </FormField>
             </div>
           </div>
           <div className="mt-4">
@@ -324,20 +301,16 @@ export default function AdminPlans() {
 
                       {isEditing && (
                         <div className="mt-2 grid gap-3 md:grid-cols-4">
-                          <label className="block">
-                            <div className="text-sm mb-1">Name</div>
+                          <FormField label="Name" error={editNameError}>
                             <input value={editName} onChange={(e) => setEditName(e.target.value)} className="input" aria-invalid={!!editNameError} />
-                            {editNameError && <div className="mt-1 text-xs text-red-400">{editNameError}</div>}
-                          </label>
-                          <label className="block">
-                            <div className="text-sm mb-1">Price per month (GBP)</div>
+                          </FormField>
+                          <FormField label="Price per month (GBP)" error={editPriceError}>
                             <input value={editPrice} onChange={(e) => setEditPrice(e.target.value)} className="input" aria-invalid={!!editPriceError} placeholder="9.99" />
-                            {editPriceError && <div className="mt-1 text-xs text-red-400">{editPriceError}</div>}
-                          </label>
+                          </FormField>
                           <div className="md:col-span-4">
-                            <div className="text-sm mb-1">Resources (JSON)</div>
-                            <textarea value={editResources} onChange={(e) => setEditResources(e.target.value)} rows={6} className="input font-mono text-xs" />
-                            {editResError && <div className="mt-1 text-xs text-red-400">{editResError}</div>}
+                            <FormField label="Resources (JSON)" error={editResError}>
+                              <textarea value={editResources} onChange={(e) => setEditResources(e.target.value)} rows={6} className="input font-mono text-xs" />
+                            </FormField>
                           </div>
                           <div className="md:col-span-4">
                             <button
@@ -353,8 +326,7 @@ export default function AdminPlans() {
 
                       {isCustom && (
                         <div className="grid gap-2 md:grid-cols-3 items-end">
-                          <label className="block md:col-span-2">
-                            <div className="text-sm mb-1">Set price per GB (GBP)</div>
+                          <FormField label="Set price per GB (GBP)">
                             <input
                               type="number"
                               step="0.01"
@@ -367,7 +339,7 @@ export default function AdminPlans() {
                               className="input"
                               placeholder="0.60"
                             />
-                          </label>
+                          </FormField>
                           <button
                             onClick={async () => {
                               const val = Number(p.resources?.pricePerGB);
@@ -404,7 +376,7 @@ export default function AdminPlans() {
             </>
           )}
         </section>
-      </main>
+      </AdminLayout>
     </>
   );
 }

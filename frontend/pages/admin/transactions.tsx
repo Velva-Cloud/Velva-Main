@@ -1,9 +1,9 @@
 import Head from 'next/head';
 import { useEffect, useState } from 'react';
 import api from '../../utils/api';
-import NavBar from '../../components/NavBar';
 import { useRequireAdmin } from '../../utils/guards';
-import SystemStatus from '../../components/SystemStatus';
+import AdminLayout from '../../components/AdminLayout';
+import FormField from '../../components/FormField';
 
 type Tx = {
   id: number;
@@ -94,61 +94,41 @@ export default function AdminTransactions() {
       <Head>
         <title>Admin • Transactions</title>
       </Head>
-      <NavBar />
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Admin • Transactions</h1>
-          <div className="w-full max-w-sm ml-4">
-            <SystemStatus />
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
-          <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
-          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Servers</a>
-          <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
-          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
-          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Transactions</a>
-          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
-          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
-        </div>
-        {err && <div className="mb-4 text-red-400">{err}</div>}
-
-        <div className="card p-3 mb-4">
-          <div className="flex flex-wrap items-end gap-3">
-            <label className="block">
-              <div className="text-xs mb-1">Status</div>
-              <select value={status} onChange={e => setStatus(e.target.value as StatusType)} className="input">
-                <option value="">All</option>
-                {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">Gateway</div>
-              <input value={gateway} onChange={e => setGateway(e.target.value)} placeholder="mock" className="input" />
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">User email contains</div>
-              <input value={q} onChange={e => setQ(e.target.value)} className="input" placeholder="email@domain.com" />
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">Plan ID</div>
-              <input value={planId} onChange={e => setPlanId(e.target.value)} className="input" placeholder="e.g. 1" />
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">From</div>
-              <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input" />
-            </label>
-            <label className="block">
-              <div className="text-xs mb-1">To</div>
-              <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
-            </label>
-            <button onClick={applyFilters} className="btn btn-primary">Apply</button>
-            <div className="ml-auto">
-              <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
+      <AdminLayout
+        title="Admin • Transactions"
+        actions={
+          <div className="card p-3">
+            <div className="flex flex-wrap items-end gap-3">
+              <FormField label="Status">
+                <select value={status} onChange={e => setStatus(e.target.value as StatusType)} className="input">
+                  <option value="">All</option>
+                  {STATUSES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </FormField>
+              <FormField label="Gateway">
+                <input value={gateway} onChange={e => setGateway(e.target.value)} placeholder="mock" className="input" />
+              </FormField>
+              <FormField label="User email contains">
+                <input value={q} onChange={e => setQ(e.target.value)} className="input" placeholder="email@domain.com" />
+              </FormField>
+              <FormField label="Plan ID">
+                <input value={planId} onChange={e => setPlanId(e.target.value)} className="input" placeholder="e.g. 1" />
+              </FormField>
+              <FormField label="From">
+                <input type="date" value={from} onChange={e => setFrom(e.target.value)} className="input" />
+              </FormField>
+              <FormField label="To">
+                <input type="date" value={to} onChange={e => setTo(e.target.value)} className="input" />
+              </FormField>
+              <button onClick={applyFilters} className="btn btn-primary">Apply</button>
+              <div className="ml-auto">
+                <button onClick={exportCsv} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Export CSV</button>
+              </div>
             </div>
           </div>
-        </div>
+        }
+      >
+        {err && <div className="mb-4 text-red-400">{err}</div>}
 
         {loading ? (
           <div className="space-y-3">
@@ -205,7 +185,7 @@ export default function AdminTransactions() {
             </div>
           </>
         )}
-      </main>
+      </AdminLayout>
     </>
   );
 }
