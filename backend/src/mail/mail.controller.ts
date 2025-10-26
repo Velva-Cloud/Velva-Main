@@ -119,4 +119,3 @@ export class MailController {
     return { items };
   }
 }
-}
