@@ -91,7 +91,10 @@ export class MailController {
       const local = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'support');
       return `${local}@${domain}`;
     })());
-    await this.mail.sendStaffOutbound(to, { staffName: (req?.user?.email || '').split('@')[0].replace('.', ' '), staffEmail: fromAlias, subject, messageHtml: html || `<p>${text || ''}</p>` });
+    // Use real profile data if available
+    const u = await this.prisma.user.findUnique({ where: { id: userId }, select: { firstName: true, lastName: true, title: true } });
+    const staffName = [u?.firstName, u?.lastName].filter(Boolean).join(' ') || (req?.user?.email || '').split('@')[0].replace('.', ' ');
+    await this.mail.sendStaffOutbound(to, { staffName, staffEmail: fromAlias, subject, messageHtml: html || `<p>${text || ''}</p>`, staffTitle: u?.title || undefined });
     // Store outbound message
     await this.prisma.emailMessage.create({
       data: {
