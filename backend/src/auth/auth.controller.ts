@@ -9,10 +9,15 @@ import { ResetPasswordDto } from './dto/reset-password.dto';
 
 function resolveFrontendBase(req: any): string {
   const envBase = process.env.FRONTEND_URL;
-  if (envBase) return envBase;
+  if (envBase) {
+    // Support comma-separated list; pick the first valid URL
+    const candidates = envBase.split(',').map(s => s.trim()).filter(Boolean);
+    const firstValid = candidates.find(u => /^https?:\/\/.+/i.test(u)) || candidates[0];
+    if (firstValid) return firstValid.replace(/\/$/, '');
+  }
   const xfProto = (req?.headers?.['x-forwarded-proto'] as string) || req?.protocol || 'http';
   const xfHost = (req?.headers?.['x-forwarded-host'] as string) || (req?.headers?.host as string) || 'localhost:3000';
-  return `${xfProto}://${xfHost}`;
+  return `${xfProto}://${xfHost}`.replace(/\/$/, '');
 }
 
 @ApiTags('auth')
