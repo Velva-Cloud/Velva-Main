@@ -72,7 +72,6 @@ export class MailController {
       html?: string;
       text?: string;
       fromKind?: 'default' | 'support' | 'no_reply';
-      fromLocal?: string;
     },
   ) {
     const to = (body?.to || '').trim();
@@ -80,22 +79,25 @@ export class MailController {
     const html = body?.html || '';
     const text = body?.text || undefined;
     const fromKind = body?.fromKind || 'default';
-    const fromLocal = (body?.fromLocal || '').trim() || undefined;
     if (!to || !subject || (!html && !text)) {
       return { ok: false, message: 'to, subject and html or text are required' };
     }
     const userId = req?.user?.userId as number;
-    await this.mail.send(to, subject, html || (text as string), text, { kind: fromKind, fromLocal });
+    // Resolve staff alias
+    const staff = await this.prisma.staffEmail.findFirst({ where: { userId } });
+    const fromAlias = staff?.email || (await (async () => {
+      const settings = await this.mail.getSettings();
+      const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'velvacloud.com').trim();
+      const local = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'support');
+      return `${local}@${domain}`;
+    })());
+    await this.mail.send(to, subject, html || (text as string), text, { kind: fromKind });
     // Store outbound message
-    const settings = await this.mail.getSettings();
-    const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'velvacloud.com').trim();
-    const local = fromLocal || ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'no-reply');
-    const from = `${local}@${domain}`;
     await this.prisma.emailMessage.create({
       data: {
         userId,
         direction: 'outbound' as any,
-        from,
+        from: fromAlias,
         to,
         subject,
         html: html || null,

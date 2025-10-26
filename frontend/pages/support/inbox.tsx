@@ -28,7 +28,6 @@ export default function SupportInbox() {
   const [to, setTo] = useState('');
   const [subject, setSubject] = useState('');
   const [body, setBody] = useState('');
-  const [fromLocal, setFromLocal] = useState('');
   const [sending, setSending] = useState(false);
 
   const loadInbox = async () => {
@@ -61,7 +60,6 @@ export default function SupportInbox() {
         html: `<p>${body.trim()}</p>`,
         text: body.trim(),
         fromKind: 'support',
-        fromLocal: fromLocal.trim() || undefined,
       });
       toast.show('Sent', 'success');
       setTo('');
@@ -100,11 +98,6 @@ export default function SupportInbox() {
             <div>
               <div className="text-sm mb-1">Subject</div>
               <input className="input" placeholder="Subject" value={subject} onChange={(e) => setSubject(e.target.value)} />
-            </div>
-            <div>
-              <div className="text-sm mb-1">Send as (local-part)</div>
-              <input className="input" placeholder="e.g. ethan.hill" value={fromLocal} onChange={(e) => setFromLocal(e.target.value)} />
-              <div className="text-xs subtle mt-1">Email will be sent from {fromLocal || 'your alias'}@velvacloud.com</div>
             </div>
             <div className="md:col-span-2">
               <div className="text-sm mb-1">Body</div>
