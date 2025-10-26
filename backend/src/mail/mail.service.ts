@@ -2,6 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import * as nodemailer from 'nodemailer';
 import type { Transporter } from 'nodemailer';
+import * as fs from 'fs';
+import * as path from 'path';
+import Handlebars from 'handlebars';
 
 type MailSettings = {
   host: string;
@@ -90,64 +93,91 @@ export class MailService {
     return { sent: true };
   }
 
+  // Templating
+  private compileTemplate(name: string, context: Record<string, any>): { subject: string; html: string; text: string } {
+    const baseDir = path.join(process.cwd(), 'src', 'mail', 'templates');
+    const layoutPath = path.join(baseDir, 'layout.hbs');
+    const tplPath = path.join(baseDir, `${name}.hbs`);
+    const layoutSrc = fs.readFileSync(layoutPath, 'utf8');
+    const tplSrc = fs.readFileSync(tplPath, 'utf8');
+    const bodyTpl = Handlebars.compile(tplSrc);
+    const bodyHtml = bodyTpl(context);
+    const layoutTpl = Handlebars.compile(layoutSrc);
+    const html = layoutTpl({ subject: context.subject || '', body: bodyHtml, year: new Date().getFullYear() });
+    const text = bodyHtml.replace(/<[^>]+>/g, '');
+    const subject = context.subject || 'VelvaCloud';
+    return { subject, html, text };
+  }
+
   // Convenience templates
   async sendPaymentSuccess(to: string, amount: string, currency: string, planName?: string, invoiceUrl?: string) {
-    const subj = `Payment received${planName ? ` - ${planName}` : ''}`;
-    const html = `
-      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+    const subject = `Payment received${planName ? ` - ${planName}` : ''}`;
+    const { html, text } = this.compileTemplate('generic', {
+      subject,
+      body: `
         <h2>Thank you for your payment</h2>
         <p>We received your payment of <strong>${amount} ${currency}</strong>${planName ? ` for <strong>${planName}</strong>` : ''}.</p>
         ${invoiceUrl ? `<p>You can view your invoice <a href="${invoiceUrl}">here</a>.</p>` : ''}
         <p>If you have any questions, reply to this email.</p>
-      </div>
-    `;
-    return this.send(to, subj, html);
+      `,
+    });
+    return this.send(to, subject, html, text, 'support');
   }
 
   async sendPaymentFailed(to: string, planName?: string) {
-    const subj = `Payment failed${planName ? ` - ${planName}` : ''}`;
-    const html = `
-      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+    const subject = `Payment failed${planName ? ` - ${planName}` : ''}`;
+    const { html, text } = this.compileTemplate('generic', {
+      subject,
+      body: `
         <h2>We couldn't process your payment</h2>
         <p>${planName ? `For plan <strong>${planName}</strong>, ` : ''}your recent payment attempt failed.</p>
         <p>Please update your payment method in the billing portal.</p>
-      </div>
-    `;
-    return this.send(to, subj, html);
+      `,
+    });
+    return this.send(to, subject, html, text, 'support');
   }
 
   async sendSubscribed(to: string, planName: string) {
-    const subj = `Subscription activated - ${planName}`;
-    const html = `
-      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+    const subject = `Subscription activated - ${planName}`;
+    const { html, text } = this.compileTemplate('generic', {
+      subject,
+      body: `
         <h2>You're subscribed</h2>
         <p>Your subscription to <strong>${planName}</strong> is active.</p>
-      </div>
-    `;
-    return this.send(to, subj, html);
+      `,
+    });
+    return this.send(to, subject, html, text, 'support');
   }
 
   async sendCanceled(to: string, planName?: string) {
-    const subj = `Subscription canceled${planName ? ` - ${planName}` : ''}`;
-    const html = `
-      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+    const subject = `Subscription canceled${planName ? ` - ${planName}` : ''}`;
+    const { html, text } = this.compileTemplate('generic', {
+      subject,
+      body: `
         <h2>Subscription canceled</h2>
         <p>Your subscription${planName ? ` to <strong>${planName}</strong>` : ''} has been canceled.</p>
-      </div>
-    `;
-    return this.send(to, subj, html);
+      `,
+    });
+    return this.send(to, subject, html, text, 'support');
   }
 
   async sendPastDueReminder(to: string, planName: string | undefined, graceUntil: Date) {
-    const subj = `Payment required${planName ? ` - ${planName}` : ''}`;
+    const subject = `Payment required${planName ? ` - ${planName}` : ''}`;
     const leftHours = Math.max(1, Math.round((graceUntil.getTime() - Date.now()) / 3600000));
-    const html = `
-      <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
+    const { html, text } = this.compileTemplate('generic', {
+      subject,
+      body: `
         <h2>Your subscription is past due</h2>
         <p>${planName ? `For plan <strong>${planName}</strong>, ` : ''}your subscription is currently past due.</p>
         <p>Please update your payment method to avoid cancellation. Approximately <strong>${leftHours} hour(s)</strong> remain before cancellation.</p>
-      </div>
-    `;
-    return this.send(to, subj, html);
+      `,
+    });
+    return this.send(to, subject, html, text, 'support');
+  }
+
+  async sendServerCreated(to: string, context: { name: string; planName: string; nodeName: string; dashboardUrl: string }) {
+    const subject = `Your server "${context.name}" has been created`;
+    const { html, text } = this.compileTemplate('server_created', { ...context, subject });
+    return this.send(to, subject, html, text, 'no_reply');
   }
 }

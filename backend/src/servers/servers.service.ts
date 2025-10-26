@@ -395,16 +395,9 @@ export class ServersService {
 
     // Send no-reply email to user for server creation (best-effort)
     try {
-      const subj = `Your server "${n}" has been created`;
-      const html = `
-        <div style="font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;">
-          <h2>Server created</h2>
-          <p>Your server <strong>${n}</strong> has been created and is being provisioned.</p>
-          <p>Plan: <strong>${plan.name}</strong> • Node: <strong>${nodes.find(nn => nn.id === chosenId)?.name || chosenId}</strong></p>
-          <p>You can manage it from your <a href="${process.env.PANEL_URL || ''}/servers/${server.id}">dashboard</a>.</p>
-        </div>
-      `;
-      await this.mail.send(user.email, subj, html, undefined, 'no_reply');
+      const nodeName = nodes.find(nn => nn.id === chosenId)?.name || String(chosenId);
+      const dashboardUrl = `${process.env.PANEL_URL || ''}/servers/${server.id}`;
+      await this.mail.sendServerCreated(user.email, { name: n, planName: plan.name, nodeName, dashboardUrl });
     } catch (e) {
       this.logger.warn(`Mail send failed for server create: ${e}`);
     }
