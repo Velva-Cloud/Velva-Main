@@ -107,6 +107,21 @@ export class UsersController {
     return updated;
   }
 
+  @Patch(':id/profile')
+  @Roles(Role.ADMIN, Role.OWNER)
+  async updateProfile(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: { firstName?: string; lastName?: string; title?: string },
+    @Req() req: any,
+  ) {
+    const updated = await this.users.updateProfile(id, { firstName: body.firstName, lastName: body.lastName, title: body.title });
+    const actorId = req?.user?.userId ?? null;
+    await this.prisma.log.create({
+      data: { action: 'plan_change', userId: actorId, metadata: { event: 'user_profile_update', targetUserId: id, firstName: body.firstName || null, lastName: body.lastName || null, title: body.title || null } },
+    });
+    return updated;
+  }
+
   @Delete(':id')
   @Roles(Role.ADMIN, Role.OWNER)
   async remove(@Param('id', ParseIntPipe) id: number, @Req() req: any) {

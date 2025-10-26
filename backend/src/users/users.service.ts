@@ -19,7 +19,7 @@ export class UsersService {
     role?: Role | 'ALL';
     page?: number;
     pageSize?: number;
-  }): Promise<{ items: Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin' | 'suspended'>[]; total: number; page: number; pageSize: number }> {
+  }): Promise<{ items: Pick<User, 'id' | 'email' | 'role' | 'createdAt' | 'lastLogin' | 'suspended' | 'firstName' | 'lastName' | 'title'>[]; total: number; page: number; pageSize: number }> {
     const where: Prisma.UserWhereInput = {};
     if (params?.search) {
       // Most MySQL collations are case-insensitive by default; drop mode for compatibility
@@ -33,7 +33,7 @@ export class UsersService {
     const [total, items] = await this.prisma.$transaction([
       this.prisma.user.count({ where }),
       this.prisma.user.findMany({
-        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
+        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true, firstName: true, lastName: true, title: true },
         where,
         orderBy: { id: 'desc' },
         skip: (p - 1) * ps,
@@ -91,7 +91,7 @@ export class UsersService {
       const updated = await this.prisma.user.update({
         where: { id: userId },
         data: { email: e },
-        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true },
+        select: { id: true, email: true, role: true, createdAt: true, lastLogin: true, suspended: true, firstName: true, lastName: true, title: true },
       });
       // Ensure staff alias exists for staff roles after email change
       if (updated.role === 'SUPPORT' || updated.role === 'ADMIN' || updated.role === 'OWNER') {
@@ -105,6 +105,18 @@ export class UsersService {
       }
       throw err;
     }
+  }
+
+  async updateProfile(userId: number, data: { firstName?: string | null; lastName?: string | null; title?: string | null }) {
+    const payload: any = {};
+    if (data.firstName !== undefined) payload.firstName = (data.firstName || '').trim() || null;
+    if (data.lastName !== undefined) payload.lastName = (data.lastName || '').trim() || null;
+    if (data.title !== undefined) payload.title = (data.title || '').trim() || null;
+    return this.prisma.user.update({
+      where: { id: userId },
+      data: payload,
+      select: { id: true, email: true, role: true, firstName: true, lastName: true, title: true },
+    });
   }
 
   async deleteUser(userId: number) {
