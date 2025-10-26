@@ -119,6 +119,23 @@ export class UsersService {
     });
   }
 
+  async addStaffAlias(userId: number, local: string, domain = 'velvacloud.com') {
+    const simple = (local || '').trim().toLowerCase();
+    if (!/^[a-z0-9._-]{1,64}$/.test(simple)) {
+      throw new BadRequestException('Invalid alias local-part');
+    }
+    const existsUser = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true } });
+    if (!existsUser) throw new BadRequestException('user_not_found');
+    const existsAlias = await this.prisma.staffEmail.findUnique({ where: { local_domain: { local: simple, domain } } } as any);
+    if (existsAlias) throw new BadRequestException('alias_taken');
+    const created = await this.prisma.staffEmail.create({ data: { userId, local: simple, domain, email: `${simple}@${domain}` } });
+    return created;
+  }
+
+  async listStaffAliases(userId: number) {
+    return this.prisma.staffEmail.findMany({ where: { userId }, orderBy: { id: 'asc' } });
+  }
+
   async deleteUser(userId: number) {
     // Remove dependent data to satisfy FK constraints
     await this.prisma.$transaction([
