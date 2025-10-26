@@ -1,18 +1,31 @@
-import { Body, Controller, Post, Req } from '@nestjs/common';
+import { Body, Controller, Post, Req, UploadedFiles, UseInterceptors } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
+import { FileFieldsInterceptor } from '@nestjs/platform-express';
 
 @ApiTags('mail')
 @Controller('mail/inbound')
 export class MailInboundController {
   constructor(private prisma: PrismaService) {}
 
-  // Basic inbound webhook to receive parsed emails (e.g., from SendGrid Inbound Parse)
-  // Configure your provider to POST to /api/mail/inbound with fields: to, from, subject, html, text
+  // Inbound webhook to receive parsed emails (e.g., from SendGrid Inbound Parse)
+  // Accepts application/json, x-www-form-urlencoded, and multipart/form-data
+  // Expected fields: to, from, subject, html, text. Attachments ignored for now.
   @Post()
-  async receive(@Req() req: any, @Body() body: any) {
+  @UseInterceptors(FileFieldsInterceptor([{ name: 'attachments', maxCount: 20 }]))
+  async receive(@Req() req: any, @Body() body: any, @UploadedFiles() files: Record<string, Express.Multer.File[]>) {
     try {
-      const toField = String(body?.to || '').toLowerCase();
+      // Normalize "to"
+      let toField = String(body?.to || '').toLowerCase();
+      // SendGrid may send an "envelope" JSON with "to"
+      if (!toField && body?.envelope) {
+        try {
+          const env = JSON.parse(body.envelope);
+          if (env?.to && Array.isArray(env.to) && env.to.length) {
+            toField = String(env.to[0]).toLowerCase();
+          }
+        } catch {}
+      }
       const toEmail = (toField.split(',')[0] || '').trim();
       const local = (toEmail.split('@')[0] || '').trim();
       const domain = (toEmail.split('@')[1] || '').trim();
