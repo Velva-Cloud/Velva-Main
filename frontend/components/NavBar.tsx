@@ -74,6 +74,7 @@ export default function NavBar() {
                   <div className="absolute right-0 mt-2 w-44 rounded-lg bg-slate-900/90 border border-slate-800 shadow-lg p-2">
                     {canSupport && (
                       <>
+                        <Link href="/support/inbox" className="dropdown-link">Support • Inbox</Link>
                         <Link href="/support/users" className="dropdown-link">Support • Users</Link>
                         <Link href="/support/servers" className="dropdown-link">Support • Servers</Link>
                       </>
@@ -123,6 +124,7 @@ export default function NavBar() {
                 <div className="text-xs uppercase text-slate-400 mt-2">Console</div>
                 {canSupport && (
                   <>
+                    <Link href="/support/inbox" className="mobile-link">Support • Inbox</Link>
                     <Link href="/support/users" className="mobile-link">Support • Users</Link>
                     <Link href="/support/servers" className="mobile-link">Support • Servers</Link>
                   </>
