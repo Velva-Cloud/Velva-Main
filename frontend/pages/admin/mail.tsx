@@ -15,6 +15,7 @@ export default function AdminMail() {
   const [html, setHtml] = useState('<p>Hello from VelvaCloud</p>');
   const [text, setText] = useState('');
   const [fromKind, setFromKind] = useState<'default' | 'support' | 'no_reply'>('support');
+  const [fromLocal, setFromLocal] = useState('');
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -26,7 +27,14 @@ export default function AdminMail() {
     }
     setSending(true);
     try {
-      await api.post('/settings/mail/send', { to: to.trim(), subject: subject.trim(), html, text: text.trim() || undefined, fromKind });
+      await api.post('/settings/mail/send', {
+        to: to.trim(),
+        subject: subject.trim(),
+        html,
+        text: text.trim() || undefined,
+        fromKind,
+        fromLocal: fromKind === 'support' && fromLocal.trim() ? fromLocal.trim() : undefined,
+      });
       toast.show('Email sent', 'success');
     } catch (e: any) {
       const msg = e?.response?.data?.message || 'Failed to send email';
@@ -59,6 +67,17 @@ export default function AdminMail() {
                 <option value="default">Default (fromEmail)</option>
               </select>
             </FormField>
+            {fromKind === 'support' && (
+              <FormField label="Custom from (local-part)">
+                <input
+                  className="input"
+                  value={fromLocal}
+                  onChange={(e) => setFromLocal(e.target.value)}
+                  placeholder="e.g. alice"
+                />
+                <div className="text-xs subtle mt-1">This sends from alice@velvacloud.com (or your configured support domain).</div>
+              </FormField>
+            )}
             <div className="md:col-span-2">
               <FormField label="HTML">
                 <textarea className="input font-mono text-xs" rows={8} value={html} onChange={(e) => setHtml(e.target.value)} placeholder="<p>Hello</p>" />

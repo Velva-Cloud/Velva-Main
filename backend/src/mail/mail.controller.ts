@@ -61,16 +61,27 @@ export class MailController {
 
   @Post('send')
   @Roles(Role.ADMIN, Role.OWNER)
-  async send(@Body() body: { to: string; subject: string; html?: string; text?: string; fromKind?: 'default' | 'support' | 'no_reply' }) {
+  async send(
+    @Body()
+    body: {
+      to: string;
+      subject: string;
+      html?: string;
+      text?: string;
+      fromKind?: 'default' | 'support' | 'no_reply';
+      fromLocal?: string;
+    },
+  ) {
     const to = (body?.to || '').trim();
     const subject = (body?.subject || '').trim();
     const html = body?.html || '';
     const text = body?.text || undefined;
     const fromKind = body?.fromKind || 'default';
+    const fromLocal = (body?.fromLocal || '').trim() || undefined;
     if (!to || !subject || (!html && !text)) {
       return { ok: false, message: 'to, subject and html or text are required' };
     }
-    await this.mail.send(to, subject, html || (text as string), text, fromKind);
+    await this.mail.send(to, subject, html || (text as string), text, { kind: fromKind, fromLocal });
     return { ok: true };
   }
 }

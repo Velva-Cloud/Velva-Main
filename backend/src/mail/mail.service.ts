@@ -65,24 +65,45 @@ export class MailService {
     return this.transporter;
   }
 
-  private buildFrom(kind: 'default' | 'support' | 'no_reply' = 'default'): string {
+  private buildFrom(kind: 'default' | 'support' | 'no_reply' = 'default', fromLocal?: string): string {
     const s = this.cachedSettings!;
-    const email =
+    // Base identity by kind
+    let baseEmail =
       kind === 'support'
         ? (s.supportEmail || s.fromEmail)
         : kind === 'no_reply'
         ? (s.noReplyEmail || s.fromEmail)
         : s.fromEmail;
-    return s.fromName ? `"${s.fromName}" <${email}>` : email;
+
+    // Optional override local-part for support identity
+    if (fromLocal && kind === 'support') {
+      const simple = fromLocal.trim().toLowerCase();
+      // Allow letters, numbers, dot, dash, underscore
+      if (!/^[a-z0-9._-]{1,64}$/.test(simple)) {
+        this.logger.warn(`Invalid local-part for custom from: ${fromLocal}`);
+      } else {
+        const domain = (baseEmail.split('@')[1] || 'velvacloud.com').trim();
+        baseEmail = `${simple}@${domain}`;
+      }
+    }
+
+    return s.fromName ? `"${s.fromName}" <${baseEmail}>` : baseEmail;
   }
 
-  async send(to: string, subject: string, html: string, text?: string, kind: 'default' | 'support' | 'no_reply' = 'default') {
+  async send(
+    to: string,
+    subject: string,
+    html: string,
+    text?: string,
+    opts?: { kind?: 'default' | 'support' | 'no_reply'; fromLocal?: string },
+  ) {
     const tx = await this.getTransporter();
     if (!tx || !this.cachedSettings) {
       this.logger.warn('Skipping email, mail transport unavailable');
       return { skipped: true };
     }
-    const from = this.buildFrom(kind);
+    const kind = opts?.kind || 'default';
+    const from = this.buildFrom(kind, opts?.fromLocal);
     await tx.sendMail({
       from,
       to,
