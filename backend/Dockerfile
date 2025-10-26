@@ -19,6 +19,8 @@ RUN apt-get update && apt-get install -y openssl wget && rm -rf /var/lib/apt/lis
 COPY --from=builder /app/package.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
+# Ensure email templates are available at runtime
+COPY --from=builder /app/src/mail/templates /app/dist/src/mail/templates
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/start.sh ./start.sh
 RUN chmod +x /app/start.sh
