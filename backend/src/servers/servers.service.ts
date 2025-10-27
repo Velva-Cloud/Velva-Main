@@ -80,7 +80,7 @@ export class ServersService {
     if (!s) return null;
     const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true, resources: true } });
     const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
-    const ip = mockIpWithPort(s.id);
+    let ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
 
     // Find last provisioning-related log for this server
@@ -94,6 +94,21 @@ export class ServersService {
       const m = (l?.metadata as any) || {};
       return m.serverId === id && ['provision_ok', 'provision_failed', 'provision_request'].includes(m.event);
     });
+    const mcPortLog = recent.find((l: any) => {
+      const m = (l?.metadata as any) || {};
+      return m.serverId === id && m.event === 'minecraft_port_assigned' && typeof m.port === 'number';
+    });
+    if (mcPortLog) {
+      try {
+        const assigned = Number((mcPortLog.metadata as any).port);
+        if (Number.isFinite(assigned) && assigned > 0) {
+          const host = ip.split(':')[0];
+          ip = `${host}:${assigned}`;
+        }
+      } catch {
+        // ignore port override failures
+      }
+    }
 
     const provisionStatus = provLog
       ? {

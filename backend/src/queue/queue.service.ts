@@ -187,7 +187,15 @@ export class QueueService implements OnModuleInit {
 
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
-          await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd });
+          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd });
+          // Record assigned Minecraft port if provided
+          const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
+          if (assignedPort && Number.isFinite(assignedPort)) {
+            await this.prisma.log.create({
+              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'minecraft_port_assigned', serverId: s.id, port: assignedPort } },
+            });
+            await this.recordEvent(s.id, 'minecraft_port_assigned', String(assignedPort));
+          }
         } catch (e: any) {
           if (isHardProvisionError(e)) {
             await this.prisma.log.create({

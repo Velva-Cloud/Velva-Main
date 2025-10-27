@@ -519,6 +519,40 @@ function startHttpsServer() {
           nanoCpus = Math.round(coreLimit * 1e9);
         }
 
+        // Unique host port assignment for Minecraft
+        let portBindings: Record<string, Array<{ HostPort: string }>> | undefined = undefined;
+        let chosenHostPort: number | undefined = undefined;
+        const isMinecraft = typeof image === 'string' && image.includes('itzg/minecraft-server');
+        if (isMinecraft) {
+          const containerPort = 25565; // inside container
+          const base = Number(process.env.MC_PORT_BASE || 25000);
+          const range = Number(process.env.MC_PORT_RANGE || 10000); // ports: base .. base+range-1
+          const maxTries = Number(process.env.MC_PORT_MAX_TRIES || 200);
+          // Collect currently used host ports to avoid conflicts
+          const used = new Set<number>();
+          try {
+            const list = await docker.listContainers({ all: true });
+            for (const info of list) {
+              const ports = info.Ports || [];
+              for (const prt of ports) {
+                if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
+              }
+            }
+          } catch {
+            // ignore discovery errors
+          }
+          let candidate = base + ((serverId * 17) % Math.max(1, range));
+          let tries = 0;
+          while (used.has(candidate) && tries < maxTries) {
+            candidate = base + (((candidate - base + 1) % Math.max(1, range)));
+            tries++;
+          }
+          chosenHostPort = candidate;
+          // Ensure ExposedPorts includes the container port
+          exposed[`${containerPort}/tcp`] = {};
+          portBindings = { [`${containerPort}/tcp`]: [{ HostPort: String(chosenHostPort) }] };
+        }
+
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
@@ -532,12 +566,13 @@ function startHttpsServer() {
             NanoCpus: nanoCpus,
             Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
             RestartPolicy: { Name: 'unless-stopped' },
-          },
+            ...(portBindings ? { PortBindings: portBindings } : {}),
+          } as any,
           Env: envArr,
           ExposedPorts: Object.keys(exposed).length ? exposed : undefined,
           Cmd: Array.isArray(cmd) ? cmd : [],
         } as any);
-        return res.json({ ok: true, id: container.id, existed: false, volume: mountPath });
+        return res.json({ ok: true, id: container.id, existed: false, volume: mountPath, port: chosenHostPort });
       } catch (e: any) {
         // If name conflict happened due to a race, treat as existed
         const msg = String(e?.message || '');
