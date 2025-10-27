@@ -146,6 +146,21 @@ export class ServersController {
     return this.service.fsRename(id, body.from || '/', body.to || '/');
   }
 
+  // Server events for owners/support/admin (and server-level access)
+  @Get(':id/events')
+  @SkipThrottle()
+  async events(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('limit') limitStr?: string) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) throw new ForbiddenException();
+    if (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, user.userId);
+      if (!ar) throw new ForbiddenException();
+    }
+    const limit = Number(limitStr) || 50;
+    return this.service.listEvents(id, limit);
+  }
+
   @Post()
   async create(@Request() req: any, @Body() body: CreateServerDto) {
     const user = req.user as { userId: number };
@@ -200,6 +215,7 @@ export class ServersController {
 
   // Provision
   @Post(':id/provision')
+  @SkipThrottle()
   async provision(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -218,6 +234,7 @@ export class ServersController {
   }
 
   @Post(':id/start')
+  @SkipThrottle()
   async start(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -239,6 +256,7 @@ export class ServersController {
   }
 
   @Post(':id/stop')
+  @SkipThrottle()
   async stop(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -260,6 +278,7 @@ export class ServersController {
   }
 
   @Post(':id/restart')
+  @SkipThrottle()
   async restart(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;

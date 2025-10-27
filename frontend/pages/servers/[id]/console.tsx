@@ -23,6 +23,8 @@ export default function ServerConsolePage() {
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const [events, setEvents] = useState<Array<{ id: number; ts: string; type: string; message?: string }>>([]);
+
   const fetchServer = async () => {
     if (!id) return;
     try {
@@ -31,7 +33,16 @@ export default function ServerConsolePage() {
     } catch {}
   };
 
-  useEffect(() => { fetchServer(); }, [id]);
+  const fetchEvents = async () => {
+    if (!id) return;
+    try {
+      const res = await api.get(`/servers/${id}/events`, { params: { limit: 20 } });
+      const items = Array.isArray(res.data) ? res.data : [];
+      setEvents(items.map((e: any) => ({ id: e.id, ts: e.ts, type: e.type, message: e.message })));
+    } catch {}
+  };
+
+  useEffect(() => { fetchServer(); fetchEvents(); }, [id]);
 
   const startConsole = async () => {
     if (!id) return;
@@ -143,10 +154,26 @@ export default function ServerConsolePage() {
             <section className="card p-4 mt-4">
               <div className="flex items-center justify-between">
                 <div className="flex gap-2">
-                  <button onClick={() => { setConsoleLines([]); startConsole(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
+                  <button onClick={() => { setConsoleLines([]); startConsole(); fetchEvents(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
                   <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
                 </div>
               </div>
+
+              {/* Recent server events (help surface errors) */}
+              {events.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs subtle mb-1">Recent events</div>
+                  <ul className="text-xs bg-slate-800/60 rounded border border-slate-700 divide-y divide-slate-700">
+                    {events.slice(0, 5).map((ev) => (
+                      <li key={ev.id} className="px-3 py-2">
+                        <span className="text-slate-300">{ev.type}</span>
+                        {ev.message ? <span className="text-slate-500"> — {ev.message}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <pre className="mt-3 text-xs bg-slate-800/70 rounded p-3 overflow-auto" style={{ minHeight: 240, maxHeight: 480 }}>
                 {consoleLines.length ? consoleLines.join('\n') : 'Connecting…'}
               </pre>

@@ -722,4 +722,21 @@ export class ServersService {
     }
     return this.agent.fsRename(baseURL, serverId, from, to);
   }
+
+  async listEvents(serverId: number, limit = 50) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const items = await this.prisma.serverEvent.findMany({
+      where: { serverId },
+      orderBy: { id: 'desc' },
+      take: Math.max(1, Math.min(200, limit)),
+    });
+    return items.map(ev => ({
+      id: ev.id,
+      ts: ev.timestamp,
+      type: ev.type,
+      message: ev.message,
+      data: ev.data,
+    }));
+  }
 }
