@@ -733,7 +733,7 @@ export class ServersService {
     });
     return items.map(ev => ({
       id: ev.id,
-      ts: ev.timestamp,
+      ts: ev.createdAt,
       type: ev.type,
       message: ev.message,
       data: ev.data,
