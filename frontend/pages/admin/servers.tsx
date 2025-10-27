@@ -1,10 +1,9 @@
 import Head from 'next/head';
 import { useEffect, useMemo, useState } from 'react';
-import NavBar from '../../components/NavBar';
-import SystemStatus from '../../components/SystemStatus';
 import { useRequireAdmin } from '../../utils/guards';
 import api from '../../utils/api';
 import { useToast } from '../../components/Toast';
+import AdminLayout from '../../components/AdminLayout';
 
 type Server = {
   id: number;
@@ -192,26 +191,7 @@ export default function AdminServers() {
       <Head>
         <title>Admin • Servers</title>
       </Head>
-      <NavBar />
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Admin • Servers</h1>
-          <div className="w-full max-w-sm ml-4">
-            <SystemStatus />
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2 mb-6">
-          <a href="/admin/plans" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Plans</a>
-          <a href="/admin/nodes" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Nodes</a>
-          <a href="/admin/users" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Users</a>
-          <a href="/admin/logs" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Logs</a>
-          <a href="/admin/transactions" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Transactions</a>
-          <a href="/admin/settings" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Settings</a>
-          <a href="/admin/finance" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Finance</a>
-          <a href="/admin/servers" className="px-3 py-1 rounded border border-slate-700 bg-slate-800/60">Servers</a>
-        </div>
-
+      <AdminLayout title="Admin • Servers">
         {err && <div className="mb-4 text-red-400">{err}</div>}
 
         <section>
@@ -416,7 +396,7 @@ export default function AdminServers() {
             </>
           )}
         </section>
-      </main>
+      </AdminLayout>
     </>
   );
 }

@@ -48,7 +48,8 @@
     "rxjs": "^7.8.1",
     "swagger-ui-express": "^5.0.0",
     "stripe": "^14.25.0",
-    "form-data": "^4.0.0"
+    "form-data": "^4.0.0",
+    "handlebars": "^4.7.8"
   },
   "devDependencies": {
     "@types/bcrypt": "^5.0.0",

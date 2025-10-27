@@ -1,10 +1,9 @@
 import Head from 'next/head';
-import NavBar from '../../components/NavBar';
-import { useRequireAdmin } from '../../utils/guards';
-import SystemStatus from '../../components/SystemStatus';
 import { useState } from 'react';
+import { useRequireAdmin } from '../../utils/guards';
 import { useToast } from '../../components/Toast';
 import api from '../../utils/api';
+import AdminLayout from '../../components/AdminLayout';
 
 export default function AdminIndex() {
   useRequireAdmin();
@@ -30,32 +29,26 @@ export default function AdminIndex() {
       <Head>
         <title>Admin • Panel</title>
       </Head>
-      <NavBar />
-      <main className="max-w-5xl mx-auto px-6 py-10">
-        <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-semibold">Admin</h1>
-          <div className="w-full max-w-sm ml-4">
-            <SystemStatus />
-          </div>
-        </div>
-
-        {/* Platform update card */}
-        <section className="card p-4 mb-6">
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="font-semibold">Platform update</h3>
-              <p className="text-slate-400 text-sm">Restart backend and frontend containers on all approved nodes. Optionally restart daemon.</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <label className="flex items-center gap-1 text-sm">
-                <input type="checkbox" checked={includeDaemon} onChange={(e) => setIncludeDaemon(e.target.checked)} />
-                Include daemon
-              </label>
-              <button onClick={updatePlatform} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Update</button>
+      <AdminLayout
+        title="Admin"
+        actions={
+          <div className="card p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <h3 className="font-semibold">Platform update</h3>
+                <p className="text-slate-400 text-sm">Restart backend and frontend containers on all approved nodes. Optionally restart daemon.</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <label className="flex items-center gap-1 text-sm">
+                  <input type="checkbox" checked={includeDaemon} onChange={(e) => setIncludeDaemon(e.target.checked)} />
+                  Include daemon
+                </label>
+                <button onClick={updatePlatform} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Update</button>
+              </div>
             </div>
           </div>
-        </section>
-
+        }
+      >
         <section className="grid md:grid-cols-2 gap-4">
           <a href="/admin/plans" className="card p-5 hover:bg-slate-800/60">
             <h3 className="font-semibold">Plans</h3>
@@ -90,7 +83,7 @@ export default function AdminIndex() {
             <p className="text-slate-400 text-sm">MRR, ARR, churn and plan distribution.</p>
           </a>
         </section>
-      </main>
+      </AdminLayout>
     </>
   );
 }

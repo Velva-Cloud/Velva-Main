@@ -2,6 +2,7 @@ import { BadRequestException, ForbiddenException, Injectable, Logger } from '@ne
 import { PrismaService } from '../prisma/prisma.service';
 import { AgentClientService } from './agent-client.service';
 import { QueueService } from '../queue/queue.service';
+import { MailService } from '../mail/mail.service';
 
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
@@ -34,7 +35,7 @@ type Resources = { cpu?: number; ramMB?: number; diskMB?: number; diskGB?: numbe
 export class ServersService {
   private readonly logger = new Logger(ServersService.name);
 
-  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService) {}
+  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService, private mail: MailService) {}
 
   async nodeBaseUrl(nodeId?: number | null): Promise<string | undefined> {
     // In development, allow overriding per-node URLs with a global DAEMON_URL
@@ -392,6 +393,15 @@ export class ServersService {
     await this.prisma.log.create({
       data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosenId, image: imageOverride || null } },
     });
+
+    // Send no-reply email to user for server creation (best-effort)
+    try {
+      const nodeName = nodes.find(nn => nn.id === chosenId)?.name || String(chosenId);
+      const dashboardUrl = `${process.env.PANEL_URL || ''}/servers/${server.id}`;
+      await this.mail.sendServerCreated(user.email, { name: n, planName: plan.name, nodeName, dashboardUrl });
+    } catch (e) {
+      this.logger.warn(`Mail send failed for server create: ${e}`);
+    }
 
     // Enqueue async provision + start
     await this.prisma.log.create({

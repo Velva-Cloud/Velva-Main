@@ -45,6 +45,11 @@ enum TransactionStatus {
   pending
 }
 
+enum MailDirection {
+  inbound
+  outbound
+}
+
 model User {
   id                 Int       @id @default(autoincrement())
   email              String    @unique
@@ -56,6 +61,9 @@ model User {
   lastLogin          DateTime?
   stripeCustomerId   String?
   suspended          Boolean   @default(false)
+  firstName          String?
+  lastName           String?
+  title              String?
 
   subscriptions Subscription[]
   servers       Server[]
@@ -64,6 +72,8 @@ model User {
   transactions  Transaction[]
   events        ServerEvent[]
   access        ServerAccess[]
+  staffEmails   StaffEmail[]
+  mailMessages  EmailMessage[]
 }
 
 model Plan {
@@ -224,4 +234,35 @@ model ServerAccess {
   @@unique([serverId, userId])
   @@index([serverId])
   @@index([userId])
+}
+
+model StaffEmail {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  local     String
+  domain    String   @default("velvacloud.com")
+  email     String   @unique
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@unique([local, domain])
+  @@index([userId])
+}
+
+model EmailMessage {
+  id        Int           @id @default(autoincrement())
+  userId    Int
+  direction MailDirection
+  from      String
+  to        String
+  subject   String
+  html      String?
+  text      String?
+  createdAt DateTime      @default(now())
+  read      Boolean       @default(false)
+
+  user User @relation(fields: [userId], references: [id])
+
+  @@index([userId, createdAt])
 }
