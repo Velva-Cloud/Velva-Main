@@ -7,6 +7,7 @@ import { RolesGuard } from '../common/roles.guard';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateServerDto } from './dto/create-server.dto';
 import { UpdateServerDto } from './dto/update-server.dto';
+import { SkipThrottle } from '@nestjs/throttler';
 
 @ApiTags('servers')
 @ApiBearerAuth()
@@ -31,6 +32,7 @@ export class ServersController {
   }
 
   @Get(':id')
+  @SkipThrottle()
   async getOne(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
     const user = req.user as { userId: number; role: Role };
     const s = await this.service.getById(id);
@@ -45,6 +47,7 @@ export class ServersController {
 
   // Console logs SSE proxy
   @Get(':id/logs')
+  @SkipThrottle()
   async logs(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Res() res: any) {
     const user = req.user as { userId: number; role: Role };
     const s = await this.service.getById(id);
