@@ -105,8 +105,17 @@ async function bootstrapIfNeeded(): Promise<void> {
     ensureDir(SSH_DIR);
     return;
   }
+  await performRegistration(true);
+}
+
+/**
+ * Perform agent registration and certificate issuance.
+ * If force=true, always generate a new keypair and CSR.
+ * If force=false and an existing private key is present, reuse it to generate CSR.
+ */
+async function performRegistration(force = false): Promise<void> {
   if (!PANEL_URL || (!JOIN_CODE && !REGISTRATION_SECRET)) {
-    console.error('TLS files missing and PANEL_URL plus JOIN_CODE or REGISTRATION_SECRET not set. Cannot bootstrap.');
+    console.error('PANEL_URL plus JOIN_CODE or REGISTRATION_SECRET not set. Cannot register.');
     process.exit(1);
   }
   try {
@@ -117,10 +126,28 @@ async function bootstrapIfNeeded(): Promise<void> {
     ensureDir(DATA_DIR);
     ensureDir(SSH_DIR);
 
-    // Keypair and CSR
-    const keys = forge.pki.rsa.generateKeyPair(2048);
+    // Private key and CSR
+    let privKey: any;
+    let pubKey: any;
+    if (!force && fs.existsSync(KEY_PATH)) {
+      try {
+        const privPemExisting = fs.readFileSync(KEY_PATH, 'utf8');
+        privKey = forge.pki.privateKeyFromPem(privPemExisting);
+        pubKey = forge.pki.setRsaPublicKey(privKey.n, privKey.e);
+      } catch {
+        // fall through to new keypair
+      }
+    }
+    if (!privKey || !pubKey) {
+      const keys = forge.pki.rsa.generateKeyPair(2048);
+      privKey = keys.privateKey;
+      pubKey = keys.publicKey;
+      const privPemNew = forge.pki.privateKeyToPem(privKey);
+      fs.writeFileSync(KEY_PATH, privPemNew, { mode: 0o600 });
+    }
+
     const csr = forge.pki.createCertificationRequest();
-    csr.publicKey = keys.publicKey;
+    csr.publicKey = pubKey;
     const nodeName = process.env.NODE_NAME || os.hostname();
     csr.setSubject([{ name: 'commonName', value: nodeName }]);
 
@@ -142,19 +169,19 @@ async function bootstrapIfNeeded(): Promise<void> {
         extensions: [{ name: 'subjectAltName', altNames }],
       },
     ]);
-    csr.sign(keys.privateKey);
+    csr.sign(privKey);
 
     const csrPem = forge.pki.certificationRequestToPem(csr);
-    const privPem = forge.pki.privateKeyToPem(keys.privateKey);
-    fs.writeFileSync(KEY_PATH, privPem, { mode: 0o600 });
+    const privPem = forge.pki.privateKeyToPem(privKey);
 
-    // Register
+    // Registration payload
     const capacity = {
       cpuCores: os.cpus().length,
       memoryMb: Math.round(os.totalmem() / (1024 * 1024)),
       diskMb: null as any, // optional
     };
-    const apiUrl = `https://${host}:${PORT}`;
+    const dnsName = process.env.NODE_NAME || os.hostname() || host;
+    const apiUrl = `https://${dnsName}:${PORT}`;
     const registerBody = {
       name: process.env.NODE_NAME || undefined,
       location: process.env.NODE_LOCATION || undefined,
@@ -214,12 +241,12 @@ async function bootstrapIfNeeded(): Promise<void> {
       }
     }
     if (!approved) throw new Error('approval_timeout');
-    console.log('Bootstrap complete: certificate issued.');
+    console.log('Registration complete: certificate issued.');
   } catch (e: any) {
-    console.error('Bootstrap failed:', e?.message || e);
-    process.exit(1);
+    console.error('Registration failed:', e?.message || e);
   }
 }
+      
 
 function startHttpsServer() {
   const { cert, key, ca } = loadTls();
@@ -1013,7 +1040,7 @@ async function startHeartbeat() {
     const nodeIdPath = path.join(CERTS_DIR, 'nodeId');
     const noncePath = path.join(CERTS_DIR, 'nonce');
     if (!fs.existsSync(nodeIdPath) || !fs.existsSync(noncePath)) return;
-    const nodeId = Number(fs.readFileSync(nodeIdPath, 'utf8').trim());
+    let nodeId = Number(fs.readFileSync(nodeIdPath, 'utf8').trim());
     let nonce = fs.readFileSync(noncePath, 'utf8').trim();
     const privPem = fs.readFileSync(KEY_PATH, 'utf8');
 
@@ -1027,7 +1054,20 @@ async function startHeartbeat() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ nodeId, signatureBase64 }),
         });
-        if (!res.ok) return;
+        if (!res.ok) {
+          // If backend reports invalid node or signature failure, attempt re-registration
+          const txt = await res.text();
+          if (/invalid node/i.test(txt) || /signature/i.test(txt)) {
+            console.warn('Heartbeat rejected by backend, attempting re-registration...');
+            await performRegistration(false);
+            // Reload nodeId/nonce after registration
+            try {
+              nodeId = Number(fs.readFileSync(nodeIdPath, 'utf8').trim());
+              nonce = fs.readFileSync(noncePath, 'utf8').trim();
+            } catch {}
+          }
+          return;
+        }
         const data = (await res.json()) as any;
         if (data?.nonce) {
           nonce = data.nonce;
