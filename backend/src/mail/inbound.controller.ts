@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UploadedFiles, UseInterceptors, Logger } from '@nestjs/common';
+import { Body, Controller, Get, Post, Req, UploadedFiles, UseInterceptors, Logger } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
@@ -9,6 +9,12 @@ export class MailInboundController {
   private readonly logger = new Logger(MailInboundController.name);
 
   constructor(private prisma: PrismaService) {}
+
+  // Simple health check for GET (useful to verify proxy routing)
+  @Get()
+  health() {
+    return { ok: true, service: 'mail-inbound' };
+  }
 
   // Inbound webhook to receive parsed emails (e.g., from SendGrid Inbound Parse)
   // Accepts application/json, x-www-form-urlencoded, and multipart/form-data
