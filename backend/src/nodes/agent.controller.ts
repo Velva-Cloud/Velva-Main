@@ -107,8 +107,16 @@ export class NodesAgentController {
       });
     }
 
-    // Optional: auto-approve nodes in development for easier local testing
-    if (process.env.AUTO_APPROVE_NODES === 'true') {
+    // Auto-approval policy:
+    // - If AUTO_APPROVE_NODES=true, approve all (legacy/dev).
+    // - Else, if registration used the static secret (no join code) and INTERNAL_AUTO_APPROVE=true (default),
+    //   treat as internal daemon and auto-approve.
+    const autoApproveAll = (process.env.AUTO_APPROVE_NODES || 'false') === 'true';
+    const internalAuto = (process.env.INTERNAL_AUTO_APPROVE || 'true') === 'true';
+    const isInternalFlow = !joinCode; // static secret path => internal
+    const shouldAutoApprove = autoApproveAll || (isInternalFlow && internalAuto);
+
+    if (shouldAutoApprove) {
       try {
         const nodeCertPem = this.pki.signCsr(body.csrPem);
         await this.prisma.node.update({

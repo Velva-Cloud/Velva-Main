@@ -56,7 +56,8 @@ services:
       AGENT_API_KEY: dev-panel-key
       # Agent registration (local dev)
       NODE_REGISTRATION_SECRET: localdev
-      AUTO_APPROVE_NODES: "true"
+      AUTO_APPROVE_NODES: "false"
+      INTERNAL_AUTO_APPROVE: "true"
       # Agent URL inside compose network (use DNS that matches cert SAN)
       DAEMON_URL: https://local-node:9443
       # Auto-generate panel client cert if missing
