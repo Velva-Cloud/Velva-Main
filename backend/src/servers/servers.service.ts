@@ -556,6 +556,42 @@ export class ServersService {
     if (!cmd) throw new BadRequestException('cmd required');
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
+
+    // Special handling: allow "true" to accept EULA for Minecraft servers and restart
+    const normalized = (cmd || '').trim().toLowerCase();
+    try {
+      // Determine current image (plan or override)
+      const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
+      let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+      // Check for image override from server_create log
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        image = override.trim();
+      }
+
+      // If Minecraft image and user typed "true", accept EULA and restart
+      if (image && image.includes('itzg/minecraft-server') && normalized === 'true') {
+        // Write eula.txt on the persistent volume root; for MC mountPath defaults to /data
+        const content = Buffer.from('eula=true\n', 'utf8');
+        const baseURL = await this.nodeBaseUrl(s.nodeId);
+        await this.agent.fsUpload(baseURL, serverId, '/', 'eula.txt', content);
+        // Enqueue restart (will start and keep running)
+        await this.queue.enqueueRestart(serverId);
+        await this.prisma.log.create({
+          data: { userId: null, action: 'plan_change', metadata: { event: 'minecraft_eula_accepted', serverId } },
+        });
+        return { ok: true, output: 'EULA accepted. Restarting server…' };
+      }
+    } catch {
+      // Fall through to normal exec on any detection failure
+    }
+
     const baseURL = await this.nodeBaseUrl(s.nodeId);
     return this.agent.exec(baseURL, serverId, cmd);
   }

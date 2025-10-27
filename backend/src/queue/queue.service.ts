@@ -158,8 +158,8 @@ export class QueueService implements OnModuleInit {
         const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
         let image = typeof resources.image === 'string' ? resources.image : 'nginx:alpine';
         const env = (resources.env && typeof resources.env === 'object') ? resources.env : undefined;
-        const mountPath = typeof resources.mountPath === 'string' ? resources.mountPath : (typeof resources.dataDir === 'string' ? resources.dataDir : undefined);
-        const exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
+        let mountPath = typeof resources.mountPath === 'string' ? resources.mountPath : (typeof resources.dataDir === 'string' ? resources.dataDir : undefined);
+        let exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
         const cmd = Array.isArray(resources.cmd) ? resources.cmd : undefined;
 
         // Check if an image override was provided at creation
@@ -172,6 +172,17 @@ export class QueueService implements OnModuleInit {
         const override = createLog ? (createLog.metadata as any)?.image : undefined;
         if (override && typeof override === 'string' && override.trim().length > 0) {
           image = override.trim();
+        }
+
+        // If using Minecraft image and no explicit mountPath/ports, set sensible defaults
+        if (image && image.includes('itzg/minecraft-server')) {
+          if (!mountPath || !mountPath.trim()) {
+            mountPath = '/data';
+          }
+          if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
+            // Default game port; host mapping/firewall handled separately
+            exposePorts = [25565];
+          }
         }
 
         const baseURL = await this.nodeBaseUrl(s.nodeId);
