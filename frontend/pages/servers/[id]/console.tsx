@@ -67,7 +67,10 @@ export default function ServerConsolePage() {
       let buffer = '';
       const pump = async (): Promise<void> => {
         const r = await reader.read();
-        if (r.done) return;
+        if (r.done) {
+          setConsoleLines(prev => prev.length ? [...prev, '[INFO] Log stream ended'] : ['[INFO] Log stream ended']);
+          return;
+        }
         const chunk = decoder.decode(r.value, { stream: true });
         buffer += chunk;
         let idx: number;
@@ -78,6 +81,10 @@ export default function ServerConsolePage() {
           if (line) {
             try { setConsoleLines(prev => [...prev, JSON.parse(line.slice(6))]); }
             catch { setConsoleLines(prev => [...prev, line.slice(6)]); }
+          } else {
+            // If server sent a comment or ping, show it subtly
+            const ping = part.split('\n').find(l => l.startsWith(': '));
+            if (ping) setConsoleLines(prev => [...prev, ping.slice(2)]);
           }
         }
         await pump();

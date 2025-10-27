@@ -156,12 +156,16 @@ export class AgentClientService {
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      // Emit an initial message so clients don't sit at "Connecting..."
+      try {
+        res.write(`data: ${JSON.stringify('[INFO] Connected to log stream')}\n\n`);
+      } catch {}
       agentRes.data.pipe(res);
     } catch (e: any) {
       const status = e?.response?.status;
       const err = e?.response?.data?.error;
       if (status === 404 && err === 'container_not_found') {
-        return res.status(404).end();
+        return res.status(404).json({ error: 'container_not_found' });
       }
       return res.status(500).json({ error: e?.message || 'logs_failed' });
     }
