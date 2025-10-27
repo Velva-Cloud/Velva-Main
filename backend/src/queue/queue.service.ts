@@ -213,11 +213,33 @@ export class QueueService implements OnModuleInit {
 
         // Auto-start
         await this.agents.start(baseURL, s.id);
-        await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
-        await this.prisma.log.create({
-          data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
-        });
-        await this.recordEvent(s.id, 'server_status_change', 'running');
+
+        // Verify running state via inventory; some images (e.g., Minecraft before EULA) exit immediately
+        let running = true;
+        try {
+          const inv = await this.agents.inventory(baseURL);
+          const present = inv?.containers?.find(c => c.serverId === s.id);
+          running = !!(present && present.running);
+        } catch {
+          // best-effort; assume running if inventory fails
+          running = true;
+        }
+
+        if (running) {
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
+          await this.prisma.log.create({
+            data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
+          });
+          await this.recordEvent(s.id, 'server_status_change', 'running');
+        } else {
+          // Record stopped status and a hint for Minecraft EULA
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'stopped' } });
+          const hint = image.includes('itzg/minecraft-server') ? 'Server exited; accept EULA by typing "true" in Console.' : 'Server process exited.';
+          await this.prisma.log.create({
+            data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_exited', serverId: s.id, hint } },
+          });
+          await this.recordEvent(s.id, 'server_exited', hint);
+        }
 
         return { ok: true };
       },
@@ -243,11 +265,30 @@ export class QueueService implements OnModuleInit {
           }
           throw e;
         }
-        await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
-        await this.prisma.log.create({
-          data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
-        });
-        await this.recordEvent(s.id, 'server_status_change', 'running', undefined, actorUserId ?? null);
+
+        // Verify running state via inventory; if process exited immediately, mark as stopped
+        let running = true;
+        try {
+          const inv = await this.agents.inventory(baseURL);
+          const present = inv?.containers?.find(c => c.serverId === s.id);
+          running = !!(present && present.running);
+        } catch {
+          running = true;
+        }
+
+        if (running) {
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
+          await this.prisma.log.create({
+            data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
+          });
+          await this.recordEvent(s.id, 'server_status_change', 'running', undefined, actorUserId ?? null);
+        } else {
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'stopped' } });
+          await this.prisma.log.create({
+            data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_exited', serverId: s.id } },
+          });
+          await this.recordEvent(s.id, 'server_exited', undefined, undefined, actorUserId ?? null);
+        }
         return { ok: true };
       },
       { ...workerSettings, concurrency: startConc },
