@@ -1,4 +1,4 @@
-import { Body, Controller, Post, Req, UploadedFiles, UseInterceptors } from '@nestjs/common';
+import { Body, Controller, Post, Req, UploadedFiles, UseInterceptors, Logger } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import { PrismaService } from '../prisma/prisma.service';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
@@ -6,6 +6,8 @@ import { FileFieldsInterceptor } from '@nestjs/platform-express';
 @ApiTags('mail')
 @Controller('mail/inbound')
 export class MailInboundController {
+  private readonly logger = new Logger(MailInboundController.name);
+
   constructor(private prisma: PrismaService) {}
 
   // Inbound webhook to receive parsed emails (e.g., from SendGrid Inbound Parse)
@@ -26,26 +28,59 @@ export class MailInboundController {
           }
         } catch {}
       }
+
+      const from = String(body?.from || '').trim();
+      const subject = String(body?.subject || '').trim();
+
+      // Lightweight log for diagnostics (avoid huge payloads)
+      await this.prisma.log.create({
+        data: {
+          userId: null,
+          action: 'plan_change' as any,
+          metadata: {
+            event: 'inbound_received',
+            provider: 'sendgrid',
+            toRaw: (body?.to || null),
+            envelope: body?.envelope || null,
+            from: from || null,
+            subject: subject || null,
+            contentType: req.headers['content-type'] || null,
+          },
+        },
+      });
+
       const toEmail = (toField.split(',')[0] || '').trim();
       const local = (toEmail.split('@')[0] || '').trim();
       const domain = (toEmail.split('@')[1] || '').trim();
 
       if (!local || !domain) {
+        await this.prisma.log.create({
+          data: {
+            userId: null,
+            action: 'plan_change' as any,
+            metadata: { event: 'inbound_invalid_recipient', toField },
+          },
+        });
         return { ok: false, message: 'Invalid recipient' };
       }
 
       const staff = await this.prisma.staffEmail.findUnique({ where: { local_domain: { local, domain } } } as any);
       if (!staff) {
+        await this.prisma.log.create({
+          data: {
+            userId: null,
+            action: 'plan_change' as any,
+            metadata: { event: 'inbound_unknown_recipient', toEmail, local, domain },
+          },
+        });
         // Unknown recipient; optionally drop or store in a catch-all
         return { ok: false, message: 'Recipient not recognized' };
       }
 
-      const from = String(body?.from || '').trim();
-      const subject = String(body?.subject || '').trim();
       const html = body?.html ? String(body.html) : null;
       const text = body?.text ? String(body.text) : (html ? html.replace(/<[^>]+>/g, '') : null);
 
-      await this.prisma.emailMessage.create({
+      const saved = await this.prisma.emailMessage.create({
         data: {
           userId: staff.userId,
           direction: 'inbound' as any,
@@ -58,8 +93,24 @@ export class MailInboundController {
         },
       });
 
+      await this.prisma.log.create({
+        data: {
+          userId: staff.userId,
+          action: 'plan_change' as any,
+          metadata: { event: 'inbound_stored', messageId: saved.id, to: toEmail, from: from || null },
+        },
+      });
+
       return { ok: true };
     } catch (e: any) {
+      this.logger.error(`Inbound handler failed: ${e?.message || e}`);
+      await this.prisma.log.create({
+        data: {
+          userId: null,
+          action: 'plan_change' as any,
+          metadata: { event: 'inbound_error', error: e?.message || String(e) },
+        },
+      });
       return { ok: false, message: e?.message || 'Failed' };
     }
   }
