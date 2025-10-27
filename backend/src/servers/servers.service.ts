@@ -83,6 +83,24 @@ export class ServersService {
     let ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
 
+    // Determine current image (plan or override)
+    let imageName: string | null = null;
+    try {
+      imageName = (plan?.resources && typeof (plan.resources as any).image === 'string') ? ((plan!.resources as any).image as string) : null;
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        imageName = override.trim();
+      }
+    } catch {
+      // ignore image detection failures
+    }
+
     // Find last provisioning-related log for this server
     // Note: Prisma JSON filtering differs per provider; fetch recent and filter in app
     const recent = await this.prisma.log.findMany({
@@ -118,6 +136,47 @@ export class ServersService {
         }
       : null;
 
+    // Advisory/hint for UI
+    let stateHint: string | null = null;
+    try {
+      // Determine image (plan default or override)
+      let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        image = override.trim();
+      }
+
+      const isMinecraft = !!(image && image.includes('itzg/minecraft-server'));
+      if (isMinecraft) {
+        // If we recently saw an exit, hint that EULA is likely required
+        const exited = recent.find((l: any) => {
+          const m = (l?.metadata as any) || {};
+          return m.serverId === id && m.event === 'server_exited';
+        });
+        if (exited) {
+          stateHint = 'minecraft_eula_required';
+        }
+      } else {
+        // If container missing and attempts to start occurred, hint missing container
+        const missing = recent.find((l: any) => {
+          const m = (l?.metadata as any) || {};
+          return m.serverId === id && (m.event === 'start_missing_container' || m.event === 'reconcile_missing_container');
+        });
+        if (missing) {
+          stateHint = 'missing_container';
+        }
+      }
+    } catch {
+      // non-fatal
+      stateHint = stateHint || null;
+    }
+
     return {
       ...s,
       mockIp: ip,
@@ -125,7 +184,9 @@ export class ServersService {
       planName: plan?.name ?? null,
       nodeName: node?.name ?? null,
       provisionStatus,
+      stateHint,
     };
+  };
   }
 
   // Server-level access control
@@ -631,19 +692,7 @@ export class ServersService {
       // If Minecraft image and user typed "true", accept EULA and restart
       if (image && image.includes('itzg/minecraft-server') && normalized === 'true') {
         // Write eula.txt on the persistent volume root; for MC mountPath defaults to /data
-        const content = Buffer.from('eula=true\n', 'utf8');
-        const baseURL2 = await this.nodeBaseUrl(s.nodeId);
-        if (!baseURL2 && !process.env.DAEMON_URL) {
-          // Agent not configured: cannot write to daemon FS; report message
-          return { ok: false, output: 'Agent not configured; cannot write EULA. Please configure the node daemon.' };
-        }
-        await this.agent.fsUpload(baseURL2, serverId, '/', 'eula.txt', content);
-        // Enqueue restart (will start and keep running)
-        await this.queue.enqueueRestart(serverId);
-        await this.prisma.log.create({
-          data: { userId: null, action: 'plan_change', metadata: { event: 'minecraft_eula_accepted', serverId } },
-        });
-        return { ok: true, output: 'EULA accepted. Restarting server…' };
+        return this.acceptEula(serverId);
       }
     } catch {
       // Fall through to normal exec on any detection failure
@@ -654,6 +703,24 @@ export class ServersService {
       return { ok: false, output: 'Agent not configured; cannot execute commands.' } as any;
     }
     return this.agent.exec(baseURL, serverId, cmd);
+  }
+
+  async acceptEula(serverId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      // Agent not configured: cannot write to daemon FS; report message
+      return { ok: false, output: 'Agent not configured; cannot write EULA. Please configure the node daemon.' };
+    }
+    const content = Buffer.from('eula=true\n', 'utf8');
+    await this.agent.fsUpload(baseURL, serverId, '/', 'eula.txt', content);
+    await this.queue.enqueueRestart(serverId);
+    await this.prisma.log.create({
+      data: { userId: s.userId, action: 'plan_change', metadata: { event: 'minecraft_eula_accepted', serverId } },
+    });
+    await this.recordEvent(serverId, 'minecraft_eula_accepted');
+    return { ok: true, output: 'EULA accepted. Restarting server…' };
   }
 
   async fsList(serverId: number, path: string) {

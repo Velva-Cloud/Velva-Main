@@ -278,7 +278,6 @@ export class ServersController {
   }
 
   @Post(':id/restart')
-  @SkipThrottle()
   async restart(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -297,6 +296,25 @@ export class ServersController {
       throw new BadRequestException('Reason is required for support actions');
     }
     return this.service.restart(id, actor.userId, body.reason);
+  }
+
+  @Post(':id/eula/accept')
+  @SkipThrottle()
+  async acceptEula(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const actor = req.user as { userId: number; role: Role };
+    let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
+    if (!allowed) {
+      const s = await this.service.getById(id);
+      if (s) {
+        if (s.userId === actor.userId) allowed = true;
+        else {
+          const ar = await this.service.getAccessRole(id, actor.userId);
+          if (ar === 'ADMIN') allowed = true;
+        }
+      }
+    }
+    if (!allowed) throw new ForbiddenException();
+    return this.service.acceptEula(id);
   }
 
   @Post(':id/suspend')

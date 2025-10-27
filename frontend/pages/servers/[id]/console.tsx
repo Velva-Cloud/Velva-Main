@@ -17,6 +17,7 @@ export default function ServerConsolePage() {
 
   const role = useMemo(() => getUserRole(), []);
   const [srvName, setSrvName] = useState<string>('');
+  const [hint, setHint] = useState<string | null>(null);
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [cmd, setCmd] = useState('');
   const [busy, setBusy] = useState(false);
@@ -30,8 +31,8 @@ export default function ServerConsolePage() {
     try {
       const res = await api.get(`/servers/${id}`);
       setSrvName(res.data?.name || String(id));
-    } catch {}
-  };
+      setHint(res.data?.stateHint || null);
+    } catch};
 
   const fetchEvents = async () => {
     if (!id) return;
@@ -158,6 +159,18 @@ export default function ServerConsolePage() {
                   <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
                 </div>
               </div>
+
+              {/* Advisory hint */}
+              {hint === 'minecraft_eula_required' && (
+                <div className="mt-3 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
+                  This server appears to be a Minecraft server and the process exited. Type <span className="font-semibold">true</span> below to accept the EULA and it will restart.
+                </div>
+              )}
+              {hint === 'missing_container' && (
+                <div className="mt-3 p-3 rounded border border-slate-800 bg-slate-900/40 text-slate-300">
+                  The server container is missing on the node. Starting will schedule provisioning to recreate it.
+                </div>
+              )}
 
               {/* Recent server events (help surface errors) */}
               {events.length > 0 && (
