@@ -1,0 +1,725 @@
+import { BadRequestException, ForbiddenException, Injectable, Logger } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service';
+import { AgentClientService } from './agent-client.service';
+import { QueueService } from '../queue/queue.service';
+import { MailService } from '../mail/mail.service';
+
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+
+function mockIpWithPort(serverId: number) {
+  // Deterministic private IP/port combo based on server id
+  const a = 10;
+  const b = (serverId % 200) + 1;
+  const c = (Math.floor(serverId / 200) % 200) + 1;
+  const d = (Math.floor(serverId / 40000) % 200) + 10;
+  // Common game ports like 25565 (Minecraft) or 27015 (Source)
+  const port = 25000 + ((serverId * 17) % 10000);
+  return `${a}.${b}.${c}.${d}:${port}`;
+}
+
+function mockConsoleOutput(serverName: string, status: string) {
+  return [
+    `[INFO] Bootstrapping service for ${serverName}`,
+    `[INFO] Environment: production`,
+    status === 'running' ? `[INFO] Server started successfully` : `[INFO] Server is currently ${status}`,
+    `[INFO] Listening for connections...`,
+    `[OK] Ready.`,
+  ].join('\n');
+}
+
+type Resources = { cpu?: number; ramMB?: number; diskMB?: number; diskGB?: number; maxServers?: number; preferLocation?: string };
+
+@Injectable()
+export class ServersService {
+  private readonly logger = new Logger(ServersService.name);
+
+  constructor(private prisma: PrismaService, private agent: AgentClientService, private queue: QueueService, private mail: MailService) {}
+
+  async nodeBaseUrl(nodeId?: number | null): Promise<string | undefined> {
+    // In development, allow overriding per-node URLs with a global DAEMON_URL
+    if (process.env.DAEMON_URL) return process.env.DAEMON_URL;
+    if (!nodeId) return undefined;
+    const node = await this.prisma.node.findUnique({ where: { id: nodeId }, select: { apiUrl: true } });
+    return node?.apiUrl || undefined;
+  }
+
+  async listForUser(userId: number, page = 1, pageSize = 20) {
+    const p = clamp(page, 1, 100000);
+    const ps = clamp(pageSize, 1, 100);
+    const where = { userId };
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.server.count({ where }),
+      this.prisma.server.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        include: {
+          plan: { select: { id: true, name: true } },
+          node: { select: { id: true, name: true } },
+        },
+        skip: (p - 1) * ps,
+        take: ps,
+      }),
+    ]);
+    return { items, total, page: p, pageSize: ps };
+  }
+
+  async listAll(page = 1, pageSize = 20) {
+    const p = clamp(page, 1, 100000);
+    const ps = clamp(pageSize, 1, 100);
+    const [total, items] = await this.prisma.$transaction([
+      this.prisma.server.count(),
+      this.prisma.server.findMany({ orderBy: { id: 'desc' }, skip: (p - 1) * ps, take: ps }),
+    ]);
+    return { items, total, page: p, pageSize: ps };
+  }
+
+  async getById(id: number) {
+    const s = await this.prisma.server.findUnique({ where: { id } });
+    if (!s) return null;
+    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true, resources: true } });
+    const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
+    let ip = mockIpWithPort(s.id);
+    const consoleOut = mockConsoleOutput(s.name, s.status);
+
+    // Find last provisioning-related log for this server
+    // Note: Prisma JSON filtering differs per provider; fetch recent and filter in app
+    const recent = await this.prisma.log.findMany({
+      where: { action: 'plan_change' as any },
+      orderBy: { id: 'desc' },
+      take: 100,
+    });
+    const provLog = recent.find((l: any) => {
+      const m = (l?.metadata as any) || {};
+      return m.serverId === id && ['provision_ok', 'provision_failed', 'provision_request'].includes(m.event);
+    });
+    const mcPortLog = recent.find((l: any) => {
+      const m = (l?.metadata as any) || {};
+      return m.serverId === id && m.event === 'minecraft_port_assigned' && typeof m.port === 'number';
+    });
+    if (mcPortLog) {
+      try {
+        const assigned = Number((mcPortLog.metadata as any).port);
+        if (Number.isFinite(assigned) && assigned > 0) {
+          const host = ip.split(':')[0];
+          ip = `${host}:${assigned}`;
+        }
+      } catch {
+        // ignore port override failures
+      }
+    }
+
+    const provisionStatus = provLog
+      ? {
+          lastEvent: (provLog.metadata as any)?.event || null,
+          lastError: (provLog.metadata as any)?.error || null,
+          at: provLog.timestamp,
+        }
+      : null;
+
+    return {
+      ...s,
+      mockIp: ip,
+      consoleOutput: consoleOut,
+      planName: plan?.name ?? null,
+      nodeName: node?.name ?? null,
+      provisionStatus,
+    };
+  }
+
+  // Server-level access control
+
+  async getAccessRole(serverId: number, userId: number): Promise<'VIEWER' | 'OPERATOR' | 'ADMIN' | null> {
+    const a = await this.prisma.serverAccess.findUnique({
+      where: { serverId_userId: { serverId, userId } },
+      select: { role: true },
+    } as any);
+    return (a?.role as any) || null;
+  }
+
+  async listAccess(serverId: number) {
+    const items = await this.prisma.serverAccess.findMany({
+      where: { serverId },
+      include: { user: { select: { id: true, email: true } } },
+      orderBy: { id: 'asc' },
+    });
+    return items.map(a => ({ userId: a.user.id, email: a.user.email, role: a.role }));
+  }
+
+  async addAccess(serverId: number, actorUserId: number, email: string, role: 'VIEWER' | 'OPERATOR' | 'ADMIN') {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const actor = await this.prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true } });
+    if (!actor) throw new BadRequestException('actor_not_found');
+    // Only server owner or global admin/owner may manage access
+    if (s.userId !== actorUserId && !(actor.role === 'ADMIN' || actor.role === 'OWNER')) {
+      throw new ForbiddenException();
+    }
+    const target = await this.prisma.user.findUnique({ where: { email }, select: { id: true } });
+    if (!target) throw new BadRequestException('user_not_found');
+    if (target.id === s.userId) throw new BadRequestException('cannot_change_owner_access');
+
+    const existing = await this.prisma.serverAccess.findUnique({
+      where: { serverId_userId: { serverId, userId: target.id } },
+      select: { serverId: true },
+    } as any);
+    if (existing) {
+      await this.prisma.serverAccess.update({
+        where: { serverId_userId: { serverId, userId: target.id } },
+        data: { role: role as any },
+      } as any);
+    } else {
+      await this.prisma.serverAccess.create({
+        data: { serverId, userId: target.id, role: role as any },
+      });
+    }
+    return { ok: true };
+  }
+
+  async updateAccess(serverId: number, actorUserId: number, targetUserId: number, role: 'VIEWER' | 'OPERATOR' | 'ADMIN') {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const actor = await this.prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true } });
+    if (!actor) throw new BadRequestException('actor_not_found');
+    if (s.userId !== actorUserId && !(actor.role === 'ADMIN' || actor.role === 'OWNER')) {
+      throw new ForbiddenException();
+    }
+    if (targetUserId === s.userId) throw new BadRequestException('cannot_change_owner_access');
+    const exists = await this.prisma.serverAccess.findUnique({
+      where: { serverId_userId: { serverId, userId: targetUserId } },
+      select: { serverId: true },
+    } as any);
+    if (!exists) throw new BadRequestException('access_not_found');
+    await this.prisma.serverAccess.update({
+      where: { serverId_userId: { serverId, userId: targetUserId } },
+      data: { role: role as any },
+    } as any);
+    return { ok: true };
+  }
+
+  async removeAccess(serverId: number, actorUserId: number, targetUserId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const actor = await this.prisma.user.findUnique({ where: { id: actorUserId }, select: { id: true, role: true } });
+    if (!actor) throw new BadRequestException('actor_not_found');
+    if (s.userId !== actorUserId && !(actor.role === 'ADMIN' || actor.role === 'OWNER')) {
+      throw new ForbiddenException();
+    }
+    if (targetUserId === s.userId) throw new BadRequestException('cannot_remove_owner_access');
+    await this.prisma.serverAccess.delete({
+      where: { serverId_userId: { serverId, userId: targetUserId } },
+    } as any);
+    return { ok: true };
+  }
+
+  private toMb(val: number | undefined, assumeGbIfLarge = false): number {
+    if (!val || !Number.isFinite(val)) return 0;
+    if (assumeGbIfLarge && val < 1024) return Math.round(val * 1024);
+    return Math.round(val);
+  }
+
+  private pickNodeFor(resources: Resources) {
+    return this.prisma.node.findMany({
+      where: { status: 'online' as any, approved: true },
+      select: {
+        id: true,
+        name: true,
+        location: true,
+        capacityCpuCores: true,
+        capacityMemoryMb: true,
+        capacityDiskMb: true,
+      },
+      orderBy: { id: 'asc' },
+    });
+  }
+
+  async create(userId: number, planId: number, name: string, imageOverride?: string) {
+    // Normalize and validate inputs (additional to DTO validation)
+    const n = (name || '').trim();
+    if (n.length < 3 || n.length > 32) {
+      throw new BadRequestException('Name must be between 3 and 32 characters');
+    }
+    if (!/^[A-Za-z0-9_-]+$/.test(n)) {
+      throw new BadRequestException('Name can only contain letters, numbers, dash and underscore');
+    }
+
+    // Validate plan exists and is active to avoid FK violations
+    const plan = await this.prisma.plan.findUnique({ where: { id: Number(planId) } });
+    if (!plan || !plan.isActive) {
+      throw new BadRequestException('Invalid or inactive plan');
+    }
+    const res = (plan.resources || {}) as Resources;
+    const cpuUnits = Number(res.cpu ?? 0); // arbitrary cpu units
+    const ramMB = this.toMb(Number(res.ramMB ?? 0));
+    const diskMB = res.diskMB ? this.toMb(Number(res.diskMB)) : this.toMb(Number(res.diskGB ?? 0), true);
+
+    // Validate user exists to avoid FK violation (e.g., stale session after DB reset)
+    const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { id: true, email: true } });
+    if (!user) {
+      throw new BadRequestException('User not found. Please sign out and sign in again.');
+    }
+
+    // Enforce subscription plan and limits:
+    // - Require an active subscription
+    // - Only allow creating servers that match the subscribed plan
+    // - Enforce maxServers (default 1) per plan
+    const activeSub = await this.prisma.subscription.findFirst({
+      where: { userId, status: 'active' },
+      include: { plan: true },
+      orderBy: { id: 'desc' },
+    });
+    if (!activeSub) {
+      throw new BadRequestException('You need an active subscription to create a server.');
+    }
+    if (activeSub.planId !== plan.id) {
+      throw new BadRequestException('Selected server size does not match your subscription.');
+    }
+    const maxServers = Number((activeSub.plan?.resources as any)?.maxServers ?? 1);
+    const existingCount = await this.prisma.server.count({ where: { userId } });
+    if (existingCount >= maxServers) {
+      throw new BadRequestException(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}. You already have ${existingCount}.`);
+    }
+
+    // Optional uniqueness by user to avoid confusion
+    const existsByName = await this.prisma.server.findFirst({
+      where: { userId, name: n },
+      select: { id: true },
+    });
+    if (existsByName) {
+      throw new BadRequestException('You already have a server with that name');
+    }
+
+    // Capacity-aware scheduling:
+    // - Filter nodes by online/approved
+    // - Enforce RAM & Disk hard limits
+    // - Allow CPU overcommit up to 150%
+    // - Prefer location (if plan.resources.preferLocation), then least-loaded weighted score
+    const nodes = await this.pickNodeFor(res);
+    if (!nodes.length) throw new BadRequestException('No online nodes available');
+
+    // Compute current usage per node
+    const serversByNode = await this.prisma.server.findMany({
+      where: { nodeId: { in: nodes.map(n => n.id) } },
+      select: { id: true, nodeId: true, plan: { select: { resources: true } } },
+    });
+
+    const usage = new Map<number, { cpu: number; ramMB: number; diskMB: number; count: number }>();
+    for (const node of nodes) {
+      usage.set(node.id, { cpu: 0, ramMB: 0, diskMB: 0, count: 0 });
+    }
+    for (const s of serversByNode) {
+      const r = (s.plan.resources || {}) as Resources;
+      const c = Number(r.cpu ?? 0);
+      const m = this.toMb(Number(r.ramMB ?? 0));
+      const d = r.diskMB ? this.toMb(Number(r.diskMB)) : this.toMb(Number(r.diskGB ?? 0), true);
+      const u = usage.get(s.nodeId!)!;
+      u.cpu += c;
+      u.ramMB += m;
+      u.diskMB += d;
+      u.count += 1;
+    }
+
+    const preferLoc = (res.preferLocation || '').toLowerCase().trim();
+
+    type Candidate = { id: number; score: number; reason?: string; nodeLoc: string };
+    const candidates: Candidate[] = [];
+    for (const node of nodes) {
+      const capCpu = Number(node.capacityCpuCores ?? 0) * 100; // assume 100 cpu units per core unless specified by plans
+      const capMem = Number(node.capacityMemoryMb ?? 0);
+      const capDisk = Number(node.capacityDiskMb ?? 0) || Number.MAX_SAFE_INTEGER; // disk optional
+
+      const u = usage.get(node.id)!;
+      const nextCpu = u.cpu + cpuUnits;
+      const nextMem = u.ramMB + ramMB;
+      const nextDisk = u.diskMB + diskMB;
+
+      // Hard-fail if RAM or Disk would exceed 100%
+      if ((capMem && nextMem > capMem) || (capDisk && nextDisk > capDisk)) {
+        continue;
+      }
+
+      // Allow CPU up to 150%
+      const cpuRatio = capCpu ? nextCpu / capCpu : 0;
+      if (capCpu && cpuRatio > 1.5) {
+        continue;
+      }
+
+      // Weighted score: prefer location, then least-loaded
+      const ramRatio = capMem ? nextMem / capMem : 0;
+      const diskRatio = capDisk ? nextDisk / capDisk : 0;
+      // Weigh RAM highest, then CPU, then disk
+      let score = ramRatio * 0.5 + Math.min(cpuRatio, 1.5) * 0.35 + diskRatio * 0.15;
+
+      // Location preference bonus
+      if (preferLoc && node.location && node.location.toLowerCase() === preferLoc) {
+        score -= 0.1;
+      }
+
+      candidates.push({ id: node.id, score, nodeLoc: node.location });
+    }
+
+    if (!candidates.length) {
+      throw new BadRequestException('Insufficient node capacity (RAM/Disk/CPU)');
+    }
+
+    // Pick the lowest score; fallback to first (round-robin by ordered asc ids) if tie
+    candidates.sort((a, b) => a.score - b.score || a.id - b.id);
+    const chosenId = candidates[0].id;
+
+    // Soft-warn thresholds: 80% usage on chosen node
+    const u = usage.get(chosenId)!;
+    const nodeCap = nodes.find(n => n.id === chosenId)!;
+    const capCpu = Number(nodeCap.capacityCpuCores ?? 0) * 100;
+    const capMem = Number(nodeCap.capacityMemoryMb ?? 0);
+    const capDisk = Number(nodeCap.capacityDiskMb ?? 0) || Number.MAX_SAFE_INTEGER;
+
+    const cpuRatio = capCpu ? (u.cpu + cpuUnits) / capCpu : 0;
+    const memRatio = capMem ? (u.ramMB + ramMB) / capMem : 0;
+    const diskRatio = capDisk ? (u.diskMB + diskMB) / capDisk : 0;
+
+    const warnThreshold = 0.8;
+    if ((memRatio > warnThreshold) || (capDisk && diskRatio > warnThreshold) || (capCpu && cpuRatio > warnThreshold)) {
+      await this.prisma.log.create({
+        data: {
+          userId: null,
+          action: 'plan_change',
+          metadata: {
+            event: 'capacity_warn',
+            nodeId: chosenId,
+            cpuRatio: Number(cpuRatio.toFixed(3)),
+            memRatio: Number(memRatio.toFixed(3)),
+            diskRatio: Number(diskRatio.toFixed(3)),
+          },
+        },
+      });
+    }
+
+    const server = await this.prisma.server.create({
+      data: {
+        userId,
+        planId: plan.id,
+        name: n,
+        status: 'stopped',
+        nodeId: chosenId,
+      },
+    });
+
+    await this.prisma.log.create({
+      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosenId, image: imageOverride || null } },
+    });
+
+    // Send no-reply email to user for server creation (best-effort)
+    try {
+      const nodeName = nodes.find(nn => nn.id === chosenId)?.name || String(chosenId);
+      const dashboardUrl = `${process.env.PANEL_URL || ''}/servers/${server.id}`;
+      await this.mail.sendServerCreated(user.email, { name: n, planName: plan.name, nodeName, dashboardUrl });
+    } catch (e) {
+      this.logger.warn(`Mail send failed for server create: ${e}`);
+    }
+
+    // Enqueue async provision + start
+    await this.prisma.log.create({
+      data: { userId, action: 'plan_change', metadata: { event: 'provision_request', serverId: server.id, nodeId: chosenId } },
+    });
+    await this.queue.enqueueProvision(server.id);
+
+    return server;
+  }
+
+  async update(
+    id: number,
+    data: Partial<{ name: string; status: 'running' | 'stopped' | 'suspended'; planId: number; nodeId: number; userId: number }>,
+  ) {
+    // Validate fields if provided
+    if (data.name !== undefined) {
+      const n = (data.name || '').trim();
+      if (n.length < 3 || n.length > 32) {
+        throw new BadRequestException('Name must be between 3 and 32 characters');
+      }
+      if (!/^[A-Za-z0-9_-]+$/.test(n)) {
+        throw new BadRequestException('Name can only contain letters, numbers, dash and underscore');
+      }
+    }
+    if (data.status !== undefined && !['running', 'stopped', 'suspended'].includes(data.status)) {
+      throw new BadRequestException('Invalid status');
+    }
+
+    // Validate foreign keys if provided
+    if (data.planId !== undefined) {
+      const plan = await this.prisma.plan.findUnique({ where: { id: Number(data.planId) } });
+      if (!plan) throw new BadRequestException('Plan not found');
+    }
+    if (data.nodeId !== undefined) {
+      const node = await this.prisma.node.findUnique({ where: { id: Number(data.nodeId) } });
+      if (!node) throw new BadRequestException('Node not found');
+    }
+    if (data.userId !== undefined) {
+      const user = await this.prisma.user.findUnique({ where: { id: Number(data.userId) } });
+      if (!user) throw new BadRequestException('User not found');
+    }
+
+    return this.prisma.server.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name } : {}),
+        ...(data.status !== undefined ? { status: data.status } : {}),
+        ...(data.planId !== undefined ? { planId: Number(data.planId) } : {}),
+        ...(data.nodeId !== undefined ? { nodeId: Number(data.nodeId) } : {}),
+        ...(data.userId !== undefined ? { userId: Number(data.userId) } : {}),
+      },
+    });
+  }
+
+  async setStatus(id: number, status: 'running' | 'stopped', actorUserId?: number, reason?: string) {
+    if (!['running', 'stopped'].includes(status)) {
+      throw new BadRequestException('Invalid status for this operation');
+    }
+
+    const s = await this.prisma.server.findUnique({ where: { id } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+
+    // If agent is not configured, update status directly so the UI reflects changes
+    if (!baseURL && !process.env.DAEMON_URL) {
+      const updated = await this.prisma.server.update({ where: { id }, data: { status } });
+      await this.prisma.log.create({
+        data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: id, status, reason: reason || null } },
+      });
+      return updated;
+    }
+
+    // Enqueue lifecycle action via agent/worker
+    if (status === 'running') {
+      await this.queue.enqueueStart(id, actorUserId);
+    } else {
+      await this.queue.enqueueStop(id, actorUserId);
+    }
+
+    await this.prisma.log.create({
+      data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'agent_action_enqueued', serverId: id, op: status, reason: reason || null } },
+    });
+
+    // Return current record; worker will update status upon completion
+    return this.prisma.server.findUnique({ where: { id } });
+  }
+
+  async suspend(id: number, actorUserId?: number, reason?: string) {
+    const updated = await this.prisma.server.update({
+      where: { id },
+      data: { status: 'suspended' },
+    });
+    await this.prisma.log.create({
+      data: {
+        userId: actorUserId || null,
+        action: 'plan_change',
+        metadata: { event: 'server_suspended', serverId: id, reason: reason || null },
+      },
+    });
+    return updated;
+  }
+
+  async unsuspend(id: number, actorUserId?: number, reason?: string) {
+    const updated = await this.prisma.server.update({
+      where: { id },
+      data: { status: 'stopped' },
+    });
+    await this.prisma.log.create({
+      data: {
+        userId: actorUserId || null,
+        action: 'plan_change',
+        metadata: { event: 'server_unsuspended', serverId: id, reason: reason || null },
+      },
+    });
+    return updated;
+  }
+
+  async delete(id: number) {
+    // Enqueue delete job; worker removes container and DB record
+    await this.queue.enqueueDelete(id);
+    await this.prisma.log.create({ data: { userId: null, action: 'plan_change', metadata: { event: 'delete_enqueued', serverId: id } } });
+    // Return a placeholder; actual record will be removed asynchronously
+    return { id, status: 'deleting' } as any;
+  }
+
+  // Provision via agent (retry via queue)
+  async provision(id: number, actorUserId?: number) {
+    await this.prisma.log.create({
+      data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'provision_request', serverId: id } },
+    });
+    await this.queue.enqueueProvision(id);
+    return this.getById(id);
+  }
+
+  async start(id: number, actorUserId?: number, reason?: string) {
+    return this.setStatus(id, 'running', actorUserId, reason);
+  }
+
+  async stop(id: number, actorUserId?: number, reason?: string) {
+    return this.setStatus(id, 'stopped', actorUserId, reason);
+  }
+
+  async restart(id: number, actorUserId?: number, reason?: string) {
+    await this.queue.enqueueRestart(id, actorUserId);
+    await this.prisma.log.create({
+      data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'agent_action_enqueued', serverId: id, op: 'restart', reason: reason || null } },
+    });
+    // Keep running after restart; worker will update DB
+    return this.getById(id);
+  }
+
+  // New: console and file manager operations
+
+  async streamLogs(serverId: number, res: any) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) {
+      res.status(404).end();
+      return;
+    }
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    // If agent is not configured, provide a mock SSE stream so the console doesn't hang
+    if (!baseURL && !process.env.DAEMON_URL) {
+      try {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        const lines = (mockConsoleOutput(s.name, s.status) + '\n[WARN] Agent not configured. This is a mock console.\n').split('\n');
+        for (const ln of lines) {
+          res.write(`data: ${JSON.stringify(ln)}\n\n`);
+        }
+        // Keep-alive pings
+        const ping = setInterval(() => {
+          try { res.write(': ping\n\n'); } catch {}
+        }, 25000);
+        // End after a minute to avoid dangling connections
+        setTimeout(() => {
+          try { clearInterval(ping); } catch {}
+          try { res.end(); } catch {}
+        }, 60000);
+        return;
+      } catch {
+        try { res.status(500).json({ error: 'mock_logs_failed' }); } catch {}
+        return;
+      }
+    }
+    return this.agent.streamLogs(baseURL, serverId, res);
+    }
+
+  async exec(serverId: number, cmd: string) {
+    if (!cmd) throw new BadRequestException('cmd required');
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+
+    // Special handling: allow "true" to accept EULA for Minecraft servers and restart
+    const normalized = (cmd || '').trim().toLowerCase();
+    try {
+      // Determine current image (plan or override)
+      const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
+      let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+      // Check for image override from server_create log
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        image = override.trim();
+      }
+
+      // If Minecraft image and user typed "true", accept EULA and restart
+      if (image && image.includes('itzg/minecraft-server') && normalized === 'true') {
+        // Write eula.txt on the persistent volume root; for MC mountPath defaults to /data
+        const content = Buffer.from('eula=true\n', 'utf8');
+        const baseURL2 = await this.nodeBaseUrl(s.nodeId);
+        if (!baseURL2 && !process.env.DAEMON_URL) {
+          // Agent not configured: cannot write to daemon FS; report message
+          return { ok: false, output: 'Agent not configured; cannot write EULA. Please configure the node daemon.' };
+        }
+        await this.agent.fsUpload(baseURL2, serverId, '/', 'eula.txt', content);
+        // Enqueue restart (will start and keep running)
+        await this.queue.enqueueRestart(serverId);
+        await this.prisma.log.create({
+          data: { userId: null, action: 'plan_change', metadata: { event: 'minecraft_eula_accepted', serverId } },
+        });
+        return { ok: true, output: 'EULA accepted. Restarting server…' };
+      }
+    } catch {
+      // Fall through to normal exec on any detection failure
+    }
+
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      return { ok: false, output: 'Agent not configured; cannot execute commands.' } as any;
+    }
+    return this.agent.exec(baseURL, serverId, cmd);
+  }
+
+  async fsList(serverId: number, path: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      // Simulate empty list when agent not configured
+      return { path, items: [] };
+    }
+    return this.agent.fsList(baseURL, serverId, path);
+  }
+
+  async fsDownload(serverId: number, path: string, res: any) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) {
+      res.status(404).end();
+      return;
+    }
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      return res.status(503).json({ error: 'agent_unavailable' });
+    }
+    const { headers, stream } = await this.agent.fsDownloadStream(baseURL, serverId, path);
+    if (headers['content-type']) res.setHeader('Content-Type', headers['content-type']);
+    if (headers['content-disposition']) res.setHeader('Content-Disposition', headers['content-disposition']);
+    stream.pipe(res);
+  }
+
+  async fsUpload(serverId: number, dirPath: string, filename: string, content: Buffer) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
+    return this.agent.fsUpload(baseURL, serverId, dirPath, filename, content);
+  }
+
+  async fsMkdir(serverId: number, dirPath: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
+    return this.agent.fsMkdir(baseURL, serverId, dirPath);
+  }
+
+  async fsDelete(serverId: number, targetPath: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
+    return this.agent.fsDelete(baseURL, serverId, targetPath);
+  }
+
+  async fsRename(serverId: number, from: string, to: string) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
+    return this.agent.fsRename(baseURL, serverId, from, to);
+  }
+}
