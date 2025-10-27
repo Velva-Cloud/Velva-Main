@@ -45,6 +45,19 @@ export default function ServerConsolePage() {
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) {
+        try {
+          const txt = await res.text();
+          let msg = `Failed to open console stream (HTTP ${res.status})`;
+          try {
+            const j = JSON.parse(txt);
+            if (j?.error) msg = `Failed to open console stream: ${j.error}`;
+          } catch {
+            if (txt) msg = `Failed to open console stream: ${txt}`;
+          }
+          setConsoleLines(prev => [...prev, msg]);
+        } catch {
+          setConsoleLines(prev => [...prev, `Failed to open console stream (HTTP ${res.status})`]);
+        }
         toast.show('Failed to open console stream', 'error');
         return;
       }
@@ -70,7 +83,10 @@ export default function ServerConsolePage() {
         await pump();
       };
       pump();
-    } catch {}
+    } catch (e: any) {
+      const msg = e?.message ? `Error: ${e.message}` : 'Error opening console stream.';
+      setConsoleLines(prev => [...prev, msg]);
+    }
   };
 
   const stopConsole = () => {
