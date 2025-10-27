@@ -38,11 +38,11 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
-      # Use a single canonical origin for redirects
-      FRONTEND_URL: https://panel.velvacloud.com
-      # Ensure OAuth providers call back to the panel subdomain
-      GOOGLE_CALLBACK_URL: https://panel.velvacloud.com/api/auth/google/callback
-      DISCORD_CALLBACK_URL: https://panel.velvacloud.com/api/auth/discord/callback
+      # Use local frontend origin for development to avoid CORS/callback issues
+      FRONTEND_URL: http://localhost:3000
+      # Ensure OAuth providers call back to the local panel during dev
+      GOOGLE_CALLBACK_URL: http://localhost:3000/api/auth/google/callback
+      DISCORD_CALLBACK_URL: http://localhost:3000/api/auth/discord/callback
       PORT: 4000
       SEED_ON_BOOT: "true"
       # PKI (persist CA so it doesn't regenerate on restart)
@@ -141,6 +141,13 @@ services:
     # Do not publish the daemon TLS port to host
     expose:
       - "9443"
+    healthcheck:
+      # Verify daemon is up using API key over TLS, ignoring hostname during dev
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate --header='x-panel-api-key: dev-panel-key' https://localhost:9443/health > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     networks:
       default:
         aliases:
