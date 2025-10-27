@@ -14,10 +14,13 @@ function resolveCallbackUrl(defaultPath: string): string {
 @Injectable()
 export class GoogleStrategy extends PassportStrategy(Strategy, 'google') {
   constructor() {
+    const explicit = process.env.GOOGLE_CALLBACK_URL && /^https?:\/\/.+/i.test(process.env.GOOGLE_CALLBACK_URL)
+      ? process.env.GOOGLE_CALLBACK_URL.replace(/\/$/, '')
+      : null;
     super({
       clientID: process.env.GOOGLE_CLIENT_ID || '',
       clientSecret: process.env.GOOGLE_CLIENT_SECRET || '',
-      callbackURL: resolveCallbackUrl('/api/auth/google/callback'),
+      callbackURL: explicit || resolveCallbackUrl('/api/auth/google/callback'),
       scope: ['profile', 'email'],
       passReqToCallback: false,
     });

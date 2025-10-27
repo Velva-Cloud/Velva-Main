@@ -14,10 +14,13 @@ function resolveCallbackUrl(defaultPath: string): string {
 @Injectable()
 export class DiscordStrategy extends PassportStrategy(Strategy, 'discord') {
   constructor() {
+    const explicit = process.env.DISCORD_CALLBACK_URL && /^https?:\/\/.+/i.test(process.env.DISCORD_CALLBACK_URL)
+      ? process.env.DISCORD_CALLBACK_URL.replace(/\/$/, '')
+      : null;
     super({
       clientID: process.env.DISCORD_CLIENT_ID || '',
       clientSecret: process.env.DISCORD_CLIENT_SECRET || '',
-      callbackURL: resolveCallbackUrl('/api/auth/discord/callback'),
+      callbackURL: explicit || resolveCallbackUrl('/api/auth/discord/callback'),
       scope: ['identify', 'email'],
       passReqToCallback: false,
     });
