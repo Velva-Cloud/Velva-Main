@@ -246,15 +246,7 @@ async function performRegistration(force = false): Promise<void> {
     console.error('Registration failed:', e?.message || e);
   }
 }
-      }
-    }
-    if (!approved) throw new Error('approval_timeout');
-    console.log('Bootstrap complete: certificate issued.');
-  } catch (e: any) {
-    console.error('Bootstrap failed:', e?.message || e);
-    process.exit(1);
-  }
-}
+      
 
 function startHttpsServer() {
   const { cert, key, ca } = loadTls();
