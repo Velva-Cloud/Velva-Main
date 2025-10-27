@@ -154,7 +154,11 @@ async function bootstrapIfNeeded(): Promise<void> {
       memoryMb: Math.round(os.totalmem() / (1024 * 1024)),
       diskMb: null as any, // optional
     };
-    const apiUrl = `https://${host}:${PORT}`;
+    // Prefer advertising a DNS name reachable within the compose network
+    // so the UI and metadata reflect the internal address consistently.
+    // Fall back to public IP if no hostname is available.
+    const dnsName = process.env.NODE_NAME || os.hostname() || host;
+    const apiUrl = `https://${dnsName}:${PORT}`;
     const registerBody = {
       name: process.env.NODE_NAME || undefined,
       location: process.env.NODE_LOCATION || undefined,
