@@ -38,11 +38,8 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: mysql://panel:panel@mysql:3306/panel
-      # Use local frontend origin for development to avoid CORS/callback issues
-      FRONTEND_URL: http://localhost:3000
-      # Ensure OAuth providers call back to the local panel during dev
-      GOOGLE_CALLBACK_URL: http://localhost:3000/api/auth/google/callback
-      DISCORD_CALLBACK_URL: http://localhost:3000/api/auth/discord/callback
+      # Use production panel domain for OAuth callbacks
+      PANEL_URL: https://panel.velvacloud.com
       PORT: 4000
       SEED_ON_BOOT: "true"
       # PKI (persist CA so it doesn't regenerate on restart)
