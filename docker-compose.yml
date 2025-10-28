@@ -4,15 +4,15 @@ services:
     container_name: hosting_mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?set in environment}
-      MYSQL_DATABASE: ${MYSQL_DATABASE:-panel}
-      MYSQL_USER: ${MYSQL_USER:-panel}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:?set in environment}
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: panel
+      MYSQL_USER: panel
+      MYSQL_PASSWORD: panel
     volumes:
       - mysql_data:/var/lib/mysql
     command: ["--default-authentication-plugin=mysql_native_password"]
     healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -uroot -p${MYSQL_ROOT_PASSWORD} -h 127.0.0.1 --silent"]
+      test: ["CMD-SHELL", "mysqladmin ping -uroot -proot -h 127.0.0.1 --silent"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -37,30 +37,47 @@ services:
     env_file:
       - ./backend/.env
     environment:
-      # Force Prisma to use the mysql service hostname inside the Docker network
-      DATABASE_URL: ${DATABASE_URL:-mysql://${MYSQL_USER:-panel}:${MYSQL_PASSWORD:-panel}@mysql:3306/${MYSQL_DATABASE:-panel}}
-      PORT: ${BACKEND_PORT:-4000}
-      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
-      # Persist CA/certs in a named volume within the container
+      DATABASE_URL: mysql://panel:panel@mysql:3306/panel
+      # Use production panel domain for OAuth callbacks
+      PANEL_URL: https://panel.velvacloud.com
+      PORT: 4000
+      SEED_ON_BOOT: "true"
+      # PKI (persist CA so it doesn't regenerate on restart)
       CA_KEY_PATH: /app/certs/ca.key
       CA_CERT_PATH: /app/certs/ca.crt
+      # mTLS (panel -> agent)
       DAEMON_CA: /app/certs/ca.crt
       DAEMON_CLIENT_CERT: /app/certs/panel.crt
       DAEMON_CLIENT_KEY: /app/certs/panel.key
-      # Feature flags (defaults safe for production)
-      ENABLE_SWAGGER: ${ENABLE_SWAGGER:-false}
-      ENABLE_METRICS: ${ENABLE_METRICS:-false}
+      # Optional API key (phase 4) for panel->daemon in addition to mTLS
+      AGENT_API_KEY: dev-panel-key
+      # Agent registration (local dev)
+      NODE_REGISTRATION_SECRET: localdev
+      AUTO_APPROVE_NODES: "false"
+      INTERNAL_AUTO_APPROVE: "true"
+      # Agent URL inside compose network (use DNS that matches cert SAN)
+      DAEMON_URL: https://local-node:9443
+      # Auto-generate panel client cert if missing
+      AUTO_GENERATE_PANEL_CERT: "true"
+      # Development: allow CN/SAN hostname mismatch while CA is still enforced
+      AGENT_SKIP_HOSTNAME_VERIFY: "true"
+      # Redis for job queues
+      REDIS_URL: redis://redis:6379
     depends_on:
       mysql:
         condition: service_healthy
       redis:
         condition: service_healthy
     volumes:
-      - panel_certs:/app/certs
-    expose:
-      - "${BACKEND_PORT:-4000}"
+      - type: bind
+        source: ${PWD}/pki
+        target: /app/certs
+        read_only: false
+    ports:
+      - "4000:4000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${BACKEND_PORT:-4000}/api/status/system > /dev/null 2>&1 || exit 1"]
+      # Use lightweight health endpoint rather than Swagger UI to reduce flakiness
+      test: ["CMD-SHELL", "wget -qO- http://localhost:4000/api/status/system > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 15
@@ -71,16 +88,16 @@ services:
     container_name: hosting_frontend
     restart: unless-stopped
     environment:
-      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-/api}
-      API_PROXY_TARGET: http://backend:${BACKEND_PORT:-4000}
-      PORT: ${FRONTEND_PORT:-3000}
+      NEXT_PUBLIC_API_BASE_URL: /api
+      API_PROXY_TARGET: http://backend:4000
+      PORT: 3000
     depends_on:
       backend:
         condition: service_healthy
-    expose:
-      - "${FRONTEND_PORT:-3000}"
+    ports:
+      - "3000:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://localhost:${FRONTEND_PORT:-3000} > /dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000 > /dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -90,35 +107,53 @@ services:
     build: ./daemon
     container_name: hosting_daemon
     restart: unless-stopped
-    hostname: ${DAEMON_HOSTNAME:-node-1}
+    hostname: local-node
     environment:
+      # Inform daemon about service name for DNS SAN
       DOCKER_SERVICE_NAME: daemon
-      PANEL_URL: http://backend:${BACKEND_PORT:-4000}/api
-      REGISTRATION_SECRET: ${NODE_REGISTRATION_SECRET:?set in backend .env and here}
-      NODE_NAME: ${DAEMON_NODE_NAME:-node-1}
-      NODE_LOCATION: ${DAEMON_NODE_LOCATION:-dc-1}
+      # Point agent to panel API (inside compose network)
+      PANEL_URL: http://backend:4000/api
+      # Auto-bootstrap using static registration secret (matches backend)
+      REGISTRATION_SECRET: localdev
+      # Optional descriptive metadata
+      NODE_NAME: local-node
+      NODE_LOCATION: local
+      # TLS output and listen port
       CERTS_DIR: /data/certs
       DATA_DIR: /data
-      DAEMON_PORT: ${DAEMON_PORT:-9443}
-      SFTP_PORT: ${SFTP_PORT:-2222}
-      SFTP_PASSWORD: ${SFTP_PASSWORD:?strong password required}
+      DAEMON_PORT: 9443
+      # API key to accept panel calls in addition to mTLS (dev)
+      PANEL_API_KEY: dev-panel-key
+      # SFTP
+      SFTP_PORT: 2222
+      SFTP_PASSWORD: dev-sftp
     depends_on:
       backend:
         condition: service_healthy
     volumes:
-      - daemon_data:/data
+      - type: bind
+        source: /data
+        target: /data
       - /var/run/docker.sock:/var/run/docker.sock
+    # Publish SFTP to host
     ports:
-      - "${SFTP_PUBLISH_PORT:-2223}:${SFTP_PORT:-2222}"
+      - "2223:2222"
+    # Do not publish the daemon TLS port to host
     expose:
-      - "${DAEMON_PORT:-9443}"
+      - "9443"
+    healthcheck:
+      # Verify daemon is up using API key over TLS, ignoring hostname during dev
+      test: ["CMD-SHELL", "wget -qO- --no-check-certificate --header='x-panel-api-key: dev-panel-key' https://localhost:9443/health > /dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 60s
     networks:
       default:
         aliases:
-          - ${DAEMON_HOSTNAME:-node-1}
+          - local-node
 
 volumes:
   mysql_data:
   daemon_data:
   redis_data:
-  panel_certs:
