@@ -37,6 +37,8 @@ services:
     env_file:
       - ./backend/.env
     environment:
+      # Force Prisma to use the mysql service hostname inside the Docker network
+      DATABASE_URL: ${DATABASE_URL:-mysql://${MYSQL_USER:-panel}:${MYSQL_PASSWORD:-panel}@mysql:3306/${MYSQL_DATABASE:-panel}}
       PORT: ${BACKEND_PORT:-4000}
       REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       # Persist CA/certs in a named volume within the container
