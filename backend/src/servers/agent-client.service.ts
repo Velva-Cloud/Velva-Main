@@ -150,8 +150,14 @@ export class AgentClientService {
 
   // Stream logs via SSE from agent to client response
   async streamLogs(baseURL: string | undefined, serverId: number, res: any) {
+    // Always set headers before any writes
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
     try {
       const client = this.getClient(baseURL);
+
       // Prefetch last logs to populate console immediately
       try {
         const last = await client.get(`/logs_last/${serverId}`, { params: { tail: 200 }, responseType: 'text' });
@@ -166,23 +172,29 @@ export class AgentClientService {
         // ignore prefetch failures
       }
 
-      // Then attach follow stream
-      const agentRes = await client.get(`/logs/${serverId}?follow=1&tail=50`, { responseType: 'stream' });
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
       // Emit an initial message so clients don't sit at "Connecting..."
       try {
         res.write(`data: ${JSON.stringify('[INFO] Connected to log stream')}\n\n`);
       } catch {}
+
+      // Then attach follow stream
+      const agentRes = await client.get(`/logs/${serverId}?follow=1&tail=50`, { responseType: 'stream' });
       agentRes.data.pipe(res);
     } catch (e: any) {
-      const status = e?.response?.status;
-      const err = e?.response?.data?.error;
-      if (status === 404 && err === 'container_not_found') {
-        return res.status(404).json({ error: 'container_not_found' });
+      // If headers/body already started, write an SSE error event instead of JSON to avoid header errors
+      try {
+        const errCode = e?.response?.data?.error || e?.message || 'logs_failed';
+        res.write(`data: ${JSON.stringify(`[ERROR] ${errCode}`)}\n\n`);
+        res.end();
+        return;
+      } catch {
+        const status = e?.response?.status;
+        const err = e?.response?.data?.error;
+        if (status === 404 && err === 'container_not_found') {
+          return res.status(404).json({ error: 'container_not_found' });
+        }
+        return res.status(500).json({ error: e?.message || 'logs_failed' });
       }
-      return res.status(500).json({ error: e?.message || 'logs_failed' });
     }
   }
 
