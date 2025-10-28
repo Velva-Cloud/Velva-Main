@@ -157,7 +157,7 @@ export class QueueService implements OnModuleInit {
         const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
         const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
         let image = typeof resources.image === 'string' ? resources.image : 'nginx:alpine';
-        const env = (resources.env && typeof resources.env === 'object') ? resources.env : undefined;
+        let env = (resources.env && typeof resources.env === 'object') ? { ...(resources.env as any) } : {};
         let mountPath = typeof resources.mountPath === 'string' ? resources.mountPath : (typeof resources.dataDir === 'string' ? resources.dataDir : undefined);
         let exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
         const cmd = Array.isArray(resources.cmd) ? resources.cmd : undefined;
@@ -174,7 +174,7 @@ export class QueueService implements OnModuleInit {
           image = override.trim();
         }
 
-        // If using Minecraft image and no explicit mountPath/ports, set sensible defaults
+        // If using Minecraft image set sensible defaults and required env
         if (image && image.includes('itzg/minecraft-server')) {
           if (!mountPath || !mountPath.trim()) {
             mountPath = '/data';
@@ -182,6 +182,14 @@ export class QueueService implements OnModuleInit {
           if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
             // Default game port; host mapping/firewall handled separately
             exposePorts = [25565];
+          }
+          // Ensure EULA is accepted via env as well; image accepts EULA=TRUE
+          if (!('EULA' in env)) {
+            (env as any).EULA = 'TRUE';
+          }
+          // Optionally set memory from plan ram if provided; itzg supports MEMORY (e.g., "1024M")
+          if (typeof ramMB === 'number' && isFinite(ramMB) && ramMB > 0 && !('MEMORY' in env)) {
+            (env as any).MEMORY = `${Math.max(512, Math.round(ramMB))}M`;
           }
         }
 
