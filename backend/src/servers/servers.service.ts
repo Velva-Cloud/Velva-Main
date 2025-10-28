@@ -79,7 +79,7 @@ export class ServersService {
     const s = await this.prisma.server.findUnique({ where: { id } });
     if (!s) return null;
     const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true, resources: true } });
-    const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
+    const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true, publicIp: true } as any }) : null;
     let ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
 
@@ -120,12 +120,16 @@ export class ServersService {
       try {
         const assigned = Number((mcPortLog.metadata as any).port);
         if (Number.isFinite(assigned) && assigned > 0) {
-          const host = ip.split(':')[0];
+          const host = (node as any)?.publicIp || ip.split(':')[0];
           ip = `${host}:${assigned}`;
         }
       } catch {
         // ignore port override failures
       }
+    } else if ((node as any)?.publicIp) {
+      // Default to node public ip with mock port if available
+      const mockPort = Number(ip.split(':')[1] || 0);
+      ip = `${(node as any).publicIp}:${mockPort || 0}`;
     }
 
     const provisionStatus = provLog

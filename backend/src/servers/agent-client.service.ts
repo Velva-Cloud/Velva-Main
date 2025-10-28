@@ -152,7 +152,22 @@ export class AgentClientService {
   async streamLogs(baseURL: string | undefined, serverId: number, res: any) {
     try {
       const client = this.getClient(baseURL);
-      const agentRes = await client.get(`/logs/${serverId}?follow=1&tail=200`, { responseType: 'stream' });
+      // Prefetch last logs to populate console immediately
+      try {
+        const last = await client.get(`/logs_last/${serverId}`, { params: { tail: 200 }, responseType: 'text' });
+        const text = String(last.data || '');
+        if (text) {
+          for (const ln of text.split(/\r?\n/)) {
+            if (!ln) continue;
+            try { res.write(`data: ${JSON.stringify(ln)}\n\n`); } catch {}
+          }
+        }
+      } catch {
+        // ignore prefetch failures
+      }
+
+      // Then attach follow stream
+      const agentRes = await client.get(`/logs/${serverId}?follow=1&tail=50`, { responseType: 'stream' });
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
