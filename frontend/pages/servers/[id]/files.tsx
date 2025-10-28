@@ -138,7 +138,17 @@ export default function ServerFilesPage() {
                     </div>
                   </div>
                 ))}
-                {!fmItems.length && <div className="text-sm text-slate-400">Empty directory</div>}
+                {!fmItems.length && (
+                  <div className="text-sm text-slate-400">
+                    Empty directory. Try switching to /data.{' '}
+                    <button
+                      onClick={() => loadDir('/data')}
+                      className="text-sky-400 underline"
+                    >
+                      Go to /data
+                    </button>
+                  </div>
+                )}
               </div>
             </section>
           </div>
