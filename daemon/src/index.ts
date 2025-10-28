@@ -435,34 +435,48 @@ function startHttpsServer() {
     }
   });
 
-  // Fetch last logs (non-stream), useful when process exits quickly
+  // Fetch last logs (non-stream), robust across TTY/non-TTY and follow=false
   app.get('/logs_last/:id', async (req, res) => {
     const id = req.params.id;
     try {
       const container = docker.getContainer(`vc-${id}`);
       const tail = Number(req.query.tail || 200);
       const opts = { follow: false, stdout: true, stderr: true, tail } as any;
-      // Use callback overload to obtain a stream
-      container.logs(opts, (err: any, stream: any) => {
-        if (err || !stream) {
-          const code = err?.statusCode;
-          const msg = String(err?.message || '');
-          if (code === 404 || /no such container/i.test(msg)) {
-            return res.status(404).json({ error: 'container_not_found' });
-          }
-          return res.status(500).json({ error: err?.message || 'logs_failed' });
+
+      let result: any;
+      try {
+        // Prefer promise form; returns Buffer for follow=false
+        result = await container.logs(opts);
+      } catch (err: any) {
+        const code = err?.statusCode;
+        const msg = String(err?.message || '');
+        if (code === 404 || /no such container/i.test(msg)) {
+          return res.status(404).json({ error: 'container_not_found' });
         }
-        let output = '';
-        const onChunk = (chunk: Buffer) => { output += chunk.toString('utf8'); };
-        stream.on('data', onChunk);
+        return res.status(500).json({ error: err?.message || 'logs_failed' });
+      }
+
+      // Handle Buffer/string vs stream defensively
+      let output = '';
+      if (result && typeof (result as any).on === 'function') {
+        // It's a stream (unexpected for follow=false, but handle)
+        const stream: any = result;
+        stream.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
         stream.on('end', () => {
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           res.send(output);
         });
-        stream.on('error', () => {
-          res.status(500).json({ error: 'logs_failed' });
+        stream.on('error', (err: any) => {
+          res.status(500).json({ error: err?.message || 'logs_failed' });
         });
-      });
+      } else {
+        // Buffer or string
+        if (Buffer.isBuffer(result)) output = result.toString('utf8');
+        else if (typeof result === 'string') output = result;
+        else output = String(result || '');
+        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+        res.send(output);
+      }
     } catch (e: any) {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
