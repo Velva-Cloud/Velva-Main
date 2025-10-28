@@ -186,7 +186,6 @@ export class ServersService {
       provisionStatus,
       stateHint,
     };
-  };
   }
 
   // Server-level access control
