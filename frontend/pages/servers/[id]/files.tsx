@@ -22,6 +22,8 @@ export default function ServerFilesPage() {
   const [fmPath, setFmPath] = useState('/');
   const [fmItems, setFmItems] = useState<FsItem[]>([]);
   const [uploading, setUploading] = useState(false);
+  const [fmAbs, setFmAbs] = useState<string | null>(null);
+  const [fmRoot, setFmRoot] = useState<string | null>(null);
 
   const fetchServer = async () => {
     if (!id) return;
@@ -39,26 +41,48 @@ export default function ServerFilesPage() {
       const res = await api.get(`/servers/${id}/fs/list`, { params: { path: p } });
       const items = (res.data?.items || []) as FsItem[];
       const pathRet = res.data?.path || p;
+      const rootRet = (res.data?.root as string) || null;
+      const absRet = (res.data?.absPath as string) || null;
+
+      // Fallbacks:
       if ((!items || items.length === 0) && (p === '/' || p === '')) {
-        // Fallback to /data for images that write there
+        // Try /data
         try {
           const res2 = await api.get(`/servers/${id}/fs/list`, { params: { path: '/data' } });
           const items2 = (res2.data?.items || []) as FsItem[];
           if (items2 && items2.length > 0) {
             setFmItems(items2);
             setFmPath(res2.data?.path || '/data');
+            setFmRoot((res2.data?.root as string) || null);
+            setFmAbs((res2.data?.absPath as string) || null);
+            return;
+          }
+        } catch {}
+      } else if ((!items || items.length === 0) && p === '/data') {
+        // Try root /
+        try {
+          const res2 = await api.get(`/servers/${id}/fs/list`, { params: { path: '/' } });
+          const items2 = (res2.data?.items || []) as FsItem[];
+          if (items2 && items2.length > 0) {
+            setFmItems(items2);
+            setFmPath(res2.data?.path || '/');
+            setFmRoot((res2.data?.root as string) || null);
+            setFmAbs((res2.data?.absPath as string) || null);
             return;
           }
         } catch {}
       }
+
       setFmItems(items);
       setFmPath(pathRet);
+      setFmRoot(rootRet);
+      setFmAbs(absRet);
     } catch (e: any) {
       toast.show(e?.response?.data?.message || 'Failed to list directory', 'error');
     }
   };
 
-  useEffect(() => { if (id) loadDir('/'); }, [id]);
+  useEffect(() => { if (id) loadDir('/data'); }, [id]);
 
   const goTo = async (name: string, type: 'file' | 'dir') => {
     if (type === 'dir') {
@@ -132,6 +156,8 @@ export default function ServerFilesPage() {
                 <div className="flex items-center gap-2">
                   <button onClick={upDir} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Up</button>
                   <button onClick={() => loadDir(fmPath || '/')} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Refresh</button>
+                  <button onClick={() => loadDir('/')} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Go to /</button>
+                  <button onClick={() => loadDir('/data')} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Go to /data</button>
                   <span className="text-sm text-slate-400">{fmPath}</span>
                 </div>
                 <label className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 cursor-pointer ${uploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
@@ -139,6 +165,12 @@ export default function ServerFilesPage() {
                   Upload
                 </label>
               </div>
+
+              {fmRoot && (
+                <div className="mt-2 text-xs text-slate-500">
+                  Root: {fmRoot} • Abs: {fmAbs || '(n/a)'}
+                </div>
+              )}
               <div className="mt-3 grid grid-cols-1 gap-1">
                 {fmItems.map((it) => (
                   <div key={`${fmPath}/${it.name}`} className="flex items-center justify-between px-2 py-1 rounded hover:bg-slate-800/50">
