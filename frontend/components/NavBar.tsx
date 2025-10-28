@@ -20,6 +20,9 @@ export default function NavBar() {
     window.location.href = '/';
   };
 
+  const canAdmin = role === 'ADMIN' || role === 'OWNER';
+  const canSupport = role === 'SUPPORT' || canAdmin;
+
   return (
     <nav className="sticky top-0 z-40 backdrop-blur">
       <div className="border-b border-slate-800 bg-gradient-to-b from-[#0a0f1a]/90 to-[#0a0f1a]/70">
@@ -37,6 +40,8 @@ export default function NavBar() {
           <div className="hidden md:flex items-center gap-4">
             <Link href="/dashboard" className="nav-link">Dashboard</Link>
             {token && <Link href="/billing" className="nav-link">Billing</Link>}
+            {canSupport && <Link href="/support/inbox" className="nav-link">Support</Link>}
+            {canAdmin && <Link href="/admin" className="nav-link">Admin</Link>}
             {!token ? (
               <>
                 <Link href="/login" className="nav-link">Login</Link>
@@ -64,6 +69,8 @@ export default function NavBar() {
           <div className="md:hidden px-6 pb-4 space-y-2">
             <Link href="/dashboard" className="mobile-link">Dashboard</Link>
             {token && <Link href="/billing" className="mobile-link">Billing</Link>}
+            {canSupport && <Link href="/support/inbox" className="mobile-link">Support</Link>}
+            {canAdmin && <Link href="/admin" className="mobile-link">Admin</Link>}
             {!token ? (
               <>
                 <Link href="/login" className="mobile-link">Login</Link>
