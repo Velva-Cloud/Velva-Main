@@ -33,6 +33,7 @@ export default function ServerConsolePage() {
       setSrvName(res.data?.name || String(id));
       setHint(res.data?.stateHint || null);
     } catch {}
+  };
 
   const fetchEvents = async () => {
     if (!id) return;
