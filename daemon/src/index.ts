@@ -435,6 +435,44 @@ function startHttpsServer() {
     }
   });
 
+  // Fetch last logs (non-stream), useful when process exits quickly
+  app.get('/logs_last/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+      const tail = Number(req.query.tail || 200);
+      const opts = { follow: false, stdout: true, stderr: true, tail } as any;
+      // Use callback overload to obtain a stream
+      container.logs(opts, (err: any, stream: any) => {
+        if (err || !stream) {
+          const code = err?.statusCode;
+          const msg = String(err?.message || '');
+          if (code === 404 || /no such container/i.test(msg)) {
+            return res.status(404).json({ error: 'container_not_found' });
+          }
+          return res.status(500).json({ error: err?.message || 'logs_failed' });
+        }
+        let output = '';
+        const onChunk = (chunk: Buffer) => { output += chunk.toString('utf8'); };
+        stream.on('data', onChunk);
+        stream.on('end', () => {
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.send(output);
+        });
+        stream.on('error', () => {
+          res.status(500).json({ error: 'logs_failed' });
+        });
+      });
+    } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
+      res.status(500).json({ error: e?.message || 'logs_failed' });
+    }
+  });
+
   // Console: run a command via docker exec and return its output
   app.post('/exec/:id', async (req, res) => {
     const id = req.params.id;

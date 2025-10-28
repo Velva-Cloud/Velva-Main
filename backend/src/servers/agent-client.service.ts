@@ -171,6 +171,11 @@ export class AgentClientService {
     }
   }
 
+  async getLastLogs(baseURL: string | undefined, serverId: number, tail = 200): Promise<string> {
+    const res = await this.getClient(baseURL).get(`/logs_last/${serverId}`, { params: { tail }, responseType: 'text' });
+    return String(res.data || '');
+  }
+
   async exec(baseURL: string | undefined, serverId: number, cmd: string): Promise<{ ok: boolean; output: string }> {
     const res = await this.getClient(baseURL).post(`/exec/${serverId}`, { cmd });
     return res.data;

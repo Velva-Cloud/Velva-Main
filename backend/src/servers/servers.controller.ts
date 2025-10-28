@@ -59,6 +59,21 @@ export class ServersController {
     return this.service.streamLogs(id, res);
   }
 
+  // Logs (last tail without streaming)
+  @Get(':id/logs-last')
+  @SkipThrottle()
+  async logsLast(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('tail') tailStr?: string) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) return null;
+    if (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, user.userId);
+      if (!ar) return null;
+    }
+    const tail = Number(tailStr) || 200;
+    return this.service.getLastLogs(id, tail);
+  }
+
   // Exec command inside container (best-effort)
   @Post(':id/exec')
   async exec(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { cmd: string }) {

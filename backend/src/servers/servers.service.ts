@@ -733,6 +733,17 @@ export class ServersService {
     return this.agent.fsList(baseURL, serverId, path);
   }
 
+  async getLastLogs(serverId: number, tail = 200) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      return { ok: false, error: 'agent_unavailable', logs: '' };
+    }
+    const text = await this.agent.getLastLogs(baseURL, serverId, tail);
+    return { ok: true, logs: text };
+  }
+
   async fsDownload(serverId: number, path: string, res: any) {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) {
