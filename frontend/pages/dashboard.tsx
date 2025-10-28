@@ -223,14 +223,16 @@ export default function Dashboard() {
                 </div>
                 <div>
                   <div className="text-sm mb-1">Image</div>
-                  <input
+                  <select
                     value={image}
                     onChange={e => setImage(e.target.value)}
-                    placeholder="ghcr.io/library/nginx:alpine"
                     className="input"
                     aria-label="Docker image"
                     disabled={!sub || sub.status !== 'active' || limitReached}
-                  />
+                  >
+                    <option value="nginx:alpine">Nginx (web) — nginx:alpine</option>
+                    <option value="itzg/minecraft-server">Minecraft (Java) — itzg/minecraft-server</option>
+                  </select>
                 </div>
               </div>
               <div className="mt-3 flex items-center justify-between">

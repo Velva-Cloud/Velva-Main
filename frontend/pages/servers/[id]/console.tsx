@@ -17,21 +17,34 @@ export default function ServerConsolePage() {
 
   const role = useMemo(() => getUserRole(), []);
   const [srvName, setSrvName] = useState<string>('');
+  const [hint, setHint] = useState<string | null>(null);
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [cmd, setCmd] = useState('');
   const [busy, setBusy] = useState(false);
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
+  const [events, setEvents] = useState<Array<{ id: number; ts: string; type: string; message?: string }>>([]);
+
   const fetchServer = async () => {
     if (!id) return;
     try {
       const res = await api.get(`/servers/${id}`);
       setSrvName(res.data?.name || String(id));
+      setHint(res.data?.stateHint || null);
     } catch {}
   };
 
-  useEffect(() => { fetchServer(); }, [id]);
+  const fetchEvents = async () => {
+    if (!id) return;
+    try {
+      const res = await api.get(`/servers/${id}/events`, { params: { limit: 20 } });
+      const items = Array.isArray(res.data) ? res.data : [];
+      setEvents(items.map((e: any) => ({ id: e.id, ts: e.ts, type: e.type, message: e.message })));
+    } catch {}
+  };
+
+  useEffect(() => { fetchServer(); fetchEvents(); }, [id]);
 
   const startConsole = async () => {
     if (!id) return;
@@ -45,6 +58,19 @@ export default function ServerConsolePage() {
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) {
+        try {
+          const txt = await res.text();
+          let msg = `Failed to open console stream (HTTP ${res.status})`;
+          try {
+            const j = JSON.parse(txt);
+            if (j?.error) msg = `Failed to open console stream: ${j.error}`;
+          } catch {
+            if (txt) msg = `Failed to open console stream: ${txt}`;
+          }
+          setConsoleLines(prev => [...prev, msg]);
+        } catch {
+          setConsoleLines(prev => [...prev, `Failed to open console stream (HTTP ${res.status})`]);
+        }
         toast.show('Failed to open console stream', 'error');
         return;
       }
@@ -54,7 +80,10 @@ export default function ServerConsolePage() {
       let buffer = '';
       const pump = async (): Promise<void> => {
         const r = await reader.read();
-        if (r.done) return;
+        if (r.done) {
+          setConsoleLines(prev => prev.length ? [...prev, '[INFO] Log stream ended'] : ['[INFO] Log stream ended']);
+          return;
+        }
         const chunk = decoder.decode(r.value, { stream: true });
         buffer += chunk;
         let idx: number;
@@ -65,12 +94,19 @@ export default function ServerConsolePage() {
           if (line) {
             try { setConsoleLines(prev => [...prev, JSON.parse(line.slice(6))]); }
             catch { setConsoleLines(prev => [...prev, line.slice(6)]); }
+          } else {
+            // If server sent a comment or ping, show it subtly
+            const ping = part.split('\n').find(l => l.startsWith(': '));
+            if (ping) setConsoleLines(prev => [...prev, ping.slice(2)]);
           }
         }
         await pump();
       };
       pump();
-    } catch {}
+    } catch (e: any) {
+      const msg = e?.message ? `Error: ${e.message}` : 'Error opening console stream.';
+      setConsoleLines(prev => [...prev, msg]);
+    }
   };
 
   const stopConsole = () => {
@@ -120,10 +156,51 @@ export default function ServerConsolePage() {
             <section className="card p-4 mt-4">
               <div className="flex items-center justify-between">
                 <div className="flex gap-2">
-                  <button onClick={() => { setConsoleLines([]); startConsole(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
+                  <button onClick={() => { setConsoleLines([]); startConsole(); fetchEvents(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
+                  <button onClick={async () => {
+                    try {
+                      const res = await api.get(`/servers/${id}/logs-last`, { params: { tail: 400 } });
+                      const logs = (res.data?.logs || '').toString();
+                      if (logs) {
+                        setConsoleLines(prev => [...prev, '--- last logs ---', logs, '--- end ---']);
+                      } else {
+                        setConsoleLines(prev => [...prev, 'No recent logs']);
+                      }
+                    } catch (e: any) {
+                      setConsoleLines(prev => [...prev, e?.response?.data?.error ? `Logs error: ${e.response.data.error}` : 'Logs fetch failed']);
+                    }
+                  }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Fetch last logs</button>
                   <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
                 </div>
               </div>
+
+              {/* Advisory hint */}
+              {hint === 'minecraft_eula_required' && (
+                <div className="mt-3 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
+                  This server appears to be a Minecraft server and the process exited. Type <span className="font-semibold">true</span> below to accept the EULA and it will restart.
+                </div>
+              )}
+              {hint === 'missing_container' && (
+                <div className="mt-3 p-3 rounded border border-slate-800 bg-slate-900/40 text-slate-300">
+                  The server container is missing on the node. Starting will schedule provisioning to recreate it.
+                </div>
+              )}
+
+              {/* Recent server events (help surface errors) */}
+              {events.length > 0 && (
+                <div className="mt-3">
+                  <div className="text-xs subtle mb-1">Recent events</div>
+                  <ul className="text-xs bg-slate-800/60 rounded border border-slate-700 divide-y divide-slate-700">
+                    {events.slice(0, 5).map((ev) => (
+                      <li key={ev.id} className="px-3 py-2">
+                        <span className="text-slate-300">{ev.type}</span>
+                        {ev.message ? <span className="text-slate-500"> — {ev.message}</span> : null}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
               <pre className="mt-3 text-xs bg-slate-800/70 rounded p-3 overflow-auto" style={{ minHeight: 240, maxHeight: 480 }}>
                 {consoleLines.length ? consoleLines.join('\n') : 'Connecting…'}
               </pre>

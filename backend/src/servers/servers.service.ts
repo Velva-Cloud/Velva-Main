@@ -79,9 +79,27 @@ export class ServersService {
     const s = await this.prisma.server.findUnique({ where: { id } });
     if (!s) return null;
     const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true, resources: true } });
-    const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true } }) : null;
-    const ip = mockIpWithPort(s.id);
+    const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true, publicIp: true } as any }) : null;
+    let ip = mockIpWithPort(s.id);
     const consoleOut = mockConsoleOutput(s.name, s.status);
+
+    // Determine current image (plan or override)
+    let imageName: string | null = null;
+    try {
+      imageName = (plan?.resources && typeof (plan.resources as any).image === 'string') ? ((plan!.resources as any).image as string) : null;
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        imageName = override.trim();
+      }
+    } catch {
+      // ignore image detection failures
+    }
 
     // Find last provisioning-related log for this server
     // Note: Prisma JSON filtering differs per provider; fetch recent and filter in app
@@ -94,6 +112,25 @@ export class ServersService {
       const m = (l?.metadata as any) || {};
       return m.serverId === id && ['provision_ok', 'provision_failed', 'provision_request'].includes(m.event);
     });
+    const mcPortLog = recent.find((l: any) => {
+      const m = (l?.metadata as any) || {};
+      return m.serverId === id && m.event === 'minecraft_port_assigned' && typeof m.port === 'number';
+    });
+    if (mcPortLog) {
+      try {
+        const assigned = Number((mcPortLog.metadata as any).port);
+        if (Number.isFinite(assigned) && assigned > 0) {
+          const host = (node as any)?.publicIp || ip.split(':')[0];
+          ip = `${host}:${assigned}`;
+        }
+      } catch {
+        // ignore port override failures
+      }
+    } else if ((node as any)?.publicIp) {
+      // Default to node public ip with mock port if available
+      const mockPort = Number(ip.split(':')[1] || 0);
+      ip = `${(node as any).publicIp}:${mockPort || 0}`;
+    }
 
     const provisionStatus = provLog
       ? {
@@ -103,6 +140,47 @@ export class ServersService {
         }
       : null;
 
+    // Advisory/hint for UI
+    let stateHint: string | null = null;
+    try {
+      // Determine image (plan default or override)
+      let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        image = override.trim();
+      }
+
+      const isMinecraft = !!(image && image.includes('itzg/minecraft-server'));
+      if (isMinecraft) {
+        // If we recently saw an exit, hint that EULA is likely required
+        const exited = recent.find((l: any) => {
+          const m = (l?.metadata as any) || {};
+          return m.serverId === id && m.event === 'server_exited';
+        });
+        if (exited) {
+          stateHint = 'minecraft_eula_required';
+        }
+      } else {
+        // If container missing and attempts to start occurred, hint missing container
+        const missing = recent.find((l: any) => {
+          const m = (l?.metadata as any) || {};
+          return m.serverId === id && (m.event === 'start_missing_container' || m.event === 'reconcile_missing_container');
+        });
+        if (missing) {
+          stateHint = 'missing_container';
+        }
+      }
+    } catch {
+      // non-fatal
+      stateHint = stateHint || null;
+    }
+
     return {
       ...s,
       mockIp: ip,
@@ -110,6 +188,7 @@ export class ServersService {
       planName: plan?.name ?? null,
       nodeName: node?.name ?? null,
       provisionStatus,
+      stateHint,
     };
   }
 
@@ -461,7 +540,20 @@ export class ServersService {
       throw new BadRequestException('Invalid status for this operation');
     }
 
-    // Enqueue lifecycle action
+    const s = await this.prisma.server.findUnique({ where: { id } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+
+    // If agent is not configured, update status directly so the UI reflects changes
+    if (!baseURL && !process.env.DAEMON_URL) {
+      const updated = await this.prisma.server.update({ where: { id }, data: { status } });
+      await this.prisma.log.create({
+        data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: id, status, reason: reason || null } },
+      });
+      return updated;
+    }
+
+    // Enqueue lifecycle action via agent/worker
     if (status === 'running') {
       await this.queue.enqueueStart(id, actorUserId);
     } else {
@@ -549,6 +641,31 @@ export class ServersService {
       return;
     }
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    // If agent is not configured, provide a mock SSE stream so the console doesn't hang
+    if (!baseURL && !process.env.DAEMON_URL) {
+      try {
+        res.setHeader('Content-Type', 'text/event-stream');
+        res.setHeader('Cache-Control', 'no-cache');
+        res.setHeader('Connection', 'keep-alive');
+        const lines = (mockConsoleOutput(s.name, s.status) + '\n[WARN] Agent not configured. This is a mock console.\n').split('\n');
+        for (const ln of lines) {
+          res.write(`data: ${JSON.stringify(ln)}\n\n`);
+        }
+        // Keep-alive pings
+        const ping = setInterval(() => {
+          try { res.write(': ping\n\n'); } catch {}
+        }, 25000);
+        // End after a minute to avoid dangling connections
+        setTimeout(() => {
+          try { clearInterval(ping); } catch {}
+          try { res.end(); } catch {}
+        }, 60000);
+        return;
+      } catch {
+        try { res.status(500).json({ error: 'mock_logs_failed' }); } catch {}
+        return;
+      }
+    }
     return this.agent.streamLogs(baseURL, serverId, res);
     }
 
@@ -556,15 +673,106 @@ export class ServersService {
     if (!cmd) throw new BadRequestException('cmd required');
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
+
+    // Special handling: allow "true" to accept EULA for Minecraft servers and restart
+    const normalized = (cmd || '').trim().toLowerCase();
+    try {
+      // Determine current image (plan or override)
+      const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
+      let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+      // Check for image override from server_create log
+      const recentCreates = await this.prisma.log.findMany({
+        where: { action: 'server_create' as any },
+        orderBy: { id: 'desc' },
+        take: 50,
+      });
+      const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+      const override = createLog ? (createLog.metadata as any)?.image : undefined;
+      if (override && typeof override === 'string' && override.trim().length > 0) {
+        image = override.trim();
+      }
+
+      // If Minecraft image and user typed "true", accept EULA and restart
+      if (image && image.includes('itzg/minecraft-server') && normalized === 'true') {
+        // Write eula.txt on the persistent volume root; for MC mountPath defaults to /data
+        return this.acceptEula(serverId);
+      }
+    } catch {
+      // Fall through to normal exec on any detection failure
+    }
+
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      return { ok: false, output: 'Agent not configured; cannot execute commands.' } as any;
+    }
     return this.agent.exec(baseURL, serverId, cmd);
+  }
+
+  async acceptEula(serverId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      // Agent not configured: cannot write to daemon FS; report message
+      return { ok: false, output: 'Agent not configured; cannot write EULA. Please configure the node daemon.' };
+    }
+    const content = Buffer.from('eula=true\n', 'utf8');
+    await this.agent.fsUpload(baseURL, serverId, '/', 'eula.txt', content);
+    await this.queue.enqueueRestart(serverId);
+    await this.prisma.log.create({
+      data: { userId: s.userId, action: 'plan_change', metadata: { event: 'minecraft_eula_accepted', serverId } },
+    });
+    await this.recordEvent(serverId, 'minecraft_eula_accepted');
+    return { ok: true, output: 'EULA accepted. Restarting server…' };
   }
 
   async fsList(serverId: number, path: string) {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
     const baseURL = await this.nodeBaseUrl(s.nodeId);
-    return this.agent.fsList(baseURL, serverId, path);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      // Simulate empty list when agent not configured
+      return { path, items: [] };
+    }
+
+    // Normalize container '/data' to daemon root for this server
+    const reqPath = (path || '/').toString();
+    const normalizedPath = (reqPath === '/data' || reqPath.startsWith('/data/')) ? reqPath.slice('/data'.length) || '/' : reqPath;
+
+    const primary = await this.agent.fsList(baseURL, serverId, normalizedPath);
+    const items = Array.isArray(primary?.items) ? primary.items : [];
+    const atRoot = (normalizedPath === '/' || normalizedPath === '' || normalizedPath === undefined);
+
+    // Heuristic: if root doesn't contain typical Minecraft files/dirs, try '/data' alias (maps to root anyway)
+    const hasWorldDir = items.some((it: any) => it?.type === 'dir' && it?.name?.toLowerCase() === 'world');
+    const hasServerProps = items.some((it: any) => it?.type === 'file' && it?.name?.toLowerCase() === 'server.properties');
+    const looksSparse = items.length === 0 || (items.length <= 2 && items.every((it: any) => (it?.name || '').toLowerCase() === 'eula.txt' || (it?.name || '').startsWith('.')));
+
+    if (atRoot && (!hasWorldDir || !hasServerProps || looksSparse)) {
+      try {
+        const secondary = await this.agent.fsList(baseURL, serverId, '/');
+        const secItems = Array.isArray(secondary?.items) ? secondary.items : [];
+        // Prefer secondary if it looks richer or contains expected files
+        const secHasWorld = secItems.some((it: any) => it?.type === 'dir' && it?.name?.toLowerCase() === 'world');
+        const secHasProps = secItems.some((it: any) => it?.type === 'file' && it?.name?.toLowerCase() === 'server.properties');
+        if (secItems.length > items.length || secHasWorld || secHasProps) {
+          return secondary;
+        }
+      } catch {}
+    }
+
+    return primary;
+  }
+
+  async getLastLogs(serverId: number, tail = 200) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      return { ok: false, error: 'agent_unavailable', logs: '' };
+    }
+    const text = await this.agent.getLastLogs(baseURL, serverId, tail);
+    return { ok: true, logs: text };
   }
 
   async fsDownload(serverId: number, path: string, res: any) {
@@ -574,6 +782,9 @@ export class ServersService {
       return;
     }
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      return res.status(503).json({ error: 'agent_unavailable' });
+    }
     const { headers, stream } = await this.agent.fsDownloadStream(baseURL, serverId, path);
     if (headers['content-type']) res.setHeader('Content-Type', headers['content-type']);
     if (headers['content-disposition']) res.setHeader('Content-Disposition', headers['content-disposition']);
@@ -584,6 +795,9 @@ export class ServersService {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
     return this.agent.fsUpload(baseURL, serverId, dirPath, filename, content);
   }
 
@@ -591,6 +805,9 @@ export class ServersService {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
     return this.agent.fsMkdir(baseURL, serverId, dirPath);
   }
 
@@ -598,6 +815,9 @@ export class ServersService {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
     return this.agent.fsDelete(baseURL, serverId, targetPath);
   }
 
@@ -605,6 +825,86 @@ export class ServersService {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
     const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
     return this.agent.fsRename(baseURL, serverId, from, to);
+  }
+
+  private async recordEvent(serverId: number, type: string, message?: string, data?: any, userId?: number | null) {
+    try {
+      await this.prisma.serverEvent.create({
+        data: {
+          serverId,
+          userId: userId ?? null,
+          type,
+          message: message || null,
+          data: data ?? {},
+        },
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
+  async listEvents(serverId: number, limit = 50) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const items = await this.prisma.serverEvent.findMany({
+      where: { serverId },
+      orderBy: { id: 'desc' },
+      take: Math.max(1, Math.min(200, limit)),
+    });
+    return items.map(ev => ({
+      id: ev.id,
+      ts: ev.createdAt,
+      type: ev.type,
+      message: ev.message,
+      data: ev.data,
+    }));
+  }
+
+  async getDiagnostics(serverId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+
+    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+
+    // Derive image used (plan vs override)
+    let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+    const recentCreates = await this.prisma.log.findMany({
+      where: { action: 'server_create' as any },
+      orderBy: { id: 'desc' },
+      take: 50,
+    });
+    const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+    const override = createLog ? (createLog.metadata as any)?.image : undefined;
+    if (override && typeof override === 'string' && override.trim().length > 0) {
+      image = override.trim();
+    }
+
+    let inv: any = null;
+    try {
+      inv = baseURL ? await this.agent.inventory(baseURL) : null;
+    } catch {
+      inv = null;
+    }
+
+    // Attempt to list files to verify mount path
+    let fsRoot: any = null;
+    try {
+      fsRoot = await this.fsList(serverId, '/');
+    } catch {
+      fsRoot = null;
+    }
+
+    const cont = inv?.containers?.find((c: any) => c.serverId === s.id);
+    return {
+      server: { id: s.id, status: s.status, nodeId: s.nodeId },
+      image,
+      container: cont || null,
+      filesRoot: fsRoot,
+    };
   }
 }

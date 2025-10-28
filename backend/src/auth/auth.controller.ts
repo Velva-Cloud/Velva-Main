@@ -21,6 +21,21 @@ function resolveFrontendBase(req: any): string {
   return `${xfProto}://${xfHost}`.replace(/\/$/, '');
 }
 
+function pickBaseUrl(): string {
+  const pick = (url?: string) => (url && /^https?:\/\/.+/i.test(url) ? url.replace(/\/$/, '') : null);
+  return (
+    pick(process.env.OAUTH_CALLBACK_BASE) ||
+    pick(process.env.PANEL_URL) ||
+    pick(process.env.FRONTEND_URL) ||
+    'http://localhost:3000'
+  );
+}
+
+function resolveCallbackUrl(defaultPath: string): string {
+  const base = pickBaseUrl();
+  return `${base}${defaultPath}`;
+}
+
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
@@ -56,13 +71,16 @@ export class AuthController {
     const googleEnabled = Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
     const discordEnabled = Boolean(process.env.DISCORD_CLIENT_ID && process.env.DISCORD_CLIENT_SECRET);
     return {
+      base: pickBaseUrl(),
       google: {
         enabled: googleEnabled,
-        callbackURL: process.env.GOOGLE_CALLBACK_URL || 'http://localhost:4000/api/auth/google/callback',
+        callbackURL:
+          process.env.GOOGLE_CALLBACK_URL || resolveCallbackUrl('/api/auth/google/callback'),
       },
       discord: {
         enabled: discordEnabled,
-        callbackURL: process.env.DISCORD_CALLBACK_URL || 'http://localhost:4000/api/auth/discord/callback',
+        callbackURL:
+          process.env.DISCORD_CALLBACK_URL || resolveCallbackUrl('/api/auth/discord/callback'),
       },
     };
   }

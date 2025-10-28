@@ -7,6 +7,7 @@ import { RolesGuard } from '../common/roles.guard';
 import { AuthGuard } from '@nestjs/passport';
 import { CreateServerDto } from './dto/create-server.dto';
 import { UpdateServerDto } from './dto/update-server.dto';
+import { SkipThrottle } from '@nestjs/throttler';
 
 @ApiTags('servers')
 @ApiBearerAuth()
@@ -31,6 +32,7 @@ export class ServersController {
   }
 
   @Get(':id')
+  @SkipThrottle()
   async getOne(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
     const user = req.user as { userId: number; role: Role };
     const s = await this.service.getById(id);
@@ -45,6 +47,7 @@ export class ServersController {
 
   // Console logs SSE proxy
   @Get(':id/logs')
+  @SkipThrottle()
   async logs(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Res() res: any) {
     const user = req.user as { userId: number; role: Role };
     const s = await this.service.getById(id);
@@ -54,6 +57,21 @@ export class ServersController {
       if (!ar) return res.status(403).end();
     }
     return this.service.streamLogs(id, res);
+  }
+
+  // Logs (last tail without streaming)
+  @Get(':id/logs-last')
+  @SkipThrottle()
+  async logsLast(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('tail') tailStr?: string) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) return null;
+    if (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, user.userId);
+      if (!ar) return null;
+    }
+    const tail = Number(tailStr) || 200;
+    return this.service.getLastLogs(id, tail);
   }
 
   // Exec command inside container (best-effort)
@@ -143,6 +161,21 @@ export class ServersController {
     return this.service.fsRename(id, body.from || '/', body.to || '/');
   }
 
+  // Server events for owners/support/admin (and server-level access)
+  @Get(':id/events')
+  @SkipThrottle()
+  async events(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Query('limit') limitStr?: string) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) throw new ForbiddenException();
+    if (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, user.userId);
+      if (!ar) throw new ForbiddenException();
+    }
+    const limit = Number(limitStr) || 50;
+    return this.service.listEvents(id, limit);
+  }
+
   @Post()
   async create(@Request() req: any, @Body() body: CreateServerDto) {
     const user = req.user as { userId: number };
@@ -197,6 +230,7 @@ export class ServersController {
 
   // Provision
   @Post(':id/provision')
+  @SkipThrottle()
   async provision(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -215,6 +249,7 @@ export class ServersController {
   }
 
   @Post(':id/start')
+  @SkipThrottle()
   async start(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -236,6 +271,7 @@ export class ServersController {
   }
 
   @Post(':id/stop')
+  @SkipThrottle()
   async stop(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
     let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
@@ -277,6 +313,25 @@ export class ServersController {
     return this.service.restart(id, actor.userId, body.reason);
   }
 
+  @Post(':id/eula/accept')
+  @SkipThrottle()
+  async acceptEula(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const actor = req.user as { userId: number; role: Role };
+    let allowed = actor.role === Role.SUPPORT || actor.role === Role.ADMIN || actor.role === Role.OWNER;
+    if (!allowed) {
+      const s = await this.service.getById(id);
+      if (s) {
+        if (s.userId === actor.userId) allowed = true;
+        else {
+          const ar = await this.service.getAccessRole(id, actor.userId);
+          if (ar === 'ADMIN') allowed = true;
+        }
+      }
+    }
+    if (!allowed) throw new ForbiddenException();
+    return this.service.acceptEula(id);
+  }
+
   @Post(':id/suspend')
   async suspend(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { reason?: string }) {
     const actor = req.user as { userId: number; role: Role };
@@ -313,6 +368,21 @@ export class ServersController {
       if (!ar) throw new ForbiddenException();
     }
     return this.service.listAccess(id);
+  }
+
+  // Diagnostics: server/daemon state for this server
+  @Get(':id/diagnostics')
+  @SkipThrottle()
+  async diagnostics(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const actor = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) throw new ForbiddenException();
+    // Owner/global admin/owner can view; users with server access can also view
+    if (s.userId !== actor.userId && !(actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, actor.userId);
+      if (!ar) throw new ForbiddenException();
+    }
+    return this.service.getDiagnostics(id);
   }
 
   @Post(':id/access')

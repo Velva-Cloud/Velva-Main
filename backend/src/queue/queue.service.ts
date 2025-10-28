@@ -157,9 +157,9 @@ export class QueueService implements OnModuleInit {
         const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
         const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
         let image = typeof resources.image === 'string' ? resources.image : 'nginx:alpine';
-        const env = (resources.env && typeof resources.env === 'object') ? resources.env : undefined;
-        const mountPath = typeof resources.mountPath === 'string' ? resources.mountPath : (typeof resources.dataDir === 'string' ? resources.dataDir : undefined);
-        const exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
+        let env = (resources.env && typeof resources.env === 'object') ? { ...(resources.env as any) } : {};
+        let mountPath = typeof resources.mountPath === 'string' ? resources.mountPath : (typeof resources.dataDir === 'string' ? resources.dataDir : undefined);
+        let exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
         const cmd = Array.isArray(resources.cmd) ? resources.cmd : undefined;
 
         // Check if an image override was provided at creation
@@ -174,9 +174,41 @@ export class QueueService implements OnModuleInit {
           image = override.trim();
         }
 
+        // If using Minecraft image set sensible defaults and required env
+        if (image && image.includes('itzg/minecraft-server')) {
+          if (!mountPath || !mountPath.trim()) {
+            mountPath = '/data';
+          }
+          if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
+            // Default game port; host mapping/firewall handled separately
+            exposePorts = [25565];
+          }
+          // Ensure EULA is accepted via env as well; image accepts EULA=TRUE
+          if (!('EULA' in env)) {
+            (env as any).EULA = 'TRUE';
+          }
+          // Disable auto-pause so the server doesn't stop after 60s of no players
+          if (!('ENABLE_AUTOPAUSE' in env)) {
+            (env as any).ENABLE_AUTOPAUSE = 'FALSE';
+          }
+          // Optionally set memory from plan ram if provided; itzg supports MEMORY (e.g., "1024M")
+          if (typeof ramMB === 'number' && isFinite(ramMB) && ramMB > 0 && !('MEMORY' in env)) {
+            (env as any).MEMORY = `${Math.max(512, Math.round(ramMB))}M`;
+          }
+        }
+
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
-          await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd });
+          const forceRecreate = !!(image && image.includes('itzg/minecraft-server'));
+          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate } as any);
+          // Record assigned Minecraft port if provided
+          const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
+          if (assignedPort && Number.isFinite(assignedPort)) {
+            await this.prisma.log.create({
+              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'minecraft_port_assigned', serverId: s.id, port: assignedPort } },
+            });
+            await this.recordEvent(s.id, 'minecraft_port_assigned', String(assignedPort));
+          }
         } catch (e: any) {
           if (isHardProvisionError(e)) {
             await this.prisma.log.create({
@@ -194,11 +226,33 @@ export class QueueService implements OnModuleInit {
 
         // Auto-start
         await this.agents.start(baseURL, s.id);
-        await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
-        await this.prisma.log.create({
-          data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
-        });
-        await this.recordEvent(s.id, 'server_status_change', 'running');
+
+        // Verify running state via inventory; some images (e.g., Minecraft before EULA) exit immediately
+        let running = true;
+        try {
+          const inv = await this.agents.inventory(baseURL);
+          const present = inv?.containers?.find(c => c.serverId === s.id);
+          running = !!(present && present.running);
+        } catch {
+          // best-effort; assume running if inventory fails
+          running = true;
+        }
+
+        if (running) {
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
+          await this.prisma.log.create({
+            data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
+          });
+          await this.recordEvent(s.id, 'server_status_change', 'running');
+        } else {
+          // Record stopped status and a hint for Minecraft EULA
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'stopped' } });
+          const hint = image.includes('itzg/minecraft-server') ? 'Server exited; accept EULA by typing "true" in Console.' : 'Server process exited.';
+          await this.prisma.log.create({
+            data: { userId: s.userId, action: 'plan_change', metadata: { event: 'server_exited', serverId: s.id, hint } },
+          });
+          await this.recordEvent(s.id, 'server_exited', hint);
+        }
 
         return { ok: true };
       },
@@ -224,11 +278,30 @@ export class QueueService implements OnModuleInit {
           }
           throw e;
         }
-        await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
-        await this.prisma.log.create({
-          data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
-        });
-        await this.recordEvent(s.id, 'server_status_change', 'running', undefined, actorUserId ?? null);
+
+        // Verify running state via inventory; if process exited immediately, mark as stopped
+        let running = true;
+        try {
+          const inv = await this.agents.inventory(baseURL);
+          const present = inv?.containers?.find(c => c.serverId === s.id);
+          running = !!(present && present.running);
+        } catch {
+          running = true;
+        }
+
+        if (running) {
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
+          await this.prisma.log.create({
+            data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_status_change', serverId: s.id, status: 'running' } },
+          });
+          await this.recordEvent(s.id, 'server_status_change', 'running', undefined, actorUserId ?? null);
+        } else {
+          await this.prisma.server.update({ where: { id: s.id }, data: { status: 'stopped' } });
+          await this.prisma.log.create({
+            data: { userId: actorUserId || null, action: 'plan_change', metadata: { event: 'server_exited', serverId: s.id } },
+          });
+          await this.recordEvent(s.id, 'server_exited', undefined, undefined, actorUserId ?? null);
+        }
         return { ok: true };
       },
       { ...workerSettings, concurrency: startConc },
