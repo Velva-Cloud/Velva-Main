@@ -2,6 +2,7 @@ import Head from 'next/head';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/router';
 import NavBar from '../../components/NavBar';
+import ServerSidebar from '../../components/ServerSidebar';
 import { useRequireAuth } from '../../utils/guards';
 import api from '../../utils/api';
 import { getUserRole } from '../../utils/auth';
@@ -306,23 +307,22 @@ export default function ServerPage() {
         ) : (
           <>
             <div className="flex items-center justify-between mb-4">
-              <h1 className="text-2xl font-semibold">Server • {srv.name}</h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-2xl font-semibold">{srv.name}</h1>
+                <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full border ${
+                  srv.status === 'running'
+                    ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700'
+                    : srv.status === 'suspended'
+                    ? 'bg-amber-600/20 text-amber-200 border-amber-700'
+                    : 'bg-slate-600/20 text-slate-300 border-slate-700'
+                }`}>{srv.status}</span>
+              </div>
               <a href="/dashboard" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to dashboard</a>
             </div>
 
             {/* Layout: sidebar + main content */}
             <div className="flex gap-6">
-              {/* Sidebar */}
-              <div className="w-56 shrink-0">
-                {/** inline sidebar to avoid extra import; we add a component too */}
-                <div className="card p-3 sticky top-4">
-                  <div className="text-xs text-slate-400 mb-2">Server</div>
-                  <a className="block px-3 py-2 rounded bg-slate-800 border border-slate-700" href={`/servers/${srv.id}`}>Overview</a>
-                  <a className="block px-3 py-2 rounded hover:bg-slate-800/60 transition mt-1" href={`/servers/${srv.id}/files`}>Files</a>
-                  <a className="block px-3 py-2 rounded hover:bg-slate-800/60 transition mt-1" href={`/servers/${srv.id}/console`}>Console</a>
-                  <a className="block px-3 py-2 rounded hover:bg-slate-800/60 transition mt-1" href={`/servers/${srv.id}/users`}>Users &amp; Access</a>
-                </div>
-              </div>
+              <ServerSidebar serverId={srv.id} current="overview" />
               {/* Main content */}
               <div className="flex-1">
 
