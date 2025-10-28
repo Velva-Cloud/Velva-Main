@@ -740,11 +740,22 @@ function startHttpsServer() {
 
   // Simple file manager on persistent volume /data/servers/<id> mounted at /srv inside containers
   const upload = multer({ storage: multer.memoryStorage() });
+  // Normalize a requested path where "/data" inside container maps to root of serverDir on host.
+  function normalizeRequestedPath(p?: string): string {
+    const raw = (p || '/').toString();
+    if (raw === '/data' || raw.startsWith('/data/')) {
+      const trimmed = raw.slice('/data'.length);
+      return trimmed && trimmed !== '' ? trimmed : '/';
+    }
+    return raw;
+  }
+
   app.get('/fs/:id/list', async (req, res) => {
     try {
       const root = serverDir(req.params.id);
       ensureDir(root);
-      const target = safeResolve(root, (req.query.path as string) || '/');
+      const reqPath = normalizeRequestedPath(req.query.path as string);
+      const target = safeResolve(root, reqPath);
       // If target directory does not exist yet, return empty listing instead of 500
       let exists = false;
       try { exists = fs.existsSync(target); } catch {}
@@ -773,7 +784,8 @@ function startHttpsServer() {
     try {
       const root = serverDir(req.params.id);
       ensureDir(root);
-      const target = safeResolve(root, (req.query.path as string) || '/');
+      const reqPath = normalizeRequestedPath(req.query.path as string);
+      const target = safeResolve(root, reqPath);
       const st = await fs.promises.stat(target);
       if (st.isDirectory()) {
         // Return a tar archive of the directory
@@ -813,7 +825,8 @@ function startHttpsServer() {
     try {
       const root = serverDir(req.params.id);
       ensureDir(root);
-      const dirPath = safeResolve(root, (req.query.path as string) || '/');
+      const reqPath = normalizeRequestedPath(req.query.path as string);
+      const dirPath = safeResolve(root, reqPath);
       await fs.promises.mkdir(dirPath, { recursive: true });
       const file = (req as any).file;
       if (!file) return res.status(400).json({ error: 'file_required' });
@@ -829,7 +842,8 @@ function startHttpsServer() {
     try {
       const root = serverDir(req.params.id);
       ensureDir(root);
-      const dirPath = safeResolve(root, (req.body?.path as string) || '/');
+      const reqPath = normalizeRequestedPath(req.body?.path as string);
+      const dirPath = safeResolve(root, reqPath);
       await fs.promises.mkdir(dirPath, { recursive: true });
       res.json({ ok: true });
     } catch (e: any) {
@@ -841,7 +855,8 @@ function startHttpsServer() {
     try {
       const root = serverDir(req.params.id);
       ensureDir(root);
-      const p = safeResolve(root, (req.body?.path as string) || '/');
+      const reqPath = normalizeRequestedPath(req.body?.path as string);
+      const p = safeResolve(root, reqPath);
       await fs.promises.rm(p, { recursive: true, force: true });
       res.json({ ok: true });
     } catch (e: any) {
@@ -853,8 +868,10 @@ function startHttpsServer() {
     try {
       const root = serverDir(req.params.id);
       ensureDir(root);
-      const from = safeResolve(root, (req.body?.from as string) || '/');
-      const to = safeResolve(root, (req.body?.to as string) || '/');
+      const fromReq = normalizeRequestedPath(req.body?.from as string);
+      const toReq = normalizeRequestedPath(req.body?.to as string);
+      const from = safeResolve(root, fromReq);
+      const to = safeResolve(root, toReq);
       await fs.promises.rename(from, to);
       res.json({ ok: true });
     } catch (e: any) {
