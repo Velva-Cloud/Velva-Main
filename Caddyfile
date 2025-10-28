@@ -1,41 +1,41 @@
 {
-  email hill.l.ethan6066@gmail.com
+  email {$ACME_EMAIL}
 }
 
-# Root domain - serve the app
-velvacloud.com {
+# Root domain (optional)
+{$ROOT_DOMAIN} {
   encode gzip
-  @api path /api* /api/*
 
+  @api path /api* /api/*
   handle @api {
-    reverse_proxy backend:4000
+    reverse_proxy backend:{$BACKEND_PORT}
   }
 
   handle {
-    reverse_proxy frontend:3000
+    reverse_proxy frontend:{$FRONTEND_PORT}
   }
 }
 
 # Force non-www for root domain
-www.velvacloud.com {
-  redir https://velvacloud.com{uri}
+www.{$ROOT_DOMAIN} {
+  redir https://{$ROOT_DOMAIN}{uri}
 }
 
-# Panel subdomain - serve the app
-panel.velvacloud.com {
+# Panel subdomain (primary)
+{$PANEL_DOMAIN} {
   encode gzip
-  @api path /api* /api/*
 
+  @api path /api* /api/*
   handle @api {
-    reverse_proxy backend:4000
+    reverse_proxy backend:{$BACKEND_PORT}
   }
 
   handle {
-    reverse_proxy frontend:3000
+    reverse_proxy frontend:{$FRONTEND_PORT}
   }
 }
 
 # Force non-www for panel subdomain
-www.panel.velvacloud.com {
-  redir https://panel.velvacloud.com{uri}
+www.{$PANEL_DOMAIN} {
+  redir https://{$PANEL_DOMAIN}{uri}
 }
