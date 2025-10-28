@@ -199,7 +199,8 @@ export class QueueService implements OnModuleInit {
 
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
-          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd });
+          const forceRecreate = !!(image && image.includes('itzg/minecraft-server'));
+          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate } as any);
           // Record assigned Minecraft port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
           if (assignedPort && Number.isFinite(assignedPort)) {

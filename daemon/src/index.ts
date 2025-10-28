@@ -514,18 +514,18 @@ function startHttpsServer() {
   });
 
   app.post('/provision', async (req, res) => {
-    const { serverId, name, image = 'nginx:alpine', cpu, ramMB, env = {}, mountPath = '/srv', cmd = [], exposePorts = [] } = req.body || {};
+    const { serverId, name, image = 'nginx:alpine', cpu, ramMB, env = {}, mountPath = '/srv', cmd = [], exposePorts = [], forceRecreate = false } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
     const containerName = `vc-${serverId}`;
 
     try {
-      // Idempotency: robust existence check by name via listContainers
+      // Existence check by name
+      let existingId: string | null = null;
       try {
         const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
         if (Array.isArray(matches) && matches.length > 0) {
-          const info = matches[0];
-          return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath });
+          existingId = matches[0].Id;
         }
       } catch {
         // ignore pre-check failures and proceed
@@ -543,72 +543,79 @@ function startHttpsServer() {
         });
       });
 
-      try {
-        // Environment variables: flatten object to ["KEY=value"]
-        const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];
-        if (env && typeof env === 'object') {
-          for (const [k, v] of Object.entries(env)) {
-            envArr.push(`${k}=${String(v)}`);
-          }
+      // Environment variables: flatten object to ["KEY=value"]
+      const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];
+      if (env && typeof env === 'object') {
+        for (const [k, v] of Object.entries(env)) {
+          envArr.push(`${k}=${String(v)}`);
         }
+      }
 
-        // Exposed ports
-        const exposed: Record<string, {}> = {};
-        for (const p of exposePorts || []) {
-          const port = String(p).includes('/') ? String(p) : `${String(p)}/tcp`;
-          exposed[port] = {};
-        }
+      // Exposed ports
+      const exposed: Record<string, {}> = {};
+      for (const p of exposePorts || []) {
+        const port = String(p).includes('/') ? String(p) : `${String(p)}/tcp`;
+        exposed[port] = {};
+      }
 
-        // CPU units to NanoCpus:
-        // Treat 'cpu' as plan units where 100 units = 1 core by default (configurable).
-        // Clamp to host core count to satisfy Docker engine constraints.
-        let nanoCpus: number | undefined = undefined;
-        if (typeof cpu === 'number' && isFinite(cpu) && cpu > 0) {
-          const unitsPerCore = Number(process.env.CPU_UNITS_PER_CORE || 100);
-          const coresAvail = Math.max(1, (os.cpus()?.length || 1));
-          let coreLimit = cpu / (unitsPerCore > 0 ? unitsPerCore : 100);
-          coreLimit = Math.max(0.01, Math.min(coresAvail, coreLimit));
-          nanoCpus = Math.round(coreLimit * 1e9);
-        }
+      // CPU units to NanoCpus:
+      let nanoCpus: number | undefined = undefined;
+      if (typeof cpu === 'number' && isFinite(cpu) && cpu > 0) {
+        const unitsPerCore = Number(process.env.CPU_UNITS_PER_CORE || 100);
+        const coresAvail = Math.max(1, (os.cpus()?.length || 1));
+        let coreLimit = cpu / (unitsPerCore > 0 ? unitsPerCore : 100);
+        coreLimit = Math.max(0.01, Math.min(coresAvail, coreLimit));
+        nanoCpus = Math.round(coreLimit * 1e9);
+      }
 
-        // Unique host port assignment for Minecraft
-        let portBindings: Record<string, Array<{ HostPort: string }>> | undefined = undefined;
-        let chosenHostPort: number | undefined = undefined;
-        const isMinecraft = typeof image === 'string' && image.includes('itzg/minecraft-server');
-        if (isMinecraft) {
-          const containerPort = 25565; // inside container
-          const base = Number(process.env.MC_PORT_BASE || 25000);
-          const range = Number(process.env.MC_PORT_RANGE || 10000); // ports: base .. base+range-1
-          const maxTries = Number(process.env.MC_PORT_MAX_TRIES || 200);
-          // Collect currently used host ports to avoid conflicts
-          const used = new Set<number>();
-          try {
-            const list = await docker.listContainers({ all: true });
-            for (const info of list) {
-              const ports = info.Ports || [];
-              for (const prt of ports) {
-                if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
-              }
+      // Unique host port assignment for Minecraft
+      let portBindings: Record<string, Array<{ HostPort: string }>> | undefined = undefined;
+      let chosenHostPort: number | undefined = undefined;
+      const isMinecraft = typeof image === 'string' && image.includes('itzg/minecraft-server');
+      if (isMinecraft) {
+        const containerPort = 25565;
+        const base = Number(process.env.MC_PORT_BASE || 25000);
+        const range = Number(process.env.MC_PORT_RANGE || 10000);
+        const maxTries = Number(process.env.MC_PORT_MAX_TRIES || 200);
+        const used = new Set<number>();
+        try {
+          const list = await docker.listContainers({ all: true });
+          for (const info of list) {
+            const ports = info.Ports || [];
+            for (const prt of ports) {
+              if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
             }
-          } catch {
-            // ignore discovery errors
           }
-          let candidate = base + ((serverId * 17) % Math.max(1, range));
-          let tries = 0;
-          while (used.has(candidate) && tries < maxTries) {
-            candidate = base + (((candidate - base + 1) % Math.max(1, range)));
-            tries++;
-          }
-          chosenHostPort = candidate;
-          // Ensure ExposedPorts includes the container port
-          exposed[`${containerPort}/tcp`] = {};
-          portBindings = { [`${containerPort}/tcp`]: [{ HostPort: String(chosenHostPort) }] };
+        } catch {}
+        let candidate = base + ((serverId * 17) % Math.max(1, range));
+        let tries = 0;
+        while (used.has(candidate) && tries < maxTries) {
+          candidate = base + (((candidate - base + 1) % Math.max(1, range)));
+          tries++;
         }
+        chosenHostPort = candidate;
+        exposed[`${containerPort}/tcp`] = {};
+        portBindings = { [`${containerPort}/tcp`]: [{ HostPort: String(chosenHostPort) }] };
+      }
 
+      // If container exists and forceRecreate, remove it to apply new config
+      if (existingId && forceRecreate) {
+        try {
+          const c = docker.getContainer(existingId);
+          try { await c.stop({ t: Number(process.env.STOP_TIMEOUT || 5) } as any); } catch {}
+          await c.remove({ force: true });
+          existingId = null;
+        } catch {}
+      }
+
+      if (existingId) {
+        return res.json({ ok: true, id: existingId, existed: true, volume: mountPath, port: chosenHostPort });
+      }
+
+      try {
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
-          // Disable TTY to ensure docker logs are properly streamable/multiplexed
           Tty: false,
           OpenStdin: false,
           AttachStdin: false,
@@ -627,17 +634,14 @@ function startHttpsServer() {
         } as any);
         return res.json({ ok: true, id: container.id, existed: false, volume: mountPath, port: chosenHostPort });
       } catch (e: any) {
-        // If name conflict happened due to a race, treat as existed
         const msg = String(e?.message || '');
         if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
           try {
-            // Try listContainers to resolve by name
             const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
             if (Array.isArray(matches) && matches.length > 0) {
               const info = matches[0];
               return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath });
             }
-            // Fallback to inspect by name with and without leading slash
             try {
               const c1 = docker.getContainer(containerName);
               await c1.inspect();
@@ -648,9 +652,7 @@ function startHttpsServer() {
               await c2.inspect();
               return res.json({ ok: true, id: c2.id, existed: true, volume: mountPath });
             } catch {}
-          } catch {
-            // ignore and fall through to error
-          }
+          } catch {}
         }
         console.error('provision_error:', e);
         return res.status(500).json({ error: e?.message || 'provision_failed' });
