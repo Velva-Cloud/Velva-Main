@@ -760,7 +760,7 @@ function startHttpsServer() {
       let exists = false;
       try { exists = fs.existsSync(target); } catch {}
       if (!exists) {
-        return res.json({ path: target.replace(root, '') || '/', items: [] });
+        return res.json({ path: target.replace(root, '') || '/', items: [], root, absPath: target });
       }
       const entries = await fs.promises.readdir(target, { withFileTypes: true });
       const items = await Promise.all(entries.map(async (ent) => {
@@ -774,7 +774,7 @@ function startHttpsServer() {
           mtime: st ? st.mtime : null,
         };
       }));
-      res.json({ path: target.replace(root, '') || '/', items });
+      res.json({ path: target.replace(root, '') || '/', items, root, absPath: target });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'list_failed' });
     }
