@@ -608,9 +608,10 @@ function startHttpsServer() {
         const container = await docker.createContainer({
           name: containerName,
           Image: image,
-          Tty: true,
-          OpenStdin: true,
-          AttachStdin: true,
+          // Disable TTY to ensure docker logs are properly streamable/multiplexed
+          Tty: false,
+          OpenStdin: false,
+          AttachStdin: false,
           AttachStdout: true,
           AttachStderr: true,
           HostConfig: {

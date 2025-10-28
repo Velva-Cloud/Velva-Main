@@ -157,6 +157,19 @@ export default function ServerConsolePage() {
               <div className="flex items-center justify-between">
                 <div className="flex gap-2">
                   <button onClick={() => { setConsoleLines([]); startConsole(); fetchEvents(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
+                  <button onClick={async () => {
+                    try {
+                      const res = await api.get(`/servers/${id}/logs-last`, { params: { tail: 400 } });
+                      const logs = (res.data?.logs || '').toString();
+                      if (logs) {
+                        setConsoleLines(prev => [...prev, '--- last logs ---', logs, '--- end ---']);
+                      } else {
+                        setConsoleLines(prev => [...prev, 'No recent logs']);
+                      }
+                    } catch (e: any) {
+                      setConsoleLines(prev => [...prev, e?.response?.data?.error ? `Logs error: ${e.response.data.error}` : 'Logs fetch failed']);
+                    }
+                  }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Fetch last logs</button>
                   <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
                 </div>
               </div>
