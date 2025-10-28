@@ -32,7 +32,7 @@ export default function ServerConsolePage() {
       const res = await api.get(`/servers/${id}`);
       setSrvName(res.data?.name || String(id));
       setHint(res.data?.stateHint || null);
-    } catch};
+    } catch {}
 
   const fetchEvents = async () => {
     if (!id) return;
