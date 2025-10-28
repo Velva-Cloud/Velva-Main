@@ -37,8 +37,22 @@ export default function ServerFilesPage() {
     if (!id) return;
     try {
       const res = await api.get(`/servers/${id}/fs/list`, { params: { path: p } });
-      setFmItems((res.data?.items || []) as FsItem[]);
-      setFmPath(res.data?.path || p);
+      const items = (res.data?.items || []) as FsItem[];
+      const pathRet = res.data?.path || p;
+      if ((!items || items.length === 0) && (p === '/' || p === '')) {
+        // Fallback to /data for images that write there
+        try {
+          const res2 = await api.get(`/servers/${id}/fs/list`, { params: { path: '/data' } });
+          const items2 = (res2.data?.items || []) as FsItem[];
+          if (items2 && items2.length > 0) {
+            setFmItems(items2);
+            setFmPath(res2.data?.path || '/data');
+            return;
+          }
+        } catch {}
+      }
+      setFmItems(items);
+      setFmPath(pathRet);
     } catch (e: any) {
       toast.show(e?.response?.data?.message || 'Failed to list directory', 'error');
     }
@@ -117,6 +131,7 @@ export default function ServerFilesPage() {
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <button onClick={upDir} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Up</button>
+                  <button onClick={() => loadDir(fmPath || '/')} className="px-2 py-1 rounded border border-slate-800 hover:bg-slate-800">Refresh</button>
                   <span className="text-sm text-slate-400">{fmPath}</span>
                 </div>
                 <label className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 cursor-pointer ${uploading ? 'opacity-60 cursor-not-allowed' : ''}`}>
