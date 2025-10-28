@@ -734,18 +734,23 @@ export class ServersService {
       // Simulate empty list when agent not configured
       return { path, items: [] };
     }
-    const primary = await this.agent.fsList(baseURL, serverId, path);
-    const items = Array.isArray(primary?.items) ? primary.items : [];
-    const atRoot = (path === '/' || path === '' || path === undefined);
 
-    // Heuristic: if root doesn't contain typical Minecraft files/dirs, try /data
+    // Normalize container '/data' to daemon root for this server
+    const reqPath = (path || '/').toString();
+    const normalizedPath = (reqPath === '/data' || reqPath.startsWith('/data/')) ? reqPath.slice('/data'.length) || '/' : reqPath;
+
+    const primary = await this.agent.fsList(baseURL, serverId, normalizedPath);
+    const items = Array.isArray(primary?.items) ? primary.items : [];
+    const atRoot = (normalizedPath === '/' || normalizedPath === '' || normalizedPath === undefined);
+
+    // Heuristic: if root doesn't contain typical Minecraft files/dirs, try '/data' alias (maps to root anyway)
     const hasWorldDir = items.some((it: any) => it?.type === 'dir' && it?.name?.toLowerCase() === 'world');
     const hasServerProps = items.some((it: any) => it?.type === 'file' && it?.name?.toLowerCase() === 'server.properties');
     const looksSparse = items.length === 0 || (items.length <= 2 && items.every((it: any) => (it?.name || '').toLowerCase() === 'eula.txt' || (it?.name || '').startsWith('.')));
 
     if (atRoot && (!hasWorldDir || !hasServerProps || looksSparse)) {
       try {
-        const secondary = await this.agent.fsList(baseURL, serverId, '/data');
+        const secondary = await this.agent.fsList(baseURL, serverId, '/');
         const secItems = Array.isArray(secondary?.items) ? secondary.items : [];
         // Prefer secondary if it looks richer or contains expected files
         const secHasWorld = secItems.some((it: any) => it?.type === 'dir' && it?.name?.toLowerCase() === 'world');
