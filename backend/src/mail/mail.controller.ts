@@ -49,17 +49,6 @@ export class MailController {
     });
   }
 
-  @Post('test')
-  @Roles(Role.ADMIN, Role.OWNER)
-  async test(@Body() body: { to: string }) {
-    const to = (body?.to || '').trim();
-    if (!to) {
-      return { ok: false, message: 'Recipient is required' };
-    }
-    await this.mail.send(to, 'Test email from VelvaCloud', '<p>This is a test email confirming your SMTP settings.</p>');
-    return { ok: true };
-  }
-
   // Staff send + store message
   @Post('send')
   @Roles(Role.SUPPORT, Role.ADMIN, Role.OWNER)
@@ -87,7 +76,7 @@ export class MailController {
     const staff = await this.prisma.staffEmail.findFirst({ where: { userId } });
     const fromAlias = staff?.email || (await (async () => {
       const settings = await this.mail.getSettings();
-      const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'velvacloud.com').trim();
+      const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'example.com').trim();
       const local = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'support');
       return `${local}@${domain}`;
     })());
@@ -132,7 +121,7 @@ export class MailController {
     const staff = await this.prisma.staffEmail.findFirst({ where: { userId } });
     if (staff?.email) return { email: staff.email };
     const settings = await this.mail.getSettings();
-    const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'velvacloud.com').trim();
+    const domain = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[1] || 'example.com').trim();
     const local = ((settings?.supportEmail || settings?.fromEmail || '').split('@')[0] || 'support');
     return { email: `${local}@${domain}` };
   }

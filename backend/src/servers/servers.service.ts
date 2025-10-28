@@ -8,26 +8,7 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
-function mockIpWithPort(serverId: number) {
-  // Deterministic private IP/port combo based on server id
-  const a = 10;
-  const b = (serverId % 200) + 1;
-  const c = (Math.floor(serverId / 200) % 200) + 1;
-  const d = (Math.floor(serverId / 40000) % 200) + 10;
-  // Common game ports like 25565 (Minecraft) or 27015 (Source)
-  const port = 25000 + ((serverId * 17) % 10000);
-  return `${a}.${b}.${c}.${d}:${port}`;
-}
-
-function mockConsoleOutput(serverName: string, status: string) {
-  return [
-    `[INFO] Bootstrapping service for ${serverName}`,
-    `[INFO] Environment: production`,
-    status === 'running' ? `[INFO] Server started successfully` : `[INFO] Server is currently ${status}`,
-    `[INFO] Listening for connections...`,
-    `[OK] Ready.`,
-  ].join('\n');
-}
+// Removed mock IP/console helpers to avoid test/default artifacts
 
 type Resources = { cpu?: number; ramMB?: number; diskMB?: number; diskGB?: number; maxServers?: number; preferLocation?: string };
 
@@ -80,8 +61,8 @@ export class ServersService {
     if (!s) return null;
     const plan = await this.prisma.plan.findUnique({ where: { id: s.planId }, select: { id: true, name: true, resources: true } });
     const node = s.nodeId ? await this.prisma.node.findUnique({ where: { id: s.nodeId }, select: { id: true, name: true, publicIp: true } as any }) : null;
-    let ip = mockIpWithPort(s.id);
-    const consoleOut = mockConsoleOutput(s.name, s.status);
+    let ip: string | null = null;
+    const consoleOut: string | null = null;
 
     // Determine current image (plan or override)
     let imageName: string | null = null;
@@ -116,20 +97,19 @@ export class ServersService {
       const m = (l?.metadata as any) || {};
       return m.serverId === id && m.event === 'minecraft_port_assigned' && typeof m.port === 'number';
     });
-    if (mcPortLog) {
+    if (mcPortLog && (node as any)?.publicIp) {
       try {
         const assigned = Number((mcPortLog.metadata as any).port);
         if (Number.isFinite(assigned) && assigned > 0) {
-          const host = (node as any)?.publicIp || ip.split(':')[0];
+          const host = (node as any).publicIp;
           ip = `${host}:${assigned}`;
         }
       } catch {
         // ignore port override failures
       }
     } else if ((node as any)?.publicIp) {
-      // Default to node public ip with mock port if available
-      const mockPort = Number(ip.split(':')[1] || 0);
-      ip = `${(node as any).publicIp}:${mockPort || 0}`;
+      // Use node public ip if available, without inventing a port
+      ip = (node as any).publicIp;
     }
 
     const provisionStatus = provLog
@@ -183,8 +163,8 @@ export class ServersService {
 
     return {
       ...s,
-      mockIp: ip,
-      consoleOutput: consoleOut,
+      mockIp: ip || undefined,
+      consoleOutput: consoleOut || undefined,
       planName: plan?.name ?? null,
       nodeName: node?.name ?? null,
       provisionStatus,
@@ -641,30 +621,10 @@ export class ServersService {
       return;
     }
     const baseURL = await this.nodeBaseUrl(s.nodeId);
-    // If agent is not configured, provide a mock SSE stream so the console doesn't hang
+    // If agent is not configured, do not emit mock data; inform client of unavailability
     if (!baseURL && !process.env.DAEMON_URL) {
-      try {
-        res.setHeader('Content-Type', 'text/event-stream');
-        res.setHeader('Cache-Control', 'no-cache');
-        res.setHeader('Connection', 'keep-alive');
-        const lines = (mockConsoleOutput(s.name, s.status) + '\n[WARN] Agent not configured. This is a mock console.\n').split('\n');
-        for (const ln of lines) {
-          res.write(`data: ${JSON.stringify(ln)}\n\n`);
-        }
-        // Keep-alive pings
-        const ping = setInterval(() => {
-          try { res.write(': ping\n\n'); } catch {}
-        }, 25000);
-        // End after a minute to avoid dangling connections
-        setTimeout(() => {
-          try { clearInterval(ping); } catch {}
-          try { res.end(); } catch {}
-        }, 60000);
-        return;
-      } catch {
-        try { res.status(500).json({ error: 'mock_logs_failed' }); } catch {}
-        return;
-      }
+      try { res.status(503).json({ error: 'agent_unavailable' }); } catch {}
+      return;
     }
     return this.agent.streamLogs(baseURL, serverId, res);
     }

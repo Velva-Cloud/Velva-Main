@@ -343,8 +343,8 @@ export default function ServerPage() {
                   <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-slate-400">Mock IP</div>
-                  <div className="font-semibold">{srv.mockIp || 'Loading…'}</div>
+                  <div className="text-sm text-slate-400">Address</div>
+                  <div className="font-semibold">{srv.mockIp || '—'}</div>
                 </div>
                 <div>
                   <div className="text-sm text-slate-400">Created</div>
@@ -468,8 +468,8 @@ export default function ServerPage() {
                   <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-slate-400">Mock IP</div>
-                  <div className="font-semibold">{srv.mockIp || 'Loading…'}</div>
+                  <div className="text-sm text-slate-400">Address</div>
+                  <div className="font-semibold">{srv.mockIp || '—'}</div>
                 </div>
                 <div>
                   <div className="text-sm text-slate-400">Created</div>

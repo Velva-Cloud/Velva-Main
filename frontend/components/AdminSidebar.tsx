@@ -9,7 +9,6 @@ const nav = [
   { href: '/admin/users', label: 'Users', icon: '👥' },
   { href: '/admin/staff', label: 'Staff Profiles', icon: '🪪' },
   { href: '/admin/activity', label: 'Activity', icon: '📜' },
-  { href: '/admin/mail', label: 'Mail', icon: '📧' },
   { href: '/admin/settings', label: 'Settings', icon: '⚙️' },
   { href: '/admin/finance', label: 'Finance', icon: '💼' },
 ];
