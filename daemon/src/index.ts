@@ -745,15 +745,22 @@ function startHttpsServer() {
       const root = serverDir(req.params.id);
       ensureDir(root);
       const target = safeResolve(root, (req.query.path as string) || '/');
+      // If target directory does not exist yet, return empty listing instead of 500
+      let exists = false;
+      try { exists = fs.existsSync(target); } catch {}
+      if (!exists) {
+        return res.json({ path: target.replace(root, '') || '/', items: [] });
+      }
       const entries = await fs.promises.readdir(target, { withFileTypes: true });
       const items = await Promise.all(entries.map(async (ent) => {
         const full = path.join(target, ent.name);
-        const st = await fs.promises.stat(full);
+        let st: fs.Stats | null = null;
+        try { st = await fs.promises.stat(full); } catch {}
         return {
           name: ent.name,
           type: ent.isDirectory() ? 'dir' : 'file',
-          size: ent.isDirectory() ? null : st.size,
-          mtime: st.mtime,
+          size: ent.isDirectory() ? null : (st ? st.size : null),
+          mtime: st ? st.mtime : null,
         };
       }));
       res.json({ path: target.replace(root, '') || '/', items });
