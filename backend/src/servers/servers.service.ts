@@ -789,6 +789,22 @@ export class ServersService {
     return this.agent.fsRename(baseURL, serverId, from, to);
   }
 
+  private async recordEvent(serverId: number, type: string, message?: string, data?: any, userId?: number | null) {
+    try {
+      await this.prisma.serverEvent.create({
+        data: {
+          serverId,
+          userId: userId ?? null,
+          type,
+          message: message || null,
+          data: data ?? {},
+        },
+      });
+    } catch {
+      // best-effort
+    }
+  }
+
   async listEvents(serverId: number, limit = 50) {
     const s = await this.prisma.server.findUnique({ where: { id: serverId } });
     if (!s) throw new BadRequestException('server_not_found');
