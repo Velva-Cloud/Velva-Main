@@ -734,7 +734,15 @@ export class ServersService {
       // Simulate empty list when agent not configured
       return { path, items: [] };
     }
-    return this.agent.fsList(baseURL, serverId, path);
+    const primary = await this.agent.fsList(baseURL, serverId, path);
+    // Fallback: some images write under a subdirectory (e.g., `/data`) even if mount path is root.
+    if ((primary?.items || []).length === 0 && (path === '/' || path === '' || path === undefined)) {
+      try {
+        const secondary = await this.agent.fsList(baseURL, serverId, '/data');
+        if ((secondary?.items || []).length > 0) return secondary;
+      } catch {}
+    }
+    return primary;
   }
 
   async getLastLogs(serverId: number, tail = 200) {
