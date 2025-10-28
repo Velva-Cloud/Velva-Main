@@ -11,8 +11,8 @@ else
   npx prisma db push
 fi
 
-# Optional seed on boot (idempotent)
-if [ "${SEED_ON_BOOT:-true}" = "true" ]; then
+# Optional seed on boot (idempotent) - disabled by default in production
+if [ "${SEED_ON_BOOT:-false}" = "true" ]; then
   echo "Running seed (idempotent)..."
   node prisma/seed.js || echo "Seed step skipped or failed (continuing)."
 fi

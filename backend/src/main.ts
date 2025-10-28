@@ -62,15 +62,18 @@ async function bootstrap() {
     }),
   );
 
-  const config = new DocumentBuilder()
-    .setTitle('Hosting Platform API')
-    .setDescription('REST API for the hosting platform MVP')
-    .setVersion('0.1')
-    .addBearerAuth()
-    .build();
-
-  const document = SwaggerModule.createDocument(app, config);
-  SwaggerModule.setup('api/docs', app, document);
+  // Swagger (disabled by default in production)
+  const enableSwagger = (process.env.ENABLE_SWAGGER === 'true') || process.env.NODE_ENV !== 'production';
+  if (enableSwagger) {
+    const config = new DocumentBuilder()
+      .setTitle('Hosting Platform API')
+      .setDescription('REST API for the hosting platform')
+      .setVersion('1.0')
+      .addBearerAuth()
+      .build();
+    const document = SwaggerModule.createDocument(app, config);
+    SwaggerModule.setup('api/docs', app, document);
+  }
 
   // Ensure a panel client certificate exists if requested
   try {
@@ -80,21 +83,22 @@ async function bootstrap() {
     // ignore
   }
 
-  // Prometheus metrics
-  try {
-    client.collectDefaultMetrics();
-    express.get('/metrics', async (_req: any, res: any) => {
-      try {
-        res.set('Content-Type', client.register.contentType);
-        res.end(await client.register.metrics());
-      } catch (e: any) {
-        res.status(500).json({ error: e?.message || 'metrics_error' });
-      }
-    });
-    // eslint-disable-next-line no-console
-    console.log('Metrics available at /metrics');
-  } catch (e) {
-    // ignore metrics init errors
+  // Prometheus metrics (disabled by default in production)
+  const enableMetrics = (process.env.ENABLE_METRICS === 'true') || process.env.NODE_ENV !== 'production';
+  if (enableMetrics) {
+    try {
+      client.collectDefaultMetrics();
+      express.get('/metrics', async (_req: any, res: any) => {
+        try {
+          res.set('Content-Type', client.register.contentType);
+          res.end(await client.register.metrics());
+        } catch (e: any) {
+          res.status(500).json({ error: e?.message || 'metrics_error' });
+        }
+      });
+    } catch {
+      // ignore metrics init errors
+    }
   }
 
   // Bull Board UI (RBAC: ADMIN/OWNER only)
@@ -132,19 +136,12 @@ async function bootstrap() {
     };
 
     express.use('/api/admin/queues/ui', authMiddleware, serverAdapter.getRouter());
-    // eslint-disable-next-line no-console
-    console.log('Bull Board available at /api/admin/queues/ui');
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.log('Bull Board init skipped:', (e as any)?.message || e);
+  } catch {
+    // Bull Board init skipped
   }
 
   const port = process.env.PORT || 4000;
   await app.listen(port, '0.0.0.0');
-  // eslint-disable-next-line no-console
-  console.log(`API running at http://localhost:${port}/api`);
-  // eslint-disable-next-line no-console
-  console.log(`Swagger docs at http://localhost:${port}/api/docs`);
 }
 
 bootstrap();
