@@ -806,4 +806,48 @@ export class ServersService {
       data: ev.data,
     }));
   }
+
+  async getDiagnostics(serverId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+
+    const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+
+    // Derive image used (plan vs override)
+    let image: string | undefined = (plan?.resources && typeof (plan.resources as any).image === 'string') ? (plan!.resources as any).image : undefined;
+    const recentCreates = await this.prisma.log.findMany({
+      where: { action: 'server_create' as any },
+      orderBy: { id: 'desc' },
+      take: 50,
+    });
+    const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
+    const override = createLog ? (createLog.metadata as any)?.image : undefined;
+    if (override && typeof override === 'string' && override.trim().length > 0) {
+      image = override.trim();
+    }
+
+    let inv: any = null;
+    try {
+      inv = baseURL ? await this.agent.inventory(baseURL) : null;
+    } catch {
+      inv = null;
+    }
+
+    // Attempt to list files to verify mount path
+    let fsRoot: any = null;
+    try {
+      fsRoot = await this.fsList(serverId, '/');
+    } catch {
+      fsRoot = null;
+    }
+
+    const cont = inv?.containers?.find((c: any) => c.serverId === s.id);
+    return {
+      server: { id: s.id, status: s.status, nodeId: s.nodeId },
+      image,
+      container: cont || null,
+      filesRoot: fsRoot,
+    };
+  }
 }

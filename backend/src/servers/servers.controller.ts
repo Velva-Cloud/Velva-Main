@@ -355,6 +355,21 @@ export class ServersController {
     return this.service.listAccess(id);
   }
 
+  // Diagnostics: server/daemon state for this server
+  @Get(':id/diagnostics')
+  @SkipThrottle()
+  async diagnostics(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const actor = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) throw new ForbiddenException();
+    // Owner/global admin/owner can view; users with server access can also view
+    if (s.userId !== actor.userId && !(actor.role === Role.ADMIN || actor.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, actor.userId);
+      if (!ar) throw new ForbiddenException();
+    }
+    return this.service.getDiagnostics(id);
+  }
+
   @Post(':id/access')
   async addAccess(@Request() req: any, @Param('id', ParseIntPipe) id: number, @Body() body: { email: string; role: 'VIEWER' | 'OPERATOR' | 'ADMIN' }) {
     const actor = req.user as { userId: number; role: Role };
