@@ -735,13 +735,18 @@ export class ServersService {
       return { path, items: [] };
     }
     const primary = await this.agent.fsList(baseURL, serverId, path);
-    // Fallback: some images write under a subdirectory (e.g., `/data`) even if mount path is root.
-    if ((primary?.items || []).length === 0 && (path === '/' || path === '' || path === undefined)) {
+    const items = Array.isArray(primary?.items) ? primary.items : [];
+    const atRoot = (path === '/' || path === '' || path === undefined);
+
+    // For Minecraft, if root shows only eula.txt (created early), try the canonical data dir.
+    if (atRoot && (items.length === 0 || (items.length === 1 && items[0]?.name === 'eula.txt'))) {
       try {
         const secondary = await this.agent.fsList(baseURL, serverId, '/data');
-        if ((secondary?.items || []).length > 0) return secondary;
+        const secItems = Array.isArray(secondary?.items) ? secondary.items : [];
+        if (secItems.length > 0) return secondary;
       } catch {}
     }
+
     return primary;
   }
 
