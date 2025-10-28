@@ -131,7 +131,9 @@ services:
       backend:
         condition: service_healthy
     volumes:
-      - daemon_data:/data
+      - type: bind
+        source: /data
+        target: /data
       - /var/run/docker.sock:/var/run/docker.sock
     # Publish SFTP to host
     ports:
