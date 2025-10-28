@@ -187,6 +187,10 @@ export class QueueService implements OnModuleInit {
           if (!('EULA' in env)) {
             (env as any).EULA = 'TRUE';
           }
+          // Disable auto-pause so the server doesn't stop after 60s of no players
+          if (!('ENABLE_AUTOPAUSE' in env)) {
+            (env as any).ENABLE_AUTOPAUSE = 'FALSE';
+          }
           // Optionally set memory from plan ram if provided; itzg supports MEMORY (e.g., "1024M")
           if (typeof ramMB === 'number' && isFinite(ramMB) && ramMB > 0 && !('MEMORY' in env)) {
             (env as any).MEMORY = `${Math.max(512, Math.round(ramMB))}M`;
