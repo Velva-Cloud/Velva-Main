@@ -900,12 +900,30 @@ export class ServersService {
       fsRoot = null;
     }
 
+    // Fetch stats for quick local connectivity hints (players implies handshake ok)
+    let stats: any = null;
+    try {
+      stats = baseURL ? await this.agent.getStats(baseURL, serverId) : null;
+    } catch {
+      stats = null;
+    }
+
     const cont = inv?.containers?.find((c: any) => c.serverId === s.id);
+    // Extract mapped host port for 25565/tcp if present
+    let mappedPort: number | null = null;
+    try {
+      const ports = (cont?.ports || []) as Array<{ privatePort: number; publicPort: number | null; type: string }>;
+      const match = ports.find(p => Number(p.privatePort) === 25565 && String(p.type || '').toLowerCase() === 'tcp' && Number(p.publicPort) > 0);
+      mappedPort = match ? Number(match.publicPort) : null;
+    } catch {}
+
     return {
       server: { id: s.id, status: s.status, nodeId: s.nodeId },
       image,
       container: cont || null,
       filesRoot: fsRoot,
+      mappedPort,
+      stats,
     };
   }
 }
