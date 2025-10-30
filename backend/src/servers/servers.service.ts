@@ -161,6 +161,14 @@ export class ServersService {
       stateHint = stateHint || null;
     }
 
+    // derive disk limit from plan resources if available
+    let planDiskMb: number | null = null;
+    try {
+      const res = (plan?.resources || {}) as any;
+      if (typeof res.diskMB === 'number') planDiskMb = Math.round(res.diskMB);
+      else if (typeof res.diskGB === 'number') planDiskMb = Math.round(res.diskGB * 1024);
+    } catch {}
+
     return {
       ...s,
       mockIp: ip || undefined,
@@ -169,6 +177,7 @@ export class ServersService {
       nodeName: node?.name ?? null,
       provisionStatus,
       stateHint,
+      planDiskMb,
     };
   }
 

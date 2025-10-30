@@ -53,11 +53,11 @@ function MiniArea({ points, color = '#60a5fa' }: { points: number[]; color?: str
 }
 
 // Live metrics row + hooks
-function MetricsRow({ serverId, createdAt }: { serverId: number; createdAt: string }) {
+function MetricsRow({ serverId, createdAt, diskLimitMb }: { serverId: number; createdAt: string; diskLimitMb?: number | null }) {
   const [cpu, setCpu] = useState<number | null>(null);
   const [ramPct, setRamPct] = useState<number | null>(null);
-  const [pids, setPids] = useState<number | null>(null);
-  const [netRate, setNetRate] = useState<string>('—');
+  const [players, setPlayers] = useState<string>('—');
+  const [diskStr, setDiskStr] = useState<string>('—');
   const [cpuPoints, setCpuPoints] = useState<number[]>([]);
   const [ramPoints, setRamPoints] = useState<number[]>([]);
   const [rxPrev, setRxPrev] = useState<number | null>(null);
@@ -77,21 +77,38 @@ function MetricsRow({ serverId, createdAt }: { serverId: number; createdAt: stri
         const pct = Math.max(0, Math.min(100, (usage / limit) * 100));
         setCpu(Number(c.toFixed(1)));
         setRamPct(Number(pct.toFixed(1)));
-        setPids(Number(m.pids ?? 0));
+
+        // players
+        if (m.players && typeof m.players.online === 'number' && typeof m.players.max === 'number') {
+          setPlayers(`${m.players.online}/${m.players.max}`);
+        } else {
+          setPlayers('—');
+        }
+
+        // disk
+        const used = Number(m.disk?.usedBytes ?? 0);
+        if (used > 0) {
+          const limitMb = typeof diskLimitMb === 'number' && diskLimitMb > 0 ? diskLimitMb : null;
+          const usedMb = used / (1024 * 1024);
+          const usedStr = usedMb >= 1024 ? `${(usedMb / 1024).toFixed(2)} GB` : `${usedMb.toFixed(1)} MB`;
+          if (limitMb) {
+            const p = Math.min(100, Math.max(0, (usedMb / limitMb) * 100));
+            setDiskStr(`${usedStr} • ${p.toFixed(1)}%`);
+          } else {
+            setDiskStr(usedStr);
+          }
+        } else {
+          setDiskStr('—');
+        }
 
         setCpuPoints(prev => [...prev.slice(-59), Number(c.toFixed(1))]);
         setRamPoints(prev => [...prev.slice(-59), Number(pct.toFixed(1))]);
 
-        // simple net rate calc in KB/s based on delta and interval
+        // maintain lastTs/rx/tx for potential network graph later
         const rx = Number(m.net?.rxBytes ?? 0);
         const tx = Number(m.net?.txBytes ?? 0);
         const now = Date.now();
-        const dt = Math.max(500, now - lastTs) / 1000;
-        if (rxPrev !== null && txPrev !== null) {
-          const rxRate = (rx - rxPrev) / 1024 / dt;
-          const txRate = (tx - txPrev) / 1024 / dt;
-          setNetRate(`${rxRate.toFixed(1)}kB/s ↓ • ${txRate.toFixed(1)}kB/s ↑`);
-        }
+        const _dt = Math.max(500, now - lastTs) / 1000;
         setRxPrev(rx);
         setTxPrev(tx);
         setLastTs(now);
@@ -102,7 +119,7 @@ function MetricsRow({ serverId, createdAt }: { serverId: number; createdAt: stri
     pull();
     const t = setInterval(pull, 5000);
     return () => { alive = false; clearInterval(t); };
-  }, [serverId]);
+  }, [serverId, diskLimitMb]);
 
   const pill = (label: string, value: string, tone: 'sky' | 'violet' | 'emerald' | 'amber' | 'slate' = 'slate') => (
     <div className={`px-3 py-2 rounded-lg border bg-slate-900/60 ${tone === 'emerald' ? 'border-emerald-700' : tone === 'amber' ? 'border-amber-700' : tone === 'violet' ? 'border-violet-700' : tone === 'sky' ? 'border-sky-700' : 'border-slate-700'}`}>
@@ -116,8 +133,8 @@ function MetricsRow({ serverId, createdAt }: { serverId: number; createdAt: stri
       <div className="relative z-10 mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
         {pill('CPU', cpu !== null ? `${cpu}%` : '—', 'violet')}
         {pill('RAM', ramPct !== null ? `${ramPct}%` : '—', 'emerald')}
-        {pill('Network', netRate, 'sky')}
-        {pill('PIDs', pids !== null ? String(pids) : '—', 'amber')}
+        {pill('DISK', diskStr, 'sky')}
+        {pill('Players', players, 'amber')}
         {pill('Uptime', new Date(createdAt).toLocaleDateString(), 'slate')}
       </div>
 
@@ -384,7 +401,7 @@ export default function ServerPage() {
                 </div>
 
                 {/* Status row */}
-                <MetricsRow serverId={srv.id} createdAt={srv.createdAt} />
+                <MetricsRow serverId={srv.id} createdAt={srv.createdAt} diskLimitMb={(srv as any).planDiskMb ?? null} />
               </section>
 
               {err && <div className="mt-3 text-red-400">{err}</div>}
