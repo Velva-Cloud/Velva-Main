@@ -38,8 +38,6 @@ export default function AdminSettings() {
 
   const [billingGraceDays, setBillingGraceDays] = useState<number>(3);
 
-  const [testTo, setTestTo] = useState('');
-
   const fetchSettings = async () => {
     setLoading(true);
     setErr(null);
@@ -100,20 +98,6 @@ export default function AdminSettings() {
     }
   };
 
-  const sendTest = async () => {
-    if (!testTo.trim()) {
-      toast.show('Enter a recipient email', 'error');
-      return;
-    }
-    try {
-      await api.post('/settings/mail/test', { to: testTo.trim() });
-      toast.show('Test email sent (if SMTP is configured correctly)', 'success');
-    } catch (e: any) {
-      const msg = e?.response?.data?.message || 'Failed to send test email';
-      toast.show(msg, 'error');
-    }
-  };
-
   return (
     <>
       <Head>
@@ -159,7 +143,7 @@ export default function AdminSettings() {
                   <input className="input" value={mail.fromEmail} onChange={e => setMail(m => ({ ...m, fromEmail: e.target.value }))} placeholder="no-reply@example.com" />
                 </FormField>
                 <FormField label="From name (optional)">
-                  <input className="input" value={mail.fromName || ''} onChange={e => setMail(m => ({ ...m, fromName: e.target.value }))} placeholder="VelvaCloud" />
+                  <input className="input" value={mail.fromName || ''} onChange={e => setMail(m => ({ ...m, fromName: e.target.value }))} placeholder="Company" />
                 </FormField>
                 <FormField label="Support email (internal)">
                   <input className="input" value={mail.supportEmail || ''} onChange={e => setMail(m => ({ ...m, supportEmail: e.target.value }))} placeholder="support@example.com" />
@@ -172,10 +156,6 @@ export default function AdminSettings() {
                   <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>
                     {saving ? 'Saving…' : 'Save'}
                   </button>
-                  <div className="flex items-center gap-2">
-                    <input className="input" placeholder="Test recipient" value={testTo} onChange={e => setTestTo(e.target.value)} />
-                    <button onClick={sendTest} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Send test</button>
-                  </div>
                 </div>
               </div>
             </>

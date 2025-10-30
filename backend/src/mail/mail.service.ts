@@ -82,7 +82,7 @@ export class MailService {
       if (!/^[a-z0-9._-]{1,64}$/.test(simple)) {
         this.logger.warn(`Invalid local-part for custom from: ${fromLocal}`);
       } else {
-        const domain = (baseEmail.split('@')[1] || 'velvacloud.com').trim();
+        const domain = (baseEmail.split('@')[1] || 'example.com').trim();
         baseEmail = `${simple}@${domain}`;
       }
     }
@@ -148,7 +148,7 @@ export class MailService {
     const layoutTpl = Handlebars.compile(layoutSrc);
     const html = layoutTpl({ subject: context.subject || '', body: bodyHtml, year: new Date().getFullYear() });
     const text = bodyHtml.replace(/<[^>]+>/g, '');
-    const subject = context.subject || 'VelvaCloud';
+    const subject = context.subject || 'Notification';
     return { subject, html, text };
   }
 
@@ -183,7 +183,7 @@ export class MailService {
     const { html, text } = this.compileTemplate('staff_outbound', {
       ...context,
       messageHtml: safeBody,
-      companyName: context.companyName || 'VelvaCloud',
+      companyName: context.companyName || 'Your Company',
       staffTitle: context.staffTitle || 'Support',
       disclaimer: context.disclaimer || 'This message may contain confidential information intended only for the recipient. If you received it in error, please notify the sender and delete it.',
     });
