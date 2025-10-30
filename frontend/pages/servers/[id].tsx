@@ -29,6 +29,29 @@ type Server = {
 
 type FsItem = { name: string; type: 'file' | 'dir'; size?: number | null; mtime?: string | Date };
 
+// simple utility to draw a small area line chart with svg (placeholder)
+function MiniArea({ points, color = '#60a5fa' }: { points: number[]; color?: string }) {
+  const w = 380;
+  const h = 120;
+  const pad = 6;
+  const max = Math.max(1, ...points);
+  const step = (w - pad * 2) / Math.max(1, points.length - 1);
+  const d = points
+    .map((p, i) => {
+      const x = pad + i * step;
+      const y = h - pad - (p / max) * (h - pad * 2);
+      return `${i === 0 ? 'M' : 'L'}${x},${y}`;
+    })
+    .join(' ');
+  const area = `${d} L ${w - pad},${h - pad} L ${pad},${h - pad} Z`;
+  return (
+    <svg width="100%" height={h} viewBox={`0 0 ${w} ${h}`} className="block">
+      <path d={area} fill={`${color}26`} />
+      <path d={d} stroke={color} strokeWidth="2" fill="none" />
+    </svg>
+  );
+}
+
 export default function ServerPage() {
   useRequireAuth();
   const toast = useToast();
@@ -41,7 +64,7 @@ export default function ServerPage() {
   const [busy, setBusy] = useState(false);
   const [reason, setReason] = useState('');
 
-  // Console state
+  // Console state (needed for Overview quick console snippets later)
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [cmd, setCmd] = useState('');
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
@@ -53,8 +76,7 @@ export default function ServerPage() {
   const [uploading, setUploading] = useState(false);
 
   const role = useMemo(() => getUserRole(), []);
-  const canControl =
-    role === 'ADMIN' || role === 'OWNER' || role === 'SUPPORT';
+  const canControl = role === 'ADMIN' || role === 'OWNER' || role === 'SUPPORT';
 
   const fetchServer = async () => {
     if (!id) return;
@@ -75,7 +97,6 @@ export default function ServerPage() {
     fetchServer();
   }, [id]);
 
-  // Lifecycle controls
   const call = async (action: 'start' | 'stop' | 'restart') => {
     if (!srv) return;
     setBusy(true);
@@ -117,10 +138,8 @@ export default function ServerPage() {
     }
   };
 
-  // Console: start SSE over fetch (so we can send Authorization header)
   const startConsole = async () => {
     if (!id) return;
-    stopConsole();
     try {
       abortRef.current = new AbortController();
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : '';
@@ -129,10 +148,7 @@ export default function ServerPage() {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
         signal: abortRef.current.signal,
       });
-      if (!res.ok || !res.body) {
-        toast.show('Failed to open console stream', 'error');
-        return;
-      }
+      if (!res.ok || !res.body) return;
       const reader = res.body.getReader();
       readerRef.current = reader;
       const decoder = new TextDecoder();
@@ -142,7 +158,6 @@ export default function ServerPage() {
         if (r.done) return;
         const chunk = decoder.decode(r.value, { stream: true });
         buffer += chunk;
-        // SSE messages separated by double newline
         let idx: number;
         while ((idx = buffer.indexOf('\n\n')) >= 0) {
           const part = buffer.slice(0, idx);
@@ -160,9 +175,7 @@ export default function ServerPage() {
         await pump();
       };
       pump();
-    } catch {
-      // ignore open errors
-    }
+    } catch {}
   };
 
   const stopConsole = () => {
@@ -173,7 +186,6 @@ export default function ServerPage() {
   };
 
   useEffect(() => {
-    // start console when server id changes
     if (id) {
       setConsoleLines([]);
       startConsole();
@@ -187,9 +199,7 @@ export default function ServerPage() {
     try {
       const res = await api.post(`/servers/${srv.id}/exec`, { cmd: cmd.trim() });
       const out = (res.data?.output || '').toString();
-      if (out) {
-        setConsoleLines(prev => [...prev, `$ ${cmd.trim()}`, out]);
-      }
+      if (out) setConsoleLines(prev => [...prev, `$ ${cmd.trim()}`, out]);
       setCmd('');
     } catch (e: any) {
       toast.show(e?.response?.data?.message || 'Command failed', 'error');
@@ -198,7 +208,6 @@ export default function ServerPage() {
     }
   };
 
-  // File manager
   const loadDir = async (p: string) => {
     if (!srv) return;
     try {
@@ -214,61 +223,6 @@ export default function ServerPage() {
     if (srv) loadDir('/');
   }, [srv?.id]);
 
-  const goTo = async (name: string, type: 'file' | 'dir') => {
-    if (type === 'dir') {
-      const next = fmPath.endsWith('/') ? `${fmPath}${name}` : `${fmPath}/${name}`;
-      await loadDir(next);
-    }
-  };
-
-  const upDir = async () => {
-    if (fmPath === '/' || !fmPath) return;
-    const parts = fmPath.split('/').filter(Boolean);
-    parts.pop();
-    const next = '/' + parts.join('/');
-    await loadDir(next || '/');
-  };
-
-  const handleUpload = async (files: FileList | null) => {
-    if (!srv || !files || !files.length) return;
-    setUploading(true);
-    try {
-      const f = files[0];
-      const buf = await f.arrayBuffer();
-      const base64 = typeof window !== 'undefined' ? btoa(String.fromCharCode(...new Uint8Array(buf))) : Buffer.from(buf).toString('base64');
-      await api.post(`/servers/${srv.id}/fs/upload`, { filename: f.name, contentBase64: base64 }, { params: { path: fmPath } });
-      toast.show('File uploaded', 'success');
-      await loadDir(fmPath);
-    } catch (e: any) {
-      toast.show(e?.response?.data?.message || 'Upload failed', 'error');
-    } finally {
-      setUploading(false);
-    }
-  };
-
-  const downloadItem = async (name: string) => {
-    if (!srv) return;
-    try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('token') : '';
-      const p = fmPath.endsWith('/') ? `${fmPath}${name}` : `${fmPath}/${name}`;
-      const res = await fetch(`${api.defaults.baseURL}/servers/${srv.id}/fs/download?path=${encodeURIComponent(p)}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = name.endsWith('.tar') ? name : name; // server sets content-disposition
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
-    } catch (e: any) {
-      toast.show(e?.message || 'Download failed', 'error');
-    }
-  };
-
   const renderProvisionBadge = (ps: ProvisionStatus) => {
     if (!ps || !ps.lastEvent) {
       return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded bg-slate-800 border border-slate-700 text-slate-300">No provision data</span>;
@@ -283,13 +237,20 @@ export default function ServerPage() {
     return <span className="inline-flex items-center px-2 py-0.5 text-xs rounded bg-indigo-700/30 border border-indigo-700 text-indigo-300">Provision requested • {ts}</span>;
   };
 
+  const statusPill = (label: string, value: string, tone: 'sky' | 'violet' | 'emerald' | 'amber' | 'slate' = 'slate') => (
+    <div className={`px-3 py-2 rounded-lg border bg-slate-900/60 ${tone === 'emerald' ? 'border-emerald-700' : tone === 'amber' ? 'border-amber-700' : tone === 'violet' ? 'border-violet-700' : tone === 'sky' ? 'border-sky-700' : 'border-slate-700'}`}>
+      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-lg font-semibold">{value}</div>
+    </div>
+  );
+
   return (
     <>
       <Head>
         <title>Server • {srv?.name || id}</title>
       </Head>
       <NavBar />
-      <main className="max-w-4xl mx-auto px-6 py-10">
+      <main className="max-w-6xl mx-auto px-6 py-8">
         {loading ? (
           <div className="space-y-3">
             {[...Array(3)].map((_, i) => (
@@ -305,75 +266,125 @@ export default function ServerPage() {
             <p className="text-slate-400">It may not exist or you do not have access.</p>
           </div>
         ) : (
-          <>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <h1 className="text-2xl font-semibold">{srv.name}</h1>
-                <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full border ${
-                  srv.status === 'running'
-                    ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700'
-                    : srv.status === 'suspended'
-                    ? 'bg-amber-600/20 text-amber-200 border-amber-700'
-                    : 'bg-slate-600/20 text-slate-300 border-slate-700'
-                }`}>{srv.status}</span>
+          <div className="flex gap-6">
+            <ServerSidebar serverId={srv.id} current="overview" />
+            <div className="flex-1">
+              {/* Hero */}
+              <section className="relative overflow-hidden rounded-lg border border-slate-800 bg-gradient-to-r from-slate-900 via-indigo-900/40 to-slate-900 p-6">
+                <div className="absolute inset-0 opacity-30 pointer-events-none" style={{ backgroundImage: 'url(/banner-pattern.png)', backgroundSize: 'cover', backgroundPosition: 'center' }} />
+                <div className="relative z-10 flex flex-col md:flex-row md:items-end md:justify-between gap-6">
+                  <div>
+                    <div className="text-sm text-slate-300">Overview</div>
+                    <h1 className="text-2xl md:text-3xl font-semibold">{srv.name}</h1>
+                    <div className="mt-2 flex items-center gap-2">
+                      <span className={`inline-flex items-center px-2 py-0.5 text-xs rounded-full border ${
+                        srv.status === 'running'
+                          ? 'bg-emerald-600/20 text-emerald-300 border-emerald-700'
+                          : srv.status === 'suspended'
+                          ? 'bg-amber-600/20 text-amber-200 border-amber-700'
+                          : 'bg-slate-600/20 text-slate-300 border-slate-700'
+                      }`}>{srv.status}</span>
+                      <span className="text-xs text-slate-400">•</span>
+                      <span className="text-xs text-slate-300">{srv.mockIp || 'address pending'}</span>
+                    </div>
+                  </div>
+                  {/* Quick actions */}
+                  {canControl && (
+                    <div className="flex flex-wrap gap-2">
+                      <button onClick={() => call('start')} disabled={busy} className={`px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
+                      <button onClick={() => call('stop')} disabled={busy} className={`px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
+                      <button onClick={() => call('restart')} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
+                      <button onClick={retryProvision} disabled={busy} className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Provision</button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Status row */}
+                <div className="relative z-10 mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+                  {statusPill('CPU', '—', 'violet')}
+                  {statusPill('RAM', '—', 'emerald')}
+                  {statusPill('DISK', '—', 'sky')}
+                  {statusPill('Players', '—', 'amber')}
+                  {statusPill('Uptime', new Date(srv.createdAt).toLocaleDateString(), 'slate')}
+                </div>
+              </section>
+
+              {err && <div className="mt-3 text-red-400">{err}</div>}
+
+              {/* Details cards */}
+              <div className="mt-6 grid gap-6 lg:grid-cols-3">
+                <section className="card p-4 lg:col-span-2">
+                  <div className="flex items-center justify-between mb-3">
+                    <h2 className="font-semibold">Server Performance</h2>
+                    <div className="text-xs text-slate-400">Last hour</div>
+                  </div>
+                  <MiniArea points={[5, 12, 20, 18, 30, 24, 26, 35, 28, 40, 38, 42]} color="#60a5fa" />
+                  <div className="grid grid-cols-3 gap-3 mt-3">
+                    <MiniArea points={[10, 12, 8, 14, 18, 16, 20, 22, 21, 25, 24, 26]} color="#34d399" />
+                    <MiniArea points={[2, 4, 3, 5, 8, 7, 11, 10, 9, 12, 11, 13]} color="#fbbf24" />
+                    <MiniArea points={[1, 2, 2, 3, 4, 3, 5, 6, 7, 6, 8, 9]} color="#a78bfa" />
+                  </div>
+                </section>
+
+                <section className="card p-4">
+                  <h2 className="font-semibold mb-3">Player History</h2>
+                  <MiniArea points={[0, 1, 2, 3, 3, 5, 8, 6, 7, 9, 8, 10]} color="#f472b6" />
+                  <div className="mt-2 text-xs text-slate-400">Connected players over time</div>
+                </section>
               </div>
-              <a href="/dashboard" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to dashboard</a>
-            </div>
 
-            {/* Layout: sidebar + main content */}
-            <div className="flex gap-6">
-              <ServerSidebar serverId={srv.id} current="overview" />
-              {/* Main content */}
-              <div className="flex-1">
+              {/* Facts and metadata */}
+              <div className="mt-6 grid gap-6 md:grid-cols-2">
+                <section className="card p-4">
+                  <h2 className="font-semibold mb-3">Details</h2>
+                  <div className="grid gap-3 grid-cols-2">
+                    <div>
+                      <div className="text-sm text-slate-400">Plan</div>
+                      <div className="font-semibold">{(srv as any).planName ? `${(srv as any).planName} (#${srv.planId})` : `#${srv.planId}`}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-slate-400">Node</div>
+                      <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-slate-400">Address</div>
+                      <div className="font-semibold">{srv.mockIp || '—'}</div>
+                    </div>
+                    <div>
+                      <div className="text-sm text-slate-400">Created</div>
+                      <div className="font-semibold">{new Date(srv.createdAt).toLocaleString()}</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-sm text-slate-400">Provision</div>
+                      <div className="font-semibold">{renderProvisionBadge(srv.provisionStatus || null)}</div>
+                    </div>
+                  </div>
+                </section>
 
-            {err && <div className="mb-4 text-red-400">{err}</div>}
-
-            <section className="card p-4 mb-6">
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <div className="text-sm text-slate-400">Status</div>
-                  <div className="font-semibold">{srv.status}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Plan</div>
-                  <div className="font-semibold">{(srv as any).planName ? `${(srv as any).planName} (#${srv.planId})` : `#${srv.planId}`}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Node</div>
-                  <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Address</div>
-                  <div className="font-semibold">{srv.mockIp || '—'}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Created</div>
-                  <div className="font-semibold">{new Date(srv.createdAt).toLocaleString()}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Provision</div>
-                  <div className="font-semibold">{renderProvisionBadge(srv.provisionStatus || null)}</div>
-                </div>
+                <section className="card p-4">
+                  <h2 className="font-semibold mb-3">Quick Console</h2>
+                  <pre className="text-xs bg-slate-900 border border-slate-800 rounded p-3 overflow-auto" style={{ minHeight: 120, maxHeight: 160 }}>
+                    {consoleLines.length ? consoleLines.slice(-30).join('\n') : 'Streaming logs…'}
+                  </pre>
+                  <div className="mt-2 flex gap-2">
+                    <input className="input flex-1" placeholder="send command…" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') runCmd(); }} />
+                    <button onClick={runCmd} className="px-3 py-1 rounded bg-slate-700 hover:bg-slate-600">Run</button>
+                    <a href={`/servers/${srv.id}/console`} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Open Console</a>
+                  </div>
+                </section>
               </div>
 
+              {/* Support-only reason input and suspend toggle kept accessible but subtle */}
               {canControl && (
-                <div className="mt-4">
+                <section className="card p-4 mt-6">
+                  <h2 className="font-semibold mb-2">Manage</h2>
                   {role === 'SUPPORT' && (
                     <div className="mb-2">
                       <div className="text-sm mb-1">Reason (required for support)</div>
-                      <input
-                        className="input w-full"
-                        value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        placeholder="Reason for action"
-                      />
+                      <input className="input w-full" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Reason for action" />
                     </div>
                   )}
                   <div className="flex flex-wrap gap-2">
-                    <button onClick={() => call('start')} disabled={busy} className={`px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
-                    <button onClick={() => call('stop')} disabled={busy} className={`px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
-                    <button onClick={() => call('restart')} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
-                    <button onClick={retryProvision} disabled={busy} className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Retry provision</button>
                     {srv.status !== 'suspended' ? (
                       <button
                         onClick={async () => {
@@ -421,69 +432,12 @@ export default function ServerPage() {
                         Unsuspend
                       </button>
                     )}
+                    <a href="/dashboard" className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to dashboard</a>
                   </div>
-                </div>
+                </section>
               )}
-            </section>
-
-            {/* Overview content */}
-            <section className="card p-4 mb-6">
-              <h2 className="font-semibold mb-3">Actions</h2>
-              {canControl && (
-                <div>
-                  {role === 'SUPPORT' && (
-                    <div className="mb-2">
-                      <div className="text-sm mb-1">Reason (required for support)</div>
-                      <input
-                        className="input w-full"
-                        value={reason}
-                        onChange={(e) => setReason(e.target.value)}
-                        placeholder="Reason for action"
-                      />
-                    </div>
-                  )}
-                  <div className="flex flex-wrap gap-2">
-                    <button onClick={() => call('start')} disabled={busy} className={`px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Start</button>
-                    <button onClick={() => call('stop')} disabled={busy} className={`px-3 py-1 rounded bg-amber-600 hover:bg-amber-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Stop</button>
-                    <button onClick={() => call('restart')} disabled={busy} className={`px-3 py-1 rounded bg-indigo-600 hover:bg-indigo-500 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Restart</button>
-                    <button onClick={retryProvision} disabled={busy} className={`px-3 py-1 rounded bg-sky-700 hover:bg-sky-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Retry provision</button>
-                  </div>
-                </div>
-              )}
-            </section>
-
-            <section className="card p-4">
-              <h2 className="font-semibold mb-3">Statistics</h2>
-              <div className="grid gap-3 md:grid-cols-2">
-                <div>
-                  <div className="text-sm text-slate-400">Status</div>
-                  <div className="font-semibold">{srv.status}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Plan</div>
-                  <div className="font-semibold">{(srv as any).planName ? `${(srv as any).planName} (#${srv.planId})` : `#${srv.planId}`}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Node</div>
-                  <div className="font-semibold">{(srv as any).nodeName ? `${(srv as any).nodeName} (#${srv.nodeId})` : (srv.nodeId ? `#${srv.nodeId}` : '—')}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Address</div>
-                  <div className="font-semibold">{srv.mockIp || '—'}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Created</div>
-                  <div className="font-semibold">{new Date(srv.createdAt).toLocaleString()}</div>
-                </div>
-                <div>
-                  <div className="text-sm text-slate-400">Provision</div>
-                  <div className="font-semibold">{renderProvisionBadge(srv.provisionStatus || null)}</div>
-                </div>
-              </div>
-            </section>
-              </div>
             </div>
-          </>
+          </div>
         )}
       </main>
     </>
