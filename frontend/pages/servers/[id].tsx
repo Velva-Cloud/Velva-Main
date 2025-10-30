@@ -157,6 +157,120 @@ function MetricsRow({ serverId, createdAt, diskLimitMb }: { serverId: number; cr
   );
 }
 
+// Live performance widget (charts fed by real metrics)
+function LivePerformance({ serverId }: { serverId: number }) {
+  const [visible, setVisible] = useState<boolean>(typeof document === 'undefined' ? true : document.visibilityState === 'visible');
+  const [cpuPoints, setCpuPoints] = useState<number[]>([]);
+  const [ramPoints, setRamPoints] = useState<number[]>([]);
+  const [netPoints, setNetPoints] = useState<number[]>([]);
+  const [rxPrev, setRxPrev] = useState<number | null>(null);
+  const [txPrev, setTxPrev] = useState<number | null>(null);
+  const [lastTs, setLastTs] = useState<number>(Date.now());
+
+  const pull = async () => {
+    try {
+      const res = await api.get(`/servers/${serverId}/metrics`);
+      const m = res.data || {};
+      const c = Number(m.cpuPercent ?? 0);
+      const usage = Number(m.mem?.usage ?? 0);
+      const limit = Math.max(1, Number(m.mem?.limit ?? 0));
+      const pct = Math.max(0, Math.min(100, (usage / limit) * 100));
+
+      setCpuPoints(prev => [...prev.slice(-59), Number(c.toFixed(1))]);
+      setRamPoints(prev => [...prev.slice(-59), Number(pct.toFixed(1))]);
+
+      const rx = Number(m.net?.rxBytes ?? 0);
+      const tx = Number(m.net?.txBytes ?? 0);
+      const now = Date.now();
+      const dt = Math.max(500, now - lastTs) / 1000;
+      if (rxPrev !== null && txPrev !== null) {
+        const kbps = ((rx - rxPrev) + (tx - txPrev)) / 1024 / dt; // total throughput in kB/s
+        setNetPoints(prev => [...prev.slice(-59), Number(kbps.toFixed(1))]);
+      }
+      setRxPrev(rx);
+      setTxPrev(tx);
+      setLastTs(now);
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    const onVis = () => setVisible(document.visibilityState === 'visible');
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
+    return () => {
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    pull();
+    const t = setInterval(() => { if (alive) pull(); }, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, [visible, serverId]);
+
+  return (
+    <section className="card p-4 lg:col-span-2">
+      <div className="flex items-center justify-between mb-3">
+        <h2 className="font-semibold">Server Performance</h2>
+        <div className="text-xs text-slate-400">Live</div>
+      </div>
+      <MiniArea points={cpuPoints.length ? cpuPoints : [0]} color="#60a5fa" />
+      <div className="grid grid-cols-3 gap-3 mt-3">
+        <MiniArea points={ramPoints.length ? ramPoints : [0]} color="#34d399" />
+        <MiniArea points={netPoints.length ? netPoints : [0]} color="#fbbf24" />
+        <MiniArea points={[...(cpuPoints.length ? cpuPoints : [0]).slice(-60)]} color="#a78bfa" />
+      </div>
+      <div className="mt-2 text-xs text-slate-400">CPU, RAM, Network throughput (kB/s). Right chart mirrors recent CPU as a placeholder for additional metrics.</div>
+    </section>
+  );
+}
+
+// Player history based on live metrics (online count)
+function PlayerHistory({ serverId }: { serverId: number }) {
+  const [visible, setVisible] = useState<boolean>(typeof document === 'undefined' ? true : document.visibilityState === 'visible');
+  const [players, setPlayers] = useState<number[]>([]);
+
+  const pull = async () => {
+    try {
+      const res = await api.get(`/servers/${serverId}/metrics`);
+      const m = res.data || {};
+      const online = Number(m?.players?.online ?? 0);
+      setPlayers(prev => [...prev.slice(-59), online]);
+    } catch {}
+  };
+
+  useEffect(() => {
+    const onVis = () => setVisible(document.visibilityState === 'visible');
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+    }
+    return () => {
+      if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVis);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    pull();
+    const t = setInterval(() => { if (alive) pull(); }, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, [visible, serverId]);
+
+  return (
+    <section className="card p-4">
+      <h2 className="font-semibold mb-3">Player History</h2>
+      <MiniArea points={players.length ? players : [0]} color="#f472b6" />
+      <div className="mt-2 text-xs text-slate-400">Connected players over time</div>
+    </section>
+  );
+}
+
 export default function ServerPage() {
   useRequireAuth();
   const toast = useToast();
@@ -412,24 +526,8 @@ export default function ServerPage() {
 
               {/* Details cards */}
               <div className="mt-6 grid gap-6 lg:grid-cols-3">
-                <section className="card p-4 lg:col-span-2">
-                  <div className="flex items-center justify-between mb-3">
-                    <h2 className="font-semibold">Server Performance</h2>
-                    <div className="text-xs text-slate-400">Last hour</div>
-                  </div>
-                  <MiniArea points={[5, 12, 20, 18, 30, 24, 26, 35, 28, 40, 38, 42]} color="#60a5fa" />
-                  <div className="grid grid-cols-3 gap-3 mt-3">
-                    <MiniArea points={[10, 12, 8, 14, 18, 16, 20, 22, 21, 25, 24, 26]} color="#34d399" />
-                    <MiniArea points={[2, 4, 3, 5, 8, 7, 11, 10, 9, 12, 11, 13]} color="#fbbf24" />
-                    <MiniArea points={[1, 2, 2, 3, 4, 3, 5, 6, 7, 6, 8, 9]} color="#a78bfa" />
-                  </div>
-                </section>
-
-                <section className="card p-4">
-                  <h2 className="font-semibold mb-3">Player History</h2>
-                  <MiniArea points={[0, 1, 2, 3, 3, 5, 8, 6, 7, 9, 8, 10]} color="#f472b6" />
-                  <div className="mt-2 text-xs text-slate-400">Connected players over time</div>
-                </section>
+                <LivePerformance serverId={srv.id} />
+                <PlayerHistory serverId={srv.id} />
               </div>
 
               {/* Facts and metadata */}
