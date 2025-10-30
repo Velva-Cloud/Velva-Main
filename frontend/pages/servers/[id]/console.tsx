@@ -21,8 +21,13 @@ export default function ServerConsolePage() {
   const [consoleLines, setConsoleLines] = useState<string[]>([]);
   const [cmd, setCmd] = useState('');
   const [busy, setBusy] = useState(false);
+  const [connected, setConnected] = useState(false);
+  const [autoScroll, setAutoScroll] = useState(true);
+  const [wrap, setWrap] = useState(true);
+
   const readerRef = useRef<ReadableStreamDefaultReader<Uint8Array> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const viewRef = useRef<HTMLPreElement | null>(null);
 
   const [events, setEvents] = useState<Array<{ id: number; ts: string; type: string; message?: string }>>([]);
 
@@ -71,9 +76,11 @@ export default function ServerConsolePage() {
         } catch {
           setConsoleLines(prev => [...prev, `Failed to open console stream (HTTP ${res.status})`]);
         }
+        setConnected(false);
         toast.show('Failed to open console stream', 'error');
         return;
       }
+      setConnected(true);
       const reader = res.body.getReader();
       readerRef.current = reader;
       const decoder = new TextDecoder();
@@ -81,6 +88,7 @@ export default function ServerConsolePage() {
       const pump = async (): Promise<void> => {
         const r = await reader.read();
         if (r.done) {
+          setConnected(false);
           setConsoleLines(prev => prev.length ? [...prev, '[INFO] Log stream ended'] : ['[INFO] Log stream ended']);
           return;
         }
@@ -95,7 +103,6 @@ export default function ServerConsolePage() {
             try { setConsoleLines(prev => [...prev, JSON.parse(line.slice(6))]); }
             catch { setConsoleLines(prev => [...prev, line.slice(6)]); }
           } else {
-            // If server sent a comment or ping, show it subtly
             const ping = part.split('\n').find(l => l.startsWith(': '));
             if (ping) setConsoleLines(prev => [...prev, ping.slice(2)]);
           }
@@ -106,6 +113,7 @@ export default function ServerConsolePage() {
     } catch (e: any) {
       const msg = e?.message ? `Error: ${e.message}` : 'Error opening console stream.';
       setConsoleLines(prev => [...prev, msg]);
+      setConnected(false);
     }
   };
 
@@ -114,6 +122,7 @@ export default function ServerConsolePage() {
     abortRef.current = null;
     try { readerRef.current?.cancel(); } catch {}
     readerRef.current = null;
+    setConnected(false);
   };
 
   useEffect(() => {
@@ -123,6 +132,16 @@ export default function ServerConsolePage() {
     }
     return () => stopConsole();
   }, [id]);
+
+  // autoscroll when new lines arrive
+  useEffect(() => {
+    if (!autoScroll) return;
+    const el = viewRef.current;
+    if (!el) return;
+    try {
+      el.scrollTop = el.scrollHeight;
+    } catch {}
+  }, [consoleLines, autoScroll]);
 
   const runCmd = async () => {
     if (!id || !cmd.trim()) return;
@@ -141,11 +160,23 @@ export default function ServerConsolePage() {
     }
   };
 
+  const downloadBuffer = () => {
+    const blob = new Blob([consoleLines.join('\n') || ''], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `console-${sid || 'server'}.log`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
   return (
     <>
       <Head><title>Console • {srvName || id}</title></Head>
       <NavBar />
-      <main className="max-w-5xl mx-auto px-6 py-10">
+      <main className="max-w-6xl mx-auto px-6 py-10">
         <div className="flex gap-6">
           <ServerSidebar serverId={sid} current="console" />
           <div className="flex-1">
@@ -154,27 +185,46 @@ export default function ServerConsolePage() {
               <a href={sid ? `/servers/${sid}` : '#'} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Back to overview</a>
             </div>
             <section className="card p-4 mt-4">
-              <div className="flex items-center justify-between">
-                <div className="flex gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs border ${connected ? 'bg-emerald-700/20 text-emerald-300 border-emerald-700' : 'bg-red-700/20 text-red-300 border-red-700'}`}>
+                    {connected ? 'Connected to socket' : 'Disconnected'}
+                  </span>
                   <button onClick={() => { setConsoleLines([]); startConsole(); fetchEvents(); }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Reconnect</button>
-                  <button onClick={async () => {
-                    try {
-                      const res = await api.get(`/servers/${id}/logs-last`, { params: { tail: 400 } });
-                      const logs = (res.data?.logs || '').toString();
-                      if (logs) {
-                        setConsoleLines(prev => [...prev, '--- last logs ---', logs, '--- end ---']);
-                      } else {
-                        setConsoleLines(prev => [...prev, 'No recent logs']);
-                      }
-                    } catch (e: any) {
-                      setConsoleLines(prev => [...prev, e?.response?.data?.error ? `Logs error: ${e.response.data.error}` : 'Logs fetch failed']);
-                    }
-                  }} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Fetch last logs</button>
                   <button onClick={stopConsole} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Stop</button>
+                  <button onClick={() => setConsoleLines([])} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Clear</button>
+                  <button onClick={downloadBuffer} className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800">Download</button>
+                </div>
+                <div className="flex items-center gap-3">
+                  <label className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" checked={wrap} onChange={(e) => setWrap(e.target.checked)} />
+                    Wrap
+                  </label>
+                  <label className="flex items-center gap-1 text-xs">
+                    <input type="checkbox" checked={autoScroll} onChange={(e) => setAutoScroll(e.target.checked)} />
+                    Auto-scroll
+                  </label>
+                  <button
+                    onClick={async () => {
+                      try {
+                        const res = await api.get(`/servers/${id}/logs-last`, { params: { tail: 400 } });
+                        const logs = (res.data?.logs || '').toString();
+                        if (logs) {
+                          setConsoleLines(prev => [...prev, '--- last logs ---', logs, '--- end ---']);
+                        } else {
+                          setConsoleLines(prev => [...prev, 'No recent logs']);
+                        }
+                      } catch (e: any) {
+                        setConsoleLines(prev => [...prev, e?.response?.data?.error ? `Logs error: ${e.response.data.error}` : 'Logs fetch failed']);
+                      }
+                    }}
+                    className="px-3 py-1 rounded border border-slate-800 hover:bg-slate-800"
+                  >
+                    Fetch last logs
+                  </button>
                 </div>
               </div>
 
-              {/* Advisory hint */}
               {hint === 'minecraft_eula_required' && (
                 <div className="mt-3 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
                   This server appears to be a Minecraft server and the process exited. Type <span className="font-semibold">true</span> below to accept the EULA and it will restart.
@@ -186,7 +236,6 @@ export default function ServerConsolePage() {
                 </div>
               )}
 
-              {/* Recent server events (help surface errors) */}
               {events.length > 0 && (
                 <div className="mt-3">
                   <div className="text-xs subtle mb-1">Recent events</div>
@@ -201,11 +250,15 @@ export default function ServerConsolePage() {
                 </div>
               )}
 
-              <pre className="mt-3 text-xs bg-slate-800/70 rounded p-3 overflow-auto" style={{ minHeight: 240, maxHeight: 480 }}>
+              <pre
+                ref={viewRef}
+                className={`mt-3 text-xs bg-slate-900 rounded p-3 overflow-auto border border-slate-800 ${wrap ? 'whitespace-pre-wrap' : 'whitespace-pre'}`}
+                style={{ minHeight: 320, maxHeight: 600 }}
+              >
                 {consoleLines.length ? consoleLines.join('\n') : 'Connecting…'}
               </pre>
               <div className="mt-3 flex gap-2">
-                <input value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="Enter command" className="input flex-1" onKeyDown={(e) => { if (e.key === 'Enter') runCmd(); }} />
+                <input value={cmd} onChange={(e) => setCmd(e.target.value)} placeholder="Type command here…" className="input flex-1" onKeyDown={(e) => { if (e.key === 'Enter') runCmd(); }} />
                 <button onClick={runCmd} disabled={busy || !cmd.trim()} className={`px-3 py-1 rounded bg-slate-700 hover:bg-slate-600 ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}>Run</button>
               </div>
             </section>
