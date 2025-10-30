@@ -667,6 +667,7 @@ export class ServersService {
 
     // Special handling: allow "true" to accept EULA for Minecraft servers and restart
     const normalized = (cmd || '').trim().toLowerCase();
+    let isMinecraft = false;
     try {
       // Determine current image (plan or override)
       const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
@@ -682,20 +683,31 @@ export class ServersService {
       if (override && typeof override === 'string' && override.trim().length > 0) {
         image = override.trim();
       }
+      isMinecraft = !!(image && image.includes('itzg/minecraft-server'));
 
       // If Minecraft image and user typed "true", accept EULA and restart
-      if (image && image.includes('itzg/minecraft-server') && normalized === 'true') {
+      if (isMinecraft && normalized === 'true') {
         // Write eula.txt on the persistent volume root; for MC mountPath defaults to /data
         return this.acceptEula(serverId);
       }
     } catch {
-      // Fall through to normal exec on any detection failure
+      // proceed
     }
 
     const baseURL = await this.nodeBaseUrl(s.nodeId);
     if (!baseURL && !process.env.DAEMON_URL) {
       return { ok: false, output: 'Agent not configured; cannot execute commands.' } as any;
     }
+
+    // For Minecraft, route commands through rcon-cli inside the container
+    if (isMinecraft) {
+      const toSend = (cmd || '').trim();
+      // basic escaping for shell
+      const escaped = toSend.replace(/(["`$\\])/g, '\\$1');
+      return this.agent.exec(baseURL, serverId, `rcon-cli ${escaped}`);
+    }
+
+    // Default: run inside container shell
     return this.agent.exec(baseURL, serverId, cmd);
   }
 
