@@ -791,6 +791,16 @@ export class ServersService {
     return this.agent.fsRename(baseURL, serverId, from, to);
   }
 
+  async getStats(serverId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
+    return this.agent.getStats(baseURL, serverId);
+  }
+
   private async recordEvent(serverId: number, type: string, message?: string, data?: any, userId?: number | null) {
     try {
       await this.prisma.serverEvent.create({

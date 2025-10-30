@@ -52,6 +52,90 @@ function MiniArea({ points, color = '#60a5fa' }: { points: number[]; color?: str
   );
 }
 
+// Live metrics row + hooks
+function MetricsRow({ serverId, createdAt }: { serverId: number; createdAt: string }) {
+  const [cpu, setCpu] = useState<number | null>(null);
+  const [ramPct, setRamPct] = useState<number | null>(null);
+  const [pids, setPids] = useState<number | null>(null);
+  const [netRate, setNetRate] = useState<string>('—');
+  const [cpuPoints, setCpuPoints] = useState<number[]>([]);
+  const [ramPoints, setRamPoints] = useState<number[]>([]);
+  const [rxPrev, setRxPrev] = useState<number | null>(null);
+  const [txPrev, setTxPrev] = useState<number | null>(null);
+  const [lastTs, setLastTs] = useState<number>(Date.now());
+
+  useEffect(() => {
+    let alive = true;
+    const pull = async () => {
+      try {
+        const res = await api.get(`/servers/${serverId}/metrics`);
+        const m = res.data || {};
+        if (!alive || !m) return;
+        const c = Number(m.cpuPercent ?? 0);
+        const usage = Number(m.mem?.usage ?? 0);
+        const limit = Number(m.mem?.limit ?? 0) || 1;
+        const pct = Math.max(0, Math.min(100, (usage / limit) * 100));
+        setCpu(Number(c.toFixed(1)));
+        setRamPct(Number(pct.toFixed(1)));
+        setPids(Number(m.pids ?? 0));
+
+        setCpuPoints(prev => [...prev.slice(-59), Number(c.toFixed(1))]);
+        setRamPoints(prev => [...prev.slice(-59), Number(pct.toFixed(1))]);
+
+        // simple net rate calc in KB/s based on delta and interval
+        const rx = Number(m.net?.rxBytes ?? 0);
+        const tx = Number(m.net?.txBytes ?? 0);
+        const now = Date.now();
+        const dt = Math.max(500, now - lastTs) / 1000;
+        if (rxPrev !== null && txPrev !== null) {
+          const rxRate = (rx - rxPrev) / 1024 / dt;
+          const txRate = (tx - txPrev) / 1024 / dt;
+          setNetRate(`${rxRate.toFixed(1)}kB/s ↓ • ${txRate.toFixed(1)}kB/s ↑`);
+        }
+        setRxPrev(rx);
+        setTxPrev(tx);
+        setLastTs(now);
+      } catch {
+        // ignore
+      }
+    };
+    pull();
+    const t = setInterval(pull, 5000);
+    return () => { alive = false; clearInterval(t); };
+  }, [serverId]);
+
+  const pill = (label: string, value: string, tone: 'sky' | 'violet' | 'emerald' | 'amber' | 'slate' = 'slate') => (
+    <div className={`px-3 py-2 rounded-lg border bg-slate-900/60 ${tone === 'emerald' ? 'border-emerald-700' : tone === 'amber' ? 'border-amber-700' : tone === 'violet' ? 'border-violet-700' : tone === 'sky' ? 'border-sky-700' : 'border-slate-700'}`}>
+      <div className="text-[11px] uppercase tracking-wide text-slate-400">{label}</div>
+      <div className="text-lg font-semibold">{value}</div>
+    </div>
+  );
+
+  return (
+    <>
+      <div className="relative z-10 mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
+        {pill('CPU', cpu !== null ? `${cpu}%` : '—', 'violet')}
+        {pill('RAM', ramPct !== null ? `${ramPct}%` : '—', 'emerald')}
+        {pill('Network', netRate, 'sky')}
+        {pill('PIDs', pids !== null ? String(pids) : '—', 'amber')}
+        {pill('Uptime', new Date(createdAt).toLocaleDateString(), 'slate')}
+      </div>
+
+      {/* performance mini charts */}
+      <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="rounded border border-slate-800 bg-slate-900/60 p-2">
+          <div className="text-xs text-slate-400 mb-1">CPU % (last 60 samples)</div>
+          <MiniArea points={cpuPoints.length ? cpuPoints : [0]} color="#60a5fa" />
+        </div>
+        <div className="rounded border border-slate-800 bg-slate-900/60 p-2">
+          <div className="text-xs text-slate-400 mb-1">RAM % (last 60 samples)</div>
+          <MiniArea points={ramPoints.length ? ramPoints : [0]} color="#34d399" />
+        </div>
+      </div>
+    </>
+  );
+}
+
 export default function ServerPage() {
   useRequireAuth();
   const toast = useToast();
@@ -300,13 +384,7 @@ export default function ServerPage() {
                 </div>
 
                 {/* Status row */}
-                <div className="relative z-10 mt-6 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-3">
-                  {statusPill('CPU', '—', 'violet')}
-                  {statusPill('RAM', '—', 'emerald')}
-                  {statusPill('DISK', '—', 'sky')}
-                  {statusPill('Players', '—', 'amber')}
-                  {statusPill('Uptime', new Date(srv.createdAt).toLocaleDateString(), 'slate')}
-                </div>
+                <MetricsRow serverId={srv.id} createdAt={srv.createdAt} />
               </section>
 
               {err && <div className="mt-3 text-red-400">{err}</div>}

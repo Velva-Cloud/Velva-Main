@@ -213,6 +213,11 @@ export class AgentClientService {
     return res.data;
   }
 
+  async getStats(baseURL: string | undefined, serverId: number) {
+    const res = await this.getClient(baseURL).get(`/stats/${serverId}`);
+    return res.data;
+  }
+
   async fsDownloadStream(
     baseURL: string | undefined,
     serverId: number,

@@ -289,6 +289,65 @@ function startHttpsServer() {
     }
   });
 
+  // Per-container instantaneous statistics (non-stream)
+  app.get('/stats/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+      const stats: any = await container.stats({ stream: false } as any);
+      const now = new Date().toISOString();
+      const cpuStats = stats.cpu_stats || {};
+      const preCpu = stats.precpu_stats || {};
+      const cpuDelta = Math.max(0, (cpuStats.cpu_usage?.total_usage || 0) - (preCpu.cpu_usage?.total_usage || 0));
+      const systemDelta = Math.max(1, (cpuStats.system_cpu_usage || 0) - (preCpu.system_cpu_usage || 0));
+      const online = (cpuStats.online_cpus || cpuStats.cpu_usage?.percpu_usage?.length || 1);
+      const cpuPercent = Math.max(0, Math.min(1000, (cpuDelta / systemDelta) * online * 100));
+
+      const memStats = stats.memory_stats || {};
+      const cache = Number(memStats.stats?.cache || 0);
+      const memUsage = Math.max(0, Number(memStats.usage || 0) - cache);
+      const memLimit = Math.max(0, Number(memStats.limit || 0));
+
+      // Network RX/TX sum
+      let rx = 0, tx = 0;
+      const nets = stats.networks || {};
+      for (const k of Object.keys(nets)) {
+        rx += Number(nets[k]?.rx_bytes || 0);
+        tx += Number(nets[k]?.tx_bytes || 0);
+      }
+
+      // Block IO read/write sum
+      let blkRead = 0, blkWrite = 0;
+      const io = stats.blkio_stats?.io_service_bytes_recursive || [];
+      if (Array.isArray(io)) {
+        for (const rec of io) {
+          const op = (rec?.op || '').toString().toLowerCase();
+          const v = Number(rec?.value || 0);
+          if (op === 'read') blkRead += v;
+          if (op === 'write') blkWrite += v;
+        }
+      }
+
+      const pids = Number(stats.pids_stats?.current || 0);
+
+      res.json({
+        ts: now,
+        cpuPercent,
+        mem: { usage: memUsage, limit: memLimit },
+        net: { rxBytes: rx, txBytes: tx },
+        blkio: { readBytes: blkRead, writeBytes: blkWrite },
+        pids,
+      });
+    } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
+      res.status(500).json({ error: e?.message || 'stats_failed' });
+    }
+  });
+
   app.get('/inventory', async (_req, res) => {
     try {
       const list = await docker.listContainers({ all: true });

@@ -356,6 +356,24 @@ export class ServersController {
     return this.service.unsuspend(id, actor.userId, body.reason);
   }
 
+  // Realtime metrics proxy
+  @Get(':id/metrics')
+  @SkipThrottle()
+  async metrics(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
+    const user = req.user as { userId: number; role: Role };
+    const s = await this.service.getById(id);
+    if (!s) return null;
+    if (s.userId !== user.userId && !(user.role === Role.SUPPORT || user.role === Role.ADMIN || user.role === Role.OWNER)) {
+      const ar = await this.service.getAccessRole(id, user.userId);
+      if (!ar) return null;
+    }
+    try {
+      return await this.service.getStats(id);
+    } catch (e: any) {
+      return { error: e?.message || 'metrics_unavailable' };
+    }
+  }
+
   // Server access management
   @Get(':id/access')
   async accessList(@Request() req: any, @Param('id', ParseIntPipe) id: number) {
