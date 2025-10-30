@@ -108,8 +108,30 @@ export class ServersService {
         // ignore port override failures
       }
     } else if ((node as any)?.publicIp) {
-      // Use node public ip if available, without inventing a port
-      ip = (node as any).publicIp;
+      // Try to detect mapped host port directly from agent inventory
+      try {
+        const baseURL = await this.nodeBaseUrl(s.nodeId);
+        if (baseURL || process.env.DAEMON_URL) {
+          const inv = await this.agent.inventory(baseURL);
+          const cont = inv?.containers?.find((c: any) => c.serverId === s.id);
+          if (cont && Array.isArray((cont as any).ports)) {
+            // Prefer mapping for private 25565/tcp
+            const match = (cont as any).ports.find((p: any) => Number(p.privatePort) === 25565 && String(p.type || '').toLowerCase() === 'tcp' && Number(p.publicPort) > 0);
+            const hostPort = match ? Number(match.publicPort) : null;
+            if (hostPort && Number.isFinite(hostPort)) {
+              ip = `${(node as any).publicIp}:${hostPort}`;
+            } else {
+              ip = (node as any).publicIp;
+            }
+          } else {
+            ip = (node as any).publicIp;
+          }
+        } else {
+          ip = (node as any).publicIp;
+        }
+      } catch {
+        ip = (node as any).publicIp;
+      }
     }
 
     const provisionStatus = provLog

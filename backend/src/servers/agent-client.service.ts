@@ -138,7 +138,7 @@ export class AgentClientService {
     }
   }
 
-  async inventory(baseURL: string | undefined): Promise<{ containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> }> {
+  async inventory(baseURL: string | undefined): Promise<{ containers: Array<{ id: string; name: string; serverId?: number; running: boolean; ports?: Array<{ privatePort: number; publicPort: number | null; type: string }> }> }> {
     const res = await this.getClient(baseURL).get('/inventory');
     return res.data;
   }

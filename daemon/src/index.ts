@@ -456,7 +456,12 @@ function startHttpsServer() {
         const m = name.match(/^vc-(\d+)$/);
         const serverId = m ? Number(m[1]) : undefined;
         const running = info.State === 'running';
-        return { id: info.Id, name, serverId, running };
+        const ports = (info.Ports || []).map(p => ({
+          privatePort: p.PrivatePort,
+          publicPort: p.PublicPort || null,
+          type: p.Type || 'tcp',
+        }));
+        return { id: info.Id, name, serverId, running, ports };
       });
       res.json({ containers });
     } catch (e: any) {
