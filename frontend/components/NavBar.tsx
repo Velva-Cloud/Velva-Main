@@ -6,10 +6,8 @@ export default function NavBar() {
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
-
-  // Admin dropdown state
-  const [adminOpen, setAdminOpen] = useState(false);
-  const adminRef = useRef<HTMLDivElement | null>(null);
+  const [openConsole, setOpenConsole] = useState(false);
+  const consoleRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -19,25 +17,29 @@ export default function NavBar() {
     }
   }, []);
 
-  // Close admin dropdown when clicking outside
+  // Close Console dropdown when clicking outside
   useEffect(() => {
     const handler = (ev: MouseEvent) => {
-      if (!adminRef.current) return;
+      if (!consoleRef.current) return;
       const target = ev.target as Node;
-      if (adminRef.current.contains(target)) return;
-      setAdminOpen(false);
+      if (consoleRef.current.contains(target)) return;
+      setOpenConsole(false);
     };
-    if (adminOpen) document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [adminOpen]);
+    if (openConsole) {
+      document.addEventListener('mousedown', handler);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handler);
+    };
+  }, [openConsole]);
 
   const logout = () => {
     localStorage.removeItem('token');
     window.location.href = '/';
   };
 
-  const canAdmin = role === 'ADMIN' || role === 'OWNER';
-  const canSupport = role === 'SUPPORT' || canAdmin;
+  const canSupport = role && (role === 'SUPPORT' || role === 'ADMIN' || role === 'OWNER');
+  const canAdmin = role && (role === 'ADMIN' || role === 'OWNER');
 
   return (
     <nav className="sticky top-0 z-40 backdrop-blur">
@@ -46,43 +48,49 @@ export default function NavBar() {
           <Link href="/" className="flex items-center gap-3">
             <img
               src="https://velvacloud.com/logo.png"
-              alt="Logo"
+              alt="VelvaCloud"
               className="h-8 w-auto"
             />
-            <span className="sr-only">Home</span>
+            <span className="sr-only">VelvaCloud</span>
           </Link>
 
           {/* Desktop nav */}
           <div className="hidden md:flex items-center gap-4">
             <Link href="/dashboard" className="nav-link">Dashboard</Link>
             {token && <Link href="/billing" className="nav-link">Billing</Link>}
-            {canSupport && <Link href="/support/inbox" className="nav-link">Support</Link>}
-            {canAdmin && (
-              <div className="relative" ref={adminRef}>
+
+            {(canSupport || canAdmin) && (
+              <div className="relative" ref={consoleRef}>
                 <button
                   className="nav-link inline-flex items-center gap-1"
-                  onClick={() => setAdminOpen(v => !v)}
-                  aria-haspopup="menu"
-                  aria-expanded={adminOpen}
+                  onClick={() => setOpenConsole((v) => !v)}
                 >
-                  Admin
-                  <svg width="16" height="16" viewBox="0 0 20 20" className={`transition-transform ${adminOpen ? 'rotate-180' : ''}`}>
+                  Console
+                  <svg width="16" height="16" viewBox="0 0 20 20" className={`transition-transform ${openConsole ? 'rotate-180' : ''}`}>
                     <path d="M5 7l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" />
                   </svg>
                 </button>
-                {adminOpen && (
-                  <div className="absolute right-0 mt-2 w-48 rounded-lg bg-slate-900/90 border border-slate-800 shadow-lg p-2">
-                    <Link href="/admin" className="dropdown-link">Overview</Link>
-                    <Link href="/admin/plans" className="dropdown-link">Plans</Link>
-                    <Link href="/admin/servers" className="dropdown-link">Servers</Link>
-                    <Link href="/admin/users" className="dropdown-link">Users</Link>
-                    <Link href="/admin/logs" className="dropdown-link">Logs</Link>
-                    <Link href="/admin/settings" className="dropdown-link">Settings</Link>
-                    <Link href="/admin/finance" className="dropdown-link">Finance</Link>
+                {openConsole && (
+                  <div className="absolute right-0 mt-2 w-44 rounded-lg bg-slate-900/90 border border-slate-800 shadow-lg p-2">
+                    {canSupport && (
+                      <>
+                        <Link href="/support/inbox" className="dropdown-link">Support • Inbox</Link>
+                        <Link href="/support/users" className="dropdown-link">Support • Users</Link>
+                        <Link href="/support/servers" className="dropdown-link">Support • Servers</Link>
+                      </>
+                    )}
+                    {canAdmin && (
+                      <>
+                        <Link href="/admin" className="dropdown-link">Admin Home</Link>
+                        <Link href="/admin/logs" className="dropdown-link">Admin • Logs</Link>
+                        <Link href="/admin/plans" className="dropdown-link">Admin • Plans</Link>
+                      </>
+                    )}
                   </div>
                 )}
               </div>
             )}
+
             {!token ? (
               <>
                 <Link href="/login" className="nav-link">Login</Link>
@@ -110,19 +118,27 @@ export default function NavBar() {
           <div className="md:hidden px-6 pb-4 space-y-2">
             <Link href="/dashboard" className="mobile-link">Dashboard</Link>
             {token && <Link href="/billing" className="mobile-link">Billing</Link>}
-            {canSupport && <Link href="/support/inbox" className="mobile-link">Support</Link>}
-            {canAdmin && (
+
+            {(canSupport || canAdmin) && (
               <>
-                <div className="text-xs uppercase text-slate-400 mt-2">Admin</div>
-                <Link href="/admin" className="mobile-link">Overview</Link>
-                <Link href="/admin/plans" className="mobile-link">Plans</Link>
-                <Link href="/admin/servers" className="mobile-link">Servers</Link>
-                <Link href="/admin/users" className="mobile-link">Users</Link>
-                <Link href="/admin/logs" className="mobile-link">Logs</Link>
-                <Link href="/admin/settings" className="mobile-link">Settings</Link>
-                <Link href="/admin/finance" className="mobile-link">Finance</Link>
+                <div className="text-xs uppercase text-slate-400 mt-2">Console</div>
+                {canSupport && (
+                  <>
+                    <Link href="/support/inbox" className="mobile-link">Support • Inbox</Link>
+                    <Link href="/support/users" className="mobile-link">Support • Users</Link>
+                    <Link href="/support/servers" className="mobile-link">Support • Servers</Link>
+                  </>
+                )}
+                {canAdmin && (
+                  <>
+                    <Link href="/admin" className="mobile-link">Admin Home</Link>
+                    <Link href="/admin/logs" className="mobile-link">Admin • Logs</Link>
+                    <Link href="/admin/plans" className="mobile-link">Admin • Plans</Link>
+                  </>
+                )}
               </>
             )}
+
             {!token ? (
               <>
                 <Link href="/login" className="mobile-link">Login</Link>
