@@ -1,11 +1,15 @@
 import Link from 'next/link';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getUserRole } from '../utils/auth';
 
 export default function NavBar() {
   const [token, setToken] = useState<string | null>(null);
   const [role, setRole] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
+
+  // Admin dropdown state
+  const [adminOpen, setAdminOpen] = useState(false);
+  const adminRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -14,6 +18,18 @@ export default function NavBar() {
       setRole(getUserRole());
     }
   }, []);
+
+  // Close admin dropdown when clicking outside
+  useEffect(() => {
+    const handler = (ev: MouseEvent) => {
+      if (!adminRef.current) return;
+      const target = ev.target as Node;
+      if (adminRef.current.contains(target)) return;
+      setAdminOpen(false);
+    };
+    if (adminOpen) document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [adminOpen]);
 
   const logout = () => {
     localStorage.removeItem('token');
@@ -41,7 +57,32 @@ export default function NavBar() {
             <Link href="/dashboard" className="nav-link">Dashboard</Link>
             {token && <Link href="/billing" className="nav-link">Billing</Link>}
             {canSupport && <Link href="/support/inbox" className="nav-link">Support</Link>}
-            {canAdmin && <Link href="/admin" className="nav-link">Admin</Link>}
+            {canAdmin && (
+              <div className="relative" ref={adminRef}>
+                <button
+                  className="nav-link inline-flex items-center gap-1"
+                  onClick={() => setAdminOpen(v => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={adminOpen}
+                >
+                  Admin
+                  <svg width="16" height="16" viewBox="0 0 20 20" className={`transition-transform ${adminOpen ? 'rotate-180' : ''}`}>
+                    <path d="M5 7l5 5 5-5" fill="none" stroke="currentColor" strokeWidth="2" />
+                  </svg>
+                </button>
+                {adminOpen && (
+                  <div className="absolute right-0 mt-2 w-48 rounded-lg bg-slate-900/90 border border-slate-800 shadow-lg p-2">
+                    <Link href="/admin" className="dropdown-link">Overview</Link>
+                    <Link href="/admin/plans" className="dropdown-link">Plans</Link>
+                    <Link href="/admin/servers" className="dropdown-link">Servers</Link>
+                    <Link href="/admin/users" className="dropdown-link">Users</Link>
+                    <Link href="/admin/logs" className="dropdown-link">Logs</Link>
+                    <Link href="/admin/settings" className="dropdown-link">Settings</Link>
+                    <Link href="/admin/finance" className="dropdown-link">Finance</Link>
+                  </div>
+                )}
+              </div>
+            )}
             {!token ? (
               <>
                 <Link href="/login" className="nav-link">Login</Link>
@@ -70,7 +111,18 @@ export default function NavBar() {
             <Link href="/dashboard" className="mobile-link">Dashboard</Link>
             {token && <Link href="/billing" className="mobile-link">Billing</Link>}
             {canSupport && <Link href="/support/inbox" className="mobile-link">Support</Link>}
-            {canAdmin && <Link href="/admin" className="mobile-link">Admin</Link>}
+            {canAdmin && (
+              <>
+                <div className="text-xs uppercase text-slate-400 mt-2">Admin</div>
+                <Link href="/admin" className="mobile-link">Overview</Link>
+                <Link href="/admin/plans" className="mobile-link">Plans</Link>
+                <Link href="/admin/servers" className="mobile-link">Servers</Link>
+                <Link href="/admin/users" className="mobile-link">Users</Link>
+                <Link href="/admin/logs" className="mobile-link">Logs</Link>
+                <Link href="/admin/settings" className="mobile-link">Settings</Link>
+                <Link href="/admin/finance" className="mobile-link">Finance</Link>
+              </>
+            )}
             {!token ? (
               <>
                 <Link href="/login" className="mobile-link">Login</Link>
