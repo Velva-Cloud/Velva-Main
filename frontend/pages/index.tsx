@@ -74,17 +74,74 @@ function PlanCard({ plan, label, highlight }: { plan: Plan | null; label: string
   );
 }
 
-function CustomCard() {
+function median(values: number[]) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function CustomCard({ plans }: { plans: Plan[] }) {
+  // Determine per-GB price: prefer a custom plan with pricePerGB, else median of existing plan price/GB ratios, else fallback.
+  const explicitPerGB = useMemo(() => {
+    const fromCustom = plans
+      .map(p => (p.resources?.pricePerGB != null ? Number(p.resources.pricePerGB) : null))
+      .filter((x): x is number => typeof x === 'number' && isFinite(x) && x > 0);
+    if (fromCustom.length) return median(fromCustom);
+    const ratios = plans
+      .map(p => {
+        const g = ramGB(p);
+        const price = Number(p.pricePerMonth);
+        if (!g || !isFinite(price) || price <= 0) return null;
+        return price / g;
+      })
+      .filter((x): x is number => typeof x === 'number' && isFinite(x) && x > 0);
+    if (ratios.length) return median(ratios);
+    return 2.5; // fallback £/GB
+  }, [plans]);
+
+  const minGB = 32;
+  const maxGB = 256;
+  const [gb, setGb] = useState<number>(minGB);
+  const price = gbp(gb * explicitPerGB);
+
   return (
     <div className="relative rounded-xl border border-slate-800 bg-slate-900/60 card p-5">
       <div className="text-2xl font-extrabold">Build Your Own Server</div>
       <div className="mt-1 subtle text-sm">32GB+ RAM • Save & Swap Instances • Fully Custom</div>
+
+      {/* Slider */}
       <div className="mt-4">
-        <a className="btn btn-primary w-full" href="/register">Get Started</a>
+        <div className="flex items-center justify-between text-sm">
+          <span className="subtle">RAM</span>
+          <span className="font-semibold">{gb} GB</span>
+        </div>
+        <input
+          type="range"
+          min={minGB}
+          max={maxGB}
+          step={1}
+          value={gb}
+          onChange={(e) => setGb(Number(e.target.value))}
+          className="w-full mt-2 appearance-none h-2 rounded bg-slate-800 outline-none accent-cyan-500"
+        />
+        <div className="flex justify-between text-[11px] mt-1 text-slate-400">
+          <span>{minGB}GB</span>
+          <span>{maxGB}GB</span>
+        </div>
       </div>
+
+      {/* Live price */}
+      <div className="mt-3 text-3xl font-extrabold heading-gradient">{price}<span className="text-base text-slate-400"> / mo</span></div>
+
+      <div className="mt-3">
+        <a className="btn btn-primary w-full" href={`/register?ramGB=${gb}`}>Get Started</a>
+      </div>
+
       <div className="mt-4 border-t border-slate-800 pt-3 space-y-2 text-sm">
-        <div className="font-semibold">32GB - 256GB RAM</div>
+        <div className="font-semibold">{minGB}GB - {maxGB}GB RAM</div>
         <div>Choose your size, storage and location. Great for large worlds and communities.</div>
+        {/* Placeholder power image (logo) */}
         <div className="pt-2">
           <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-10 w-auto opacity-80" />
         </div>
@@ -139,10 +196,10 @@ export default function Home() {
 
         {/* Preset packages + custom */}
         <section id="plans" className="grid xl:grid-cols-5 lg:grid-cols-4 sm:grid-cols-2 gap-6">
-          {tierPlans.map((t, idx) => (
+          {tierPlans.map((t) => (
             <PlanCard key={t.gb} plan={t.plan} label={`${t.gb}GB`} highlight={t.gb === 4} />
           ))}
-          <CustomCard />
+          <CustomCard plans={plans} />
         </section>
 
         {/* Fallback if API has no plans at all */}
