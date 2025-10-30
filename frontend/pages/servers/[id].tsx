@@ -60,66 +60,70 @@ function MetricsRow({ serverId, createdAt, diskLimitMb }: { serverId: number; cr
   const [diskStr, setDiskStr] = useState<string>('—');
   const [cpuPoints, setCpuPoints] = useState<number[]>([]);
   const [ramPoints, setRamPoints] = useState<number[]>([]);
-  const [rxPrev, setRxPrev] = useState<number | null>(null);
-  const [txPrev, setTxPrev] = useState<number | null>(null);
-  const [lastTs, setLastTs] = useState<number>(Date.now());
+  const [visible, setVisible] = useState<boolean>(typeof document === 'undefined' ? true : document.visibilityState === 'visible');
 
+  const pullOnce = async () => {
+    try {
+      const res = await api.get(`/servers/${serverId}/metrics`);
+      const m = res.data || {};
+      const c = Number(m.cpuPercent ?? 0);
+      const usage = Number(m.mem?.usage ?? 0);
+      const limit = Number(m.mem?.limit ?? 0) || 1;
+      const pct = Math.max(0, Math.min(100, (usage / limit) * 100));
+      setCpu(Number(c.toFixed(1)));
+      setRamPct(Number(pct.toFixed(1)));
+
+      if (m.players && typeof m.players.online === 'number' && typeof m.players.max === 'number') {
+        setPlayers(`${m.players.online}/${m.players.max}`);
+      } else {
+        setPlayers('—');
+      }
+
+      const used = Number(m.disk?.usedBytes ?? 0);
+      if (used > 0) {
+        const limitMb = typeof diskLimitMb === 'number' && diskLimitMb > 0 ? diskLimitMb : null;
+        const usedMb = used / (1024 * 1024);
+        const usedStr = usedMb >= 1024 ? `${(usedMb / 1024).toFixed(2)} GB` : `${usedMb.toFixed(1)} MB`;
+        if (limitMb) {
+          const p = Math.min(100, Math.max(0, (usedMb / limitMb) * 100));
+          setDiskStr(`${usedStr} • ${p.toFixed(1)}%`);
+        } else {
+          setDiskStr(usedStr);
+        }
+      } else {
+        setDiskStr('—');
+      }
+
+      setCpuPoints(prev => [...prev.slice(-59), Number(c.toFixed(1))]);
+      setRamPoints(prev => [...prev.slice(-59), Number(pct.toFixed(1))]);
+    } catch {
+      // ignore transient
+    }
+  };
+
+  // Start/stop polling based on page visibility
   useEffect(() => {
-    let alive = true;
-    const pull = async () => {
-      try {
-        const res = await api.get(`/servers/${serverId}/metrics`);
-        const m = res.data || {};
-        if (!alive || !m) return;
-        const c = Number(m.cpuPercent ?? 0);
-        const usage = Number(m.mem?.usage ?? 0);
-        const limit = Number(m.mem?.limit ?? 0) || 1;
-        const pct = Math.max(0, Math.min(100, (usage / limit) * 100));
-        setCpu(Number(c.toFixed(1)));
-        setRamPct(Number(pct.toFixed(1)));
-
-        // players
-        if (m.players && typeof m.players.online === 'number' && typeof m.players.max === 'number') {
-          setPlayers(`${m.players.online}/${m.players.max}`);
-        } else {
-          setPlayers('—');
-        }
-
-        // disk
-        const used = Number(m.disk?.usedBytes ?? 0);
-        if (used > 0) {
-          const limitMb = typeof diskLimitMb === 'number' && diskLimitMb > 0 ? diskLimitMb : null;
-          const usedMb = used / (1024 * 1024);
-          const usedStr = usedMb >= 1024 ? `${(usedMb / 1024).toFixed(2)} GB` : `${usedMb.toFixed(1)} MB`;
-          if (limitMb) {
-            const p = Math.min(100, Math.max(0, (usedMb / limitMb) * 100));
-            setDiskStr(`${usedStr} • ${p.toFixed(1)}%`);
-          } else {
-            setDiskStr(usedStr);
-          }
-        } else {
-          setDiskStr('—');
-        }
-
-        setCpuPoints(prev => [...prev.slice(-59), Number(c.toFixed(1))]);
-        setRamPoints(prev => [...prev.slice(-59), Number(pct.toFixed(1))]);
-
-        // maintain lastTs/rx/tx for potential network graph later
-        const rx = Number(m.net?.rxBytes ?? 0);
-        const tx = Number(m.net?.txBytes ?? 0);
-        const now = Date.now();
-        const _dt = Math.max(500, now - lastTs) / 1000;
-        setRxPrev(rx);
-        setTxPrev(tx);
-        setLastTs(now);
-      } catch {
-        // ignore
+    const onVis = () => setVisible(document.visibilityState === 'visible');
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', onVis);
+      // also refresh immediately on focus becoming visible
+      if (document.visibilityState === 'visible') pullOnce();
+    }
+    return () => {
+      if (typeof document !== 'undefined') {
+        document.removeEventListener('visibilitychange', onVis);
       }
     };
-    pull();
-    const t = setInterval(pull, 5000);
-    return () => { alive = false; clearInterval(t); };
   }, [serverId, diskLimitMb]);
+
+  useEffect(() => {
+    if (!visible) return;
+    let alive = true;
+    // pull immediately, then at 30s cadence
+    pullOnce();
+    const t = setInterval(() => { if (alive) pullOnce(); }, 30000);
+    return () => { alive = false; clearInterval(t); };
+  }, [visible, serverId, diskLimitMb]);
 
   const pill = (label: string, value: string, tone: 'sky' | 'violet' | 'emerald' | 'amber' | 'slate' = 'slate') => (
     <div className={`px-3 py-2 rounded-lg border bg-slate-900/60 ${tone === 'emerald' ? 'border-emerald-700' : tone === 'amber' ? 'border-amber-700' : tone === 'violet' ? 'border-violet-700' : tone === 'sky' ? 'border-sky-700' : 'border-slate-700'}`}>
