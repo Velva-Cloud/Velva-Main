@@ -299,7 +299,7 @@ export default function CreateServerPage() {
     },
   ];
 
-  // Advanced settings presets per image
+  // Advanced settings presets per image (no port fields; ports are auto-assigned by the system)
   const presetsByImage: Record<string, Array<{ key: string; label: string; placeholder?: string }>> = {
     'itzg/minecraft-server': [
       { key: 'EULA', label: 'EULA (TRUE/FALSE)', placeholder: 'TRUE' },
@@ -321,7 +321,6 @@ export default function CreateServerPage() {
     ],
     'cm2network/csgo': [
       { key: 'SRCDS_TOKEN', label: 'GSLT Token' },
-      { key: 'SRCDS_PORT', label: 'Server port', placeholder: '27015' },
       { key: 'SRCDS_STARTMAP', label: 'Start map', placeholder: 'de_dust2' },
       { key: 'SRCDS_MAXPLAYERS', label: 'Max players', placeholder: '16' },
     ],
@@ -340,19 +339,15 @@ export default function CreateServerPage() {
     'thijsvanloef/palworld-server-docker': [
       { key: 'SERVERNAME', label: 'Server name' },
       { key: 'SERVERPASSWORD', label: 'Server password' },
-      { key: 'PORT', label: 'Port', placeholder: '8211' },
     ],
     'didstopia/7dtd-server': [
       { key: 'SDTD_ServerName', label: 'Server name' },
-      { key: 'SDTD_ServerPort', label: 'Server port', placeholder: '26900' },
       { key: 'SDTD_ServerPassword', label: 'Server password' },
-      { key: 'SDTD_TelnetPort', label: 'Telnet port', placeholder: '8081' },
     ],
     'cyrinux/pzserver': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'ADMIN_PASSWORD', label: 'Admin password' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'PORT', label: 'Port', placeholder: '16261' },
     ],
     'Hermsi1337/ark-server': [
       { key: 'SESSION_NAME', label: 'Session name' },
@@ -363,22 +358,17 @@ export default function CreateServerPage() {
     'beardedio/terraria': [
       { key: 'WORLD', label: 'World name' },
       { key: 'PASSWORD', label: 'Server password' },
-      { key: 'PORT', label: 'Port', placeholder: '7777' },
     ],
     'devidian/vrising-server': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'GAME_PORT', label: 'Game port', placeholder: '27015' },
     ],
     'wolveix/satisfactory-server': [
-      { key: 'Port', label: 'Game port', placeholder: '7777' },
-      { key: 'PeerPort', label: 'Peer port', placeholder: '7777' },
-      { key: 'QueryPort', label: 'Query port', placeholder: '27015' },
+      // Satisfactory typically auto-configures ports; omit user-set port fields
     ],
     'notruffy/conanexiles': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'GAME_PORT', label: 'Game port', placeholder: '7777' },
     ],
     'jammsen/docker-dontstarvetogether': [
       { key: 'SERVER_NAME', label: 'Server name' },
@@ -387,22 +377,18 @@ export default function CreateServerPage() {
     'didstopia/unturned': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'PORT', label: 'Port', placeholder: '27015' },
     ],
     'nicolas654/eco-server': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'GAME_PORT', label: 'Game port', placeholder: '3000' },
     ],
     'cm2network/pavlov': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'PORT', label: 'Port', placeholder: '7000' },
     ],
     'cm2network/mordhau': [
       { key: 'SERVER_NAME', label: 'Server name' },
       { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'PORT', label: 'Port', placeholder: '7777' },
     ],
     // Space Engineers via SteamCMD/WINE (generic template)
     'ich777/steamcmd': [
@@ -595,6 +581,9 @@ export default function CreateServerPage() {
                   {/* Advanced settings */}
                   <div className="mt-4">
                     <div className="text-sm font-medium mb-2">Advanced settings</div>
+                    <div className="text-xs subtle mb-2">
+                      Only settings supported by the selected image are shown. Network ports are assigned automatically by the system.
+                    </div>
                     <div className="grid gap-3">
                       {(presetsByImage[image] || []).map(p => (
                         <div key={p.key}>
