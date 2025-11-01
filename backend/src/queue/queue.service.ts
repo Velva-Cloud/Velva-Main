@@ -215,7 +215,8 @@ export class QueueService implements OnModuleInit {
         // Determine internal ports if not set by plan/resources
         if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
           const internal = getInternalPorts(image || '');
-          exposePorts = internal.map(p => p.port);
+          // Send ports with protocol so daemon can validate TCP/UDP when opening firewall/NAT
+          exposePorts = internal.map(p => `${p.port}/${p.protocol}`);
         }
 
         // Host port policy hint to daemon

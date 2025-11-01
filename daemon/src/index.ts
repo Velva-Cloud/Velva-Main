@@ -701,8 +701,101 @@ function startHttpsServer() {
     }
   });
 
+  // Persistent port allocation store
+  const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
+  type PortAllocation = { serverId: number; range: [number, number]; ports: number[]; protocol: 'tcp' | 'udp' | 'mixed' };
+  function loadPortStore(): Record<string, PortAllocation> {
+    try {
+      if (!fs.existsSync(PORT_STORE_PATH)) return {};
+      const text = fs.readFileSync(PORT_STORE_PATH, 'utf8');
+      const json = JSON.parse(text);
+      return typeof json === 'object' && json ? json : {};
+    } catch {
+      return {};
+    }
+  }
+  function savePortStore(store: Record<string, PortAllocation>) {
+    try {
+      ensureDir(DATA_DIR);
+      fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
+    } catch {}
+  }
+  async function listUsedHostPorts(): Promise<Set<number>> {
+    const used = new Set<number>();
+    try {
+      const list = await docker.listContainers({ all: true });
+      for (const info of list) {
+        const ports = info.Ports || [];
+        for (const prt of ports) {
+          if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
+        }
+      }
+    } catch {}
+    // Also reserve ports from persisted store to avoid race conditions
+    const store = loadPortStore();
+    for (const key of Object.keys(store)) {
+      const alloc = store[key];
+      for (const p of alloc.ports) used.add(p);
+    }
+    return used;
+  }
+  function allocateContiguous(range: [number, number], count: number, used: Set<number>, seed = 0): number[] | null {
+    const [start, end] = range;
+    const total = Math.max(0, end - start + 1);
+    if (count <= 0 || total < count) return null;
+    let idxStart = (seed % total + total) % total;
+    for (let tries = 0; tries < total; tries++, idxStart = (idxStart + 1) % total) {
+      const candidateStart = start + idxStart;
+      if (candidateStart + count - 1 > end) continue;
+      let ok = true;
+      for (let i = 0; i < count; i++) {
+        const port = candidateStart + i;
+        if (used.has(port)) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        const ports = Array.from({ length: count }, (_, i) => candidateStart + i);
+        for (const p of ports) used.add(p);
+        return ports;
+      }
+    }
+    return null;
+  }
+  function allocateDistinct(range: [number, number], count: number, used: Set<number>, seed = 0): number[] | null {
+    const [start, end] = range;
+    const total = Math.max(0, end - start + 1);
+    if (count <= 0 || total < count) return null;
+    const result: number[] = [];
+    let idx = (seed % total + total) % total;
+    let tries = 0;
+    while (result.length < count && tries < total * 2) {
+      const candidate = start + idx;
+      if (!used.has(candidate)) {
+        used.add(candidate);
+        result.push(candidate);
+      }
+      idx = (idx + 1) % total;
+      tries++;
+    }
+    return result.length === count ? result : null;
+  }
+
   app.post('/provision', async (req, res) => {
-    const { serverId, name, image = 'nginx:alpine', cpu, ramMB, env = {}, mountPath = '/srv', cmd = [], exposePorts = [], forceRecreate = false } = req.body || {};
+    const {
+      serverId,
+      name,
+      image = 'nginx:alpine',
+      cpu,
+      ramMB,
+      env = {},
+      mountPath = '/srv',
+      cmd = [],
+      exposePorts = [],
+      forceRecreate = false,
+      hostPortPolicy,
+    } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
     const containerName = `vc-${serverId}`;
@@ -739,11 +832,16 @@ function startHttpsServer() {
         }
       }
 
-      // Exposed ports
+      // Exposed ports from request: support "<port>/<proto>" to validate protocol
       const exposed: Record<string, {}> = {};
+      const internalPorts: Array<{ containerPort: number; proto: 'tcp' | 'udp' }> = [];
       for (const p of exposePorts || []) {
-        const port = String(p).includes('/') ? String(p) : `${String(p)}/tcp`;
-        exposed[port] = {};
+        const s = String(p);
+        let containerPort = Number(s.split('/')[0]);
+        let proto: 'tcp' | 'udp' = (s.includes('/') && s.split('/')[1] === 'udp') ? 'udp' : 'tcp';
+        if (!Number.isFinite(containerPort) || containerPort <= 0) continue;
+        internalPorts.push({ containerPort, proto });
+        exposed[`${containerPort}/${proto}`] = {};
       }
 
       // CPU units to NanoCpus:
@@ -756,25 +854,57 @@ function startHttpsServer() {
         nanoCpus = Math.round(coreLimit * 1e9);
       }
 
-      // Unique host port assignment for Minecraft
+      // Host port allocation
       let portBindings: Record<string, Array<{ HostPort: string }>> | undefined = undefined;
       let chosenHostPort: number | undefined = undefined;
-      const isMinecraft = typeof image === 'string' && image.includes('itzg/minecraft-server');
-      if (isMinecraft) {
+
+      const store = loadPortStore();
+      const key = String(serverId);
+      const existingAlloc = store[key];
+
+      // Validate protocol family hint
+      const policyRange: [number, number] | undefined = (hostPortPolicy && Array.isArray(hostPortPolicy.hostRange)) ? hostPortPolicy.hostRange : undefined;
+      const policyContig = hostPortPolicy?.contiguous && Number(hostPortPolicy.contiguous) > 0 ? Number(hostPortPolicy.contiguous) : undefined;
+      const policyProto: 'tcp' | 'udp' | 'mixed' = (hostPortPolicy?.protocol as any) || 'mixed';
+
+      if (internalPorts.length > 0 && policyRange) {
+        const used = await listUsedHostPorts();
+        let allocated: number[] | null = null;
+
+        if (policyContig && policyContig > 1) {
+          allocated = allocateContiguous(policyRange, Math.max(policyContig, internalPorts.length), used, serverId);
+        } else {
+          allocated = allocateDistinct(policyRange, internalPorts.length, used, serverId);
+        }
+
+        // Reuse existing allocation if present and sufficient
+        if (existingAlloc && Array.isArray(existingAlloc.ports) && existingAlloc.ports.length >= (allocated?.length || internalPorts.length)) {
+          allocated = existingAlloc.ports.slice(0, Math.max(policyContig || internalPorts.length, internalPorts.length));
+        }
+
+        if (allocated && allocated.length > 0) {
+          // Persist allocation
+          store[key] = { serverId: Number(serverId), range: policyRange, ports: allocated, protocol: policyProto };
+          savePortStore(store);
+
+          // Build PortBindings mapping internal ports to allocated host ports
+          portBindings = {};
+          for (let i = 0; i < internalPorts.length; i++) {
+            const entry = internalPorts[i];
+            const host = allocated[i] || allocated[0];
+            const bindingKey = `${entry.containerPort}/${entry.proto}`;
+            portBindings[bindingKey] = [{ HostPort: String(host) }];
+            // Use the first mapped port as chosenHostPort for convenience
+            if (chosenHostPort === undefined) chosenHostPort = host;
+          }
+        }
+      } else if ((typeof image === 'string' && image.includes('itzg/minecraft-server'))) {
+        // Fallback to legacy MC-only allocation if policy not provided
         const containerPort = 25565;
         const base = Number(process.env.MC_PORT_BASE || 25000);
         const range = Number(process.env.MC_PORT_RANGE || 10000);
         const maxTries = Number(process.env.MC_PORT_MAX_TRIES || 200);
-        const used = new Set<number>();
-        try {
-          const list = await docker.listContainers({ all: true });
-          for (const info of list) {
-            const ports = info.Ports || [];
-            for (const prt of ports) {
-              if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
-            }
-          }
-        } catch {}
+        const used = await listUsedHostPorts();
         let candidate = base + ((serverId * 17) % Math.max(1, range));
         let tries = 0;
         while (used.has(candidate) && tries < maxTries) {
@@ -784,6 +914,9 @@ function startHttpsServer() {
         chosenHostPort = candidate;
         exposed[`${containerPort}/tcp`] = {};
         portBindings = { [`${containerPort}/tcp`]: [{ HostPort: String(chosenHostPort) }] };
+        // Persist legacy allocation too
+        store[key] = { serverId: Number(serverId), range: [base, base + range - 1], ports: [candidate], protocol: 'tcp' };
+        savePortStore(store);
       }
 
       // If container exists and forceRecreate, remove it to apply new config
@@ -914,12 +1047,32 @@ function startHttpsServer() {
     try {
       const container = docker.getContainer(`vc-${id}`);
       await container.remove({ force: true });
+      // Release any persisted host port allocations for this server
+      try {
+        const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
+        const text = fs.existsSync(PORT_STORE_PATH) ? fs.readFileSync(PORT_STORE_PATH, 'utf8') : '';
+        const store = text ? JSON.parse(text) : {};
+        if (store && store[id]) {
+          delete store[id];
+          fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
+        }
+      } catch {}
       res.json({ ok: true });
     } catch (e: any) {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
       // Deleting a missing container is idempotent success
       if (code === 404 || /no such container/i.test(msg)) {
+        // Still release allocation
+        try {
+          const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
+          const text = fs.existsSync(PORT_STORE_PATH) ? fs.readFileSync(PORT_STORE_PATH, 'utf8') : '';
+          const store = text ? JSON.parse(text) : {};
+          if (store && store[id]) {
+            delete store[id];
+            fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
+          }
+        } catch {}
         return res.json({ ok: true, missing: true });
       }
       res.status(500).json({ error: e?.message || 'delete_failed' });
