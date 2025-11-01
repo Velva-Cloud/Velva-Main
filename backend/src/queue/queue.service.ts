@@ -162,16 +162,20 @@ export class QueueService implements OnModuleInit {
         let exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
         const cmd = Array.isArray(resources.cmd) ? resources.cmd : undefined;
 
-        // Check if an image override was provided at creation
+        // Check if an image/env override was provided at creation
         const recentCreates = await this.prisma.log.findMany({
           where: { action: 'server_create' as any },
           orderBy: { id: 'desc' },
           take: 50,
         });
         const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
-        const override = createLog ? (createLog.metadata as any)?.image : undefined;
-        if (override && typeof override === 'string' && override.trim().length > 0) {
-          image = override.trim();
+        const overrideImage = createLog ? (createLog.metadata as any)?.image : undefined;
+        const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
+        if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
+          image = overrideImage.trim();
+        }
+        if (overrideEnv && typeof overrideEnv === 'object') {
+          env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
         // If using Minecraft image set sensible defaults and required env

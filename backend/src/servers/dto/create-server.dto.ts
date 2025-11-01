@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength, IsObject } from 'class-validator';
 
 export class CreateServerDto {
   @ApiProperty({ example: 1 })
@@ -23,4 +23,9 @@ export class CreateServerDto {
   @IsString()
   @IsOptional()
   image?: string;
+
+  @ApiProperty({ description: 'Optional environment variables specific to the selected game image', required: false, type: Object })
+  @IsObject()
+  @IsOptional()
+  env?: Record<string, string>;
 }

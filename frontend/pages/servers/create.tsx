@@ -299,6 +299,134 @@ export default function CreateServerPage() {
     },
   ];
 
+  // Advanced settings presets per image
+  const presetsByImage: Record<string, Array<{ key: string; label: string; placeholder?: string }>> = {
+    'itzg/minecraft-server': [
+      { key: 'EULA', label: 'EULA (TRUE/FALSE)', placeholder: 'TRUE' },
+      { key: 'MOTD', label: 'MOTD', placeholder: 'Welcome to our server!' },
+      { key: 'DIFFICULTY', label: 'Difficulty (peaceful/easy/normal/hard)', placeholder: 'normal' },
+      { key: 'MAX_PLAYERS', label: 'Max players', placeholder: '20' },
+      { key: 'ENABLE_RCON', label: 'Enable RCON (TRUE/FALSE)', placeholder: 'TRUE' },
+      { key: 'RCON_PASSWORD', label: 'RCON password', placeholder: 'auto-generated if blank' },
+      { key: 'SEED', label: 'World Seed', placeholder: 'optional' },
+      { key: 'MODE', label: 'Gamemode (survival/creative/adventure)', placeholder: 'survival' },
+      { key: 'ENABLE_AUTOPAUSE', label: 'Disable autopause (TRUE/FALSE)', placeholder: 'FALSE' },
+      { key: 'MEMORY', label: 'Memory (e.g., 2048M)', placeholder: 'derived from plan if blank' },
+    ],
+    'factoriotools/factorio': [
+      { key: 'FACTORIO_SERVER_NAME', label: 'Server name' },
+      { key: 'FACTORIO_SERVER_PASSWORD', label: 'Server password' },
+      { key: 'SAVE_NAME', label: 'Save name', placeholder: 'default' },
+      { key: 'UPDATE_MODS_ON_START', label: 'Update mods on start (true/false)', placeholder: 'true' },
+    ],
+    'cm2network/csgo': [
+      { key: 'SRCDS_TOKEN', label: 'GSLT Token' },
+      { key: 'SRCDS_PORT', label: 'Server port', placeholder: '27015' },
+      { key: 'SRCDS_STARTMAP', label: 'Start map', placeholder: 'de_dust2' },
+      { key: 'SRCDS_MAXPLAYERS', label: 'Max players', placeholder: '16' },
+    ],
+    'didstopia/rust-server': [
+      { key: 'RUST_SERVER_NAME', label: 'Server name' },
+      { key: 'RUST_SERVER_DESCRIPTION', label: 'Description' },
+      { key: 'RUST_SERVER_URL', label: 'Server URL' },
+      { key: 'RUST_RCON_PASSWORD', label: 'RCON password' },
+    ],
+    'lloesche/valheim-server': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'WORLD_NAME', label: 'World name' },
+      { key: 'PUBLIC', label: 'Public (1=Yes,0=No)', placeholder: '1' },
+    ],
+    'thijsvanloef/palworld-server-docker': [
+      { key: 'SERVERNAME', label: 'Server name' },
+      { key: 'SERVERPASSWORD', label: 'Server password' },
+      { key: 'PORT', label: 'Port', placeholder: '8211' },
+    ],
+    'didstopia/7dtd-server': [
+      { key: 'SDTD_ServerName', label: 'Server name' },
+      { key: 'SDTD_ServerPort', label: 'Server port', placeholder: '26900' },
+      { key: 'SDTD_ServerPassword', label: 'Server password' },
+      { key: 'SDTD_TelnetPort', label: 'Telnet port', placeholder: '8081' },
+    ],
+    'cyrinux/pzserver': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'ADMIN_PASSWORD', label: 'Admin password' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'PORT', label: 'Port', placeholder: '16261' },
+    ],
+    'Hermsi1337/ark-server': [
+      { key: 'SESSION_NAME', label: 'Session name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'SERVER_ADMIN_PASSWORD', label: 'Admin password' },
+      { key: 'MAP', label: 'Map', placeholder: 'TheIsland' },
+    ],
+    'beardedio/terraria': [
+      { key: 'WORLD', label: 'World name' },
+      { key: 'PASSWORD', label: 'Server password' },
+      { key: 'PORT', label: 'Port', placeholder: '7777' },
+    ],
+    'devidian/vrising-server': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'GAME_PORT', label: 'Game port', placeholder: '27015' },
+    ],
+    'wolveix/satisfactory-server': [
+      { key: 'Port', label: 'Game port', placeholder: '7777' },
+      { key: 'PeerPort', label: 'Peer port', placeholder: '7777' },
+      { key: 'QueryPort', label: 'Query port', placeholder: '27015' },
+    ],
+    'notruffy/conanexiles': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'GAME_PORT', label: 'Game port', placeholder: '7777' },
+    ],
+    'jammsen/docker-dontstarvetogether': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+    ],
+    'didstopia/unturned': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'PORT', label: 'Port', placeholder: '27015' },
+    ],
+    'nicolas654/eco-server': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'GAME_PORT', label: 'Game port', placeholder: '3000' },
+    ],
+    'cm2network/pavlov': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'PORT', label: 'Port', placeholder: '7000' },
+    ],
+    'cm2network/mordhau': [
+      { key: 'SERVER_NAME', label: 'Server name' },
+      { key: 'SERVER_PASSWORD', label: 'Server password' },
+      { key: 'PORT', label: 'Port', placeholder: '7777' },
+    ],
+    // Space Engineers via SteamCMD/WINE (generic template)
+    'ich777/steamcmd': [
+      { key: 'GAME_ID', label: 'Steam GAME_ID', placeholder: '298740' },
+      { key: 'USERNAME', label: 'Steam username' },
+      { key: 'PASSWRD', label: 'Steam password' },
+      { key: 'SERVERNAME', label: 'Server name' },
+    ],
+  };
+
+  // Tunnel env variable name by image (Minecraft requirement: MC_TUNNEL)
+  const tunnelKeyByImage: Record<string, string | undefined> = {
+    'itzg/minecraft-server': 'MC_TUNNEL',
+  };
+
+  const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
+  const [tunnel, setTunnel] = useState('');
+
+  // Reset advanced env when image changes
+  useEffect(() => {
+    setAdvancedEnv({});
+    setTunnel('');
+  }, [image]);
+
   const planSummary = (() => {
     const ramMB = Number(sub?.plan?.resources?.ramMB) || 0;
     const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
@@ -343,7 +471,19 @@ export default function CreateServerPage() {
         return;
       }
       setCreating(true);
-      const res = await api.post('/servers', { name: name.trim(), planId, image: image.trim() || undefined });
+
+      // Build env object from advanced settings + tunnel (if applicable)
+      const env: Record<string, string> = {};
+      Object.entries(advancedEnv).forEach(([k, v]) => {
+        const vv = (v || '').toString().trim();
+        if (vv.length > 0) env[k] = vv;
+      });
+      const tKey = tunnelKeyByImage[image];
+      if (tKey && tunnel.trim().length > 0) {
+        env[tKey] = tunnel.trim();
+      }
+
+      const res = await api.post('/servers', { name: name.trim(), planId, image: image.trim() || undefined, env: env });
       // After creation, redirect to server page
       const server = res.data as { id: number };
       router.push(`/servers/${server.id}`);
@@ -460,6 +600,38 @@ export default function CreateServerPage() {
                           </button>
                         );
                       })}
+                    </div>
+                  </div>
+
+                  {/* Advanced settings */}
+                  <div className="mt-4">
+                    <div className="text-sm font-medium mb-2">Advanced settings</div>
+                    <div className="grid gap-3">
+                      {(presetsByImage[image] || []).map(p => (
+                        <div key={p.key}>
+                          <div className="text-xs mb-1">{p.label}</div>
+                          <input
+                            className="input"
+                            placeholder={p.placeholder || ''}
+                            value={advancedEnv[p.key] || ''}
+                            onChange={(e) => setAdvancedEnv(prev => ({ ...prev, [p.key]: e.target.value }))}
+                          />
+                        </div>
+                      ))}
+                      {(tunnelKeyByImage[image]) && (
+                        <div>
+                          <div className="text-xs mb-1">Tunnel address ({tunnelKeyByImage[image]})</div>
+                          <input
+                            className="input"
+                            placeholder="e.g., mydomain.example:25565"
+                            value={tunnel}
+                            onChange={(e) => setTunnel(e.target.value)}
+                          />
+                          <div className="text-xs subtle mt-1">
+                            This will be sent as {tunnelKeyByImage[image]} to the container.
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
 

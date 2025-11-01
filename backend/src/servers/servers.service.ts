@@ -309,7 +309,7 @@ export class ServersService {
     });
   }
 
-  async create(userId: number, planId: number, name: string, imageOverride?: string) {
+  async create(userId: number, planId: number, name: string, imageOverride?: string, envOverride?: Record<string, string>) {
     // Normalize and validate inputs (additional to DTO validation)
     const n = (name || '').trim();
     if (n.length < 3 || n.length > 32) {
@@ -481,7 +481,7 @@ export class ServersService {
     });
 
     await this.prisma.log.create({
-      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosenId, image: imageOverride || null } },
+      data: { userId, action: 'server_create', metadata: { serverId: server.id, name: n, planId: plan.id, nodeId: chosenId, image: imageOverride || null, env: envOverride || {} } },
     });
 
     // Send no-reply email to user for server creation (best-effort)
