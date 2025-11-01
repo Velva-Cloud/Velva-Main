@@ -400,16 +400,16 @@ export default function CreateServerPage() {
   };
 
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
-
+  
   // Provisioner selection: default Docker, allow SteamCMD for SRCDS titles
   const isSRCDS = useMemo(() => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image), [image]);
   const [provisioner, setProvisioner] = useState<'docker' | 'steamcmd'>(isSRCDS ? 'steamcmd' : 'docker');
-
+  
   useEffect(() => {
     // When switching image, default to steamcmd for SRCDS; docker otherwise
     setProvisioner((prev) => (['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image) ? 'steamcmd' : 'docker'));
   }, [image]);
-
+  
   // Map SRCDS image to Steam appId
   function steamAppIdFor(imageId: string): number | null {
     switch (imageId) {
@@ -422,6 +422,14 @@ export default function CreateServerPage() {
       default: return null;
     }
   }
+
+  // SteamCMD settings (generic + SRCDS common controls)
+  const [steamBranch, setSteamBranch] = useState('public');
+  const [steamArgsText, setSteamArgsText] = useState('');
+  const [srStartMap, setSrStartMap] = useState('');
+  const [srMaxPlayers, setSrMaxPlayers] = useState<number | ''>('');
+  const [srTickrate, setSrTickrate] = useState<number | ''>('');
+  const [srGsltToken, setSrGsltToken] = useState('');
 
   // Reset advanced env when image changes
   useEffect(() => {
@@ -480,16 +488,30 @@ export default function CreateServerPage() {
         if (vv.length > 0) env[k] = vv;
       });
 
-      // Build steam options if SRCDS and provisioner is steamcmd
+      // Build steam options if provisioner is steamcmd
       const steamApp = steamAppIdFor(image);
       const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env: env };
-      if (isSRCDS) {
-        body.provisioner = provisioner;
-        if (provisioner === 'steamcmd' && steamApp) {
-          body.steam = { appId: steamApp, branch: 'public', args: [] };
-          // Do not send docker image when using steamcmd; agent ignores image
-          body.image = undefined;
+
+      if (provisioner === 'steamcmd') {
+        body.provisioner = 'steamcmd';
+        // Build args from SRCDS controls + extra text
+        const args: string[] = [];
+        if (srStartMap.trim()) args.push('+map', srStartMap.trim());
+        if (srMaxPlayers && Number(srMaxPlayers) > 0) args.push('-maxplayers', String(srMaxPlayers));
+        if (srTickrate && Number(srTickrate) > 0) args.push('-tickrate', String(srTickrate));
+        if (srGsltToken.trim()) args.push('+sv_setsteamaccount', srGsltToken.trim());
+        // Append extra args (lines)
+        const extra = steamArgsText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+        args.push(...extra);
+
+        if (steamApp) {
+          body.steam = { appId: steamApp, branch: steamBranch.trim() || 'public', args };
+        } else {
+          // Generic steamcmd without appId mapping; backend/daemon will validate
+          body.steam = { appId: 0, branch: steamBranch.trim() || 'public', args };
         }
+        // Agent ignores image for steamcmd
+        body.image = undefined;
       }
 
       const res = await api.post('/servers', body);
@@ -631,6 +653,49 @@ export default function CreateServerPage() {
                         </div>
                       ))}
                     </div>
+
+                    {/* SteamCMD controls (available whenever provisioner is steamcmd, for any supported image) */}
+                    {provisioner === 'steamcmd' && (
+                      <div className="mt-4">
+                        <div className="text-sm font-medium mb-2">SteamCMD settings</div>
+                        <div className="grid gap-3 md:grid-cols-2">
+                          <div>
+                            <div className="text-xs mb-1">Branch</div>
+                            <input className="input" value={steamBranch} onChange={(e) => setSteamBranch(e.target.value)} placeholder="public" />
+                          </div>
+                          <div className="md:col-span-2">
+                            <div className="text-xs mb-1">Extra launch args (one per line)</div>
+                            <textarea className="input min-h-[80px]" value={steamArgsText} onChange={(e) => setSteamArgsText(e.target.value)} placeholder="-someFlag value&#10;+exec server.cfg" />
+                          </div>
+                        </div>
+
+                        {/* SRCDS common options */}
+                        <div className="mt-3">
+                          <div className="text-sm font-medium mb-2">SRCDS options</div>
+                          <div className="grid gap-3 md:grid-cols-3">
+                            <div>
+                              <div className="text-xs mb-1">Start map</div>
+                              <input className="input" value={srStartMap} onChange={(e) => setSrStartMap(e.target.value)} placeholder="de_dust2" />
+                            </div>
+                            <div>
+                              <div className="text-xs mb-1">Max players</div>
+                              <input className="input" type="number" value={srMaxPlayers || ''} onChange={(e) => setSrMaxPlayers(Number(e.target.value) || '')} placeholder="16" />
+                            </div>
+                            <div>
+                              <div className="text-xs mb-1">Tickrate</div>
+                              <input className="input" type="number" value={srTickrate || ''} onChange={(e) => setSrTickrate(Number(e.target.value) || '')} placeholder="66" />
+                            </div>
+                            <div className="md:col-span-3">
+                              <div className="text-xs mb-1">GSLT Token (CS:GO)</div>
+                              <input className="input" value={srGsltToken} onChange={(e) => setSrGsltToken(e.target.value)} placeholder="abcdef..." />
+                              <div className="text-xs subtle mt-1">
+                                Only required for CS:GO community servers.
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                   </div>
 
                   {/* Provisioner selection for SRCDS */}
