@@ -1189,23 +1189,99 @@ function startHttpsServer() {
     }
   });
 
+  // Helpers for SteamCMD-managed servers
+  function steamMetaPath(serverId: number | string) {
+    return path.join(serverDir(serverId), 'steam.json');
+  }
+  function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number } | null {
+    try {
+      const p = steamMetaPath(serverId);
+      if (!fs.existsSync(p)) return null;
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (j && j.runCmd && Array.isArray(j.runArgs)) return j;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  function writeSteamMeta(serverId: number | string, meta: any) {
+    try {
+      fs.writeFileSync(steamMetaPath(serverId), JSON.stringify(meta, null, 2));
+    } catch {}
+  }
+  function isSteamManaged(serverId: number | string): boolean {
+    return !!readSteamMeta(serverId);
+  }
+  function startSteamProcess(serverId: number | string): { ok: boolean; pid?: number } {
+    const meta = readSteamMeta(serverId);
+    if (!meta) return { ok: false };
+    const srvDir = serverDir(serverId);
+    ensureDir(srvDir);
+    const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
+      cwd: srvDir,
+      env: { ...process.env, VC_SERVER_ID: String(serverId) },
+      stdio: 'ignore',
+      detached: true,
+    });
+    steamProcesses.set(Number(serverId), child);
+    try {
+      writeSteamMeta(serverId, { ...meta, pid: child.pid });
+    } catch {}
+    try { child.unref(); } catch {}
+    return { ok: true, pid: child.pid };
+  }
+  async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean }> {
+    const meta = readSteamMeta(serverId);
+    const child = steamProcesses.get(Number(serverId));
+    const pid = child?.pid || meta?.pid;
+    if (!pid) return { ok: true, already: true };
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {}
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+        await new Promise(r => setTimeout(r, 200));
+      } catch {
+        // process no longer exists
+        steamProcesses.delete(Number(serverId));
+        try { writeSteamMeta(serverId, { ...meta, pid: undefined }); } catch {}
+        return { ok: true };
+      }
+    }
+    // Force kill
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+    steamProcesses.delete(Number(serverId));
+    try { writeSteamMeta(serverId, { ...meta, pid: undefined }); } catch {}
+    return { ok: true };
+  }
+
   app.post('/start/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Try Docker container start first
       const container = docker.getContainer(`vc-${id}`);
-      await container.start();
-      res.json({ ok: true });
+      try {
+        await container.start();
+        return res.json({ ok: true });
+      } catch (e: any) {
+        const code = e?.statusCode;
+        const msg = String(e?.message || '');
+        // Treat already started (304) as success
+        if (code === 304 || /already started/i.test(msg) || /not modified/i.test(msg)) {
+          return res.json({ ok: true, already: true });
+        }
+        // If container not found and Steam-managed, start native process
+        if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
+          const r = startSteamProcess(id);
+          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+          return res.status(500).json({ error: 'steam_start_failed' });
+        }
+        // Other docker error
+        return res.status(500).json({ error: e?.message || 'start_failed' });
+      }
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      // Treat already started (304) as success
-      if (code === 304 || /already started/i.test(msg) || /not modified/i.test(msg)) {
-        return res.json({ ok: true, already: true });
-      }
-      // Propagate not found as 404 with a stable error code
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
-      }
       res.status(500).json({ error: e?.message || 'start_failed' });
     }
   });
@@ -1213,19 +1289,31 @@ function startHttpsServer() {
   app.post('/stop/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Try Docker stop
       const container = docker.getContainer(`vc-${id}`);
-      await container.stop({ t: Number(process.env.STOP_TIMEOUT || 10) });
-      res.json({ ok: true });
-    } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      // Treat already stopped (304) as success
-      if (code === 304 || /not running/i.test(msg) || /not modified/i.test(msg)) {
-        return res.json({ ok: true, already: true });
+      try {
+        await container.stop({ t: Number(process.env.STOP_TIMEOUT || 10) });
+        return res.json({ ok: true });
+      } catch (e: any) {
+        const code = e?.statusCode;
+        const msg = String(e?.message || '');
+        // Treat already stopped (304) as success
+        if (code === 304 || /not running/i.test(msg) || /not modified/i.test(msg)) {
+          return res.json({ ok: true, already: true });
+        }
+        // If container missing and Steam-managed, stop native process
+        if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
+          const r = await stopSteamProcess(id);
+          return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
+        }
+        // Other errors
+        return res.status(500).json({ error: e?.message || 'stop_failed' });
       }
-      // If container is missing, treat stop as a no-op success
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.json({ ok: true, missing: true });
+    } catch (e: any) {
+      // If docker interaction failed entirely, try steam stop as best-effort
+      if (isSteamManaged(id)) {
+        const r = await stopSteamProcess(id);
+        return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
       }
       res.status(500).json({ error: e?.message || 'stop_failed' });
     }
@@ -1234,14 +1322,30 @@ function startHttpsServer() {
   app.post('/restart/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Try Docker restart
       const container = docker.getContainer(`vc-${id}`);
-      await container.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) });
-      res.json({ ok: true });
+      try {
+        await container.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) });
+        return res.json({ ok: true });
+      } catch (e: any) {
+        const code = e?.statusCode;
+        const msg = String(e?.message || '');
+        if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
+          // Steam restart: stop then start
+          await stopSteamProcess(id);
+          const r = startSteamProcess(id);
+          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+          return res.status(500).json({ error: 'steam_restart_failed' });
+        }
+        return res.status(500).json({ error: e?.message || 'restart_failed' });
+      }
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
+      // Fallback to steam if steam-managed
+      if (isSteamManaged(id)) {
+        await stopSteamProcess(id);
+        const r = startSteamProcess(id);
+        if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+        return res.status(500).json({ error: 'steam_restart_failed' });
       }
       res.status(500).json({ error: e?.message || 'restart_failed' });
     }
