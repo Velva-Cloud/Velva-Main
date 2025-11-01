@@ -817,12 +817,66 @@ function startHttpsServer() {
       ensureDir(SERVERS_DIR);
       ensureDir(srvDir);
 
-      await new Promise<void>((resolve, reject) => {
-        docker.pull(image, (err: any, stream: any) => {
-          if (err) return reject(err);
-          docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
+      // Robust image pull with fallbacks
+      async function pullImageWithFallback(img: string): Promise<void> {
+        const REG_USER = process.env.REGISTRY_USERNAME || '';
+        const REG_PASS = process.env.REGISTRY_PASSWORD || '';
+        const AUTH = (REG_USER && REG_PASS) ? { authconfig: { username: REG_USER, password: REG_PASS, serveraddress: 'https://index.docker.io/v1/' } } : {};
+        const tryPull = (ref: string) => new Promise<void>((resolve, reject) => {
+          docker.pull(ref, AUTH, (err: any, stream: any) => {
+            if (err) return reject(err);
+            docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
+          });
         });
-      });
+
+        const candidates: string[] = [];
+        const hasTag = /:[^/]+$/.test(img);
+        const base = img;
+        if (hasTag) {
+          candidates.push(base);
+        } else {
+          candidates.push(`${base}:latest`);
+        }
+        // Explicit docker.io prefix fallback
+        const noRegistry = !/^[a-z0-9]+(\.[a-z0-9.-]+)+\//.test(base);
+        if (noRegistry) {
+          candidates.push(`docker.io/${hasTag ? base : `${base}:latest`}`);
+          candidates.push(`registry-1.docker.io/${hasTag ? base : `${base}:latest`}`);
+        }
+        // Known family aliases (best-effort)
+        if (/^cm2network\//i.test(base)) {
+          const tail = base.replace(/^cm2network\//i, '');
+          candidates.push(`docker.io/cm2network/${hasTag ? tail : `${tail}:latest`}`);
+        }
+
+        let lastErr: any = null;
+        for (const ref of candidates) {
+          try {
+            await tryPull(ref);
+            return;
+          } catch (e: any) {
+            lastErr = e;
+            const msg = String(e?.message || '');
+            // If rate-limited or unauthorized, continue to next candidate
+            if (/denied/i.test(msg) || /unauthorized/i.test(msg) || /manifest unknown/i.test(msg) || e?.statusCode === 404) {
+              continue;
+            }
+          }
+        }
+        // Final attempt with auth if not already tried
+        if (AUTH && candidates.length > 0) {
+          try {
+            await tryPull(candidates[0]);
+            return;
+          } catch (e: any) {
+            lastErr = e;
+          }
+        }
+        const reason = lastErr?.message || 'image_pull_failed';
+        throw new Error(`image_pull_failed: ${reason}`);
+      }
+
+      await pullImageWithFallback(image);
 
       // Environment variables: flatten object to ["KEY=value"]
       const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];
