@@ -191,6 +191,20 @@ export class QueueService implements OnModuleInit {
           if (!('ENABLE_AUTOPAUSE' in env)) {
             (env as any).ENABLE_AUTOPAUSE = 'FALSE';
           }
+          // Enable RCON so we can send commands via rcon-cli inside the container
+          if (!('ENABLE_RCON' in env)) {
+            (env as any).ENABLE_RCON = 'TRUE';
+          }
+          if (!('RCON_PASSWORD' in env)) {
+            // Derive a reasonably unique password; this stays inside the container and is only used by rcon-cli via docker exec
+            const base = process.env.RCON_SECRET || process.env.REGISTRATION_SECRET || process.env.AGENT_API_KEY || 'velva';
+            const suffix = Math.abs((s.id * 2654435761) % 1e9).toString(36);
+            (env as any).RCON_PASSWORD = `${base.slice(0,8)}-${suffix}`;
+          }
+          // Also enable console input pipe so we can send commands as true "console" (not RCON)
+          if (!('CREATE_CONSOLE_IN_PIPE' in env)) {
+            (env as any).CREATE_CONSOLE_IN_PIPE = 'true';
+          }
           // Optionally set memory from plan ram if provided; itzg supports MEMORY (e.g., "1024M")
           if (typeof ramMB === 'number' && isFinite(ramMB) && ramMB > 0 && !('MEMORY' in env)) {
             (env as any).MEMORY = `${Math.max(512, Math.round(ramMB))}M`;

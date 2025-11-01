@@ -108,8 +108,30 @@ export class ServersService {
         // ignore port override failures
       }
     } else if ((node as any)?.publicIp) {
-      // Use node public ip if available, without inventing a port
-      ip = (node as any).publicIp;
+      // Try to detect mapped host port directly from agent inventory
+      try {
+        const baseURL = await this.nodeBaseUrl(s.nodeId);
+        if (baseURL || process.env.DAEMON_URL) {
+          const inv = await this.agent.inventory(baseURL);
+          const cont = inv?.containers?.find((c: any) => c.serverId === s.id);
+          if (cont && Array.isArray((cont as any).ports)) {
+            // Prefer mapping for private 25565/tcp
+            const match = (cont as any).ports.find((p: any) => Number(p.privatePort) === 25565 && String(p.type || '').toLowerCase() === 'tcp' && Number(p.publicPort) > 0);
+            const hostPort = match ? Number(match.publicPort) : null;
+            if (hostPort && Number.isFinite(hostPort)) {
+              ip = `${(node as any).publicIp}:${hostPort}`;
+            } else {
+              ip = (node as any).publicIp;
+            }
+          } else {
+            ip = (node as any).publicIp;
+          }
+        } else {
+          ip = (node as any).publicIp;
+        }
+      } catch {
+        ip = (node as any).publicIp;
+      }
     }
 
     const provisionStatus = provLog
@@ -161,6 +183,14 @@ export class ServersService {
       stateHint = stateHint || null;
     }
 
+    // derive disk limit from plan resources if available
+    let planDiskMb: number | null = null;
+    try {
+      const res = (plan?.resources || {}) as any;
+      if (typeof res.diskMB === 'number') planDiskMb = Math.round(res.diskMB);
+      else if (typeof res.diskGB === 'number') planDiskMb = Math.round(res.diskGB * 1024);
+    } catch {}
+
     return {
       ...s,
       mockIp: ip || undefined,
@@ -169,6 +199,7 @@ export class ServersService {
       nodeName: node?.name ?? null,
       provisionStatus,
       stateHint,
+      planDiskMb,
     };
   }
 
@@ -636,6 +667,7 @@ export class ServersService {
 
     // Special handling: allow "true" to accept EULA for Minecraft servers and restart
     const normalized = (cmd || '').trim().toLowerCase();
+    let isMinecraft = false;
     try {
       // Determine current image (plan or override)
       const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
@@ -651,20 +683,43 @@ export class ServersService {
       if (override && typeof override === 'string' && override.trim().length > 0) {
         image = override.trim();
       }
+      isMinecraft = !!(image && image.includes('itzg/minecraft-server'));
 
       // If Minecraft image and user typed "true", accept EULA and restart
-      if (image && image.includes('itzg/minecraft-server') && normalized === 'true') {
+      if (isMinecraft && normalized === 'true') {
         // Write eula.txt on the persistent volume root; for MC mountPath defaults to /data
         return this.acceptEula(serverId);
       }
     } catch {
-      // Fall through to normal exec on any detection failure
+      // proceed
     }
 
     const baseURL = await this.nodeBaseUrl(s.nodeId);
     if (!baseURL && !process.env.DAEMON_URL) {
       return { ok: false, output: 'Agent not configured; cannot execute commands.' } as any;
     }
+
+    // For Minecraft, prefer true console via mc-send-to-console, but gracefully fall back to RCON if the pipe isn't present yet
+    if (isMinecraft) {
+      const toSend = (cmd || '').trim();
+      const escaped = toSend.replace(/(["`$\\])/g, '\\$1');
+      try {
+        // Send a special marker so the daemon can run mc-send-to-console as uid 1000 without shell indirection
+        const res = await this.agent.exec(baseURL, serverId, `__MC_PIPE__ ${escaped}`);
+        const out = String(res?.output || '');
+        if (/Console pipe needs to be enabled/i.test(out) || /Named pipe .* is missing/i.test(out) || /needs to be run with user ID 1000/i.test(out)) {
+          // Fallback to RCON without surfacing an error to the user
+          const r = await this.agent.exec(baseURL, serverId, `rcon-cli ${escaped}`);
+          return r;
+        }
+        return res;
+      } catch {
+        // Fallback to RCON on any mc-send-to-console failure
+        return this.agent.exec(baseURL, serverId, `rcon-cli ${escaped}`);
+      }
+    }
+
+    // Default: run inside container shell
     return this.agent.exec(baseURL, serverId, cmd);
   }
 
@@ -791,6 +846,16 @@ export class ServersService {
     return this.agent.fsRename(baseURL, serverId, from, to);
   }
 
+  async getStats(serverId: number) {
+    const s = await this.prisma.server.findUnique({ where: { id: serverId } });
+    if (!s) throw new BadRequestException('server_not_found');
+    const baseURL = await this.nodeBaseUrl(s.nodeId);
+    if (!baseURL && !process.env.DAEMON_URL) {
+      throw new BadRequestException('agent_unavailable');
+    }
+    return this.agent.getStats(baseURL, serverId);
+  }
+
   private async recordEvent(serverId: number, type: string, message?: string, data?: any, userId?: number | null) {
     try {
       await this.prisma.serverEvent.create({
@@ -859,12 +924,30 @@ export class ServersService {
       fsRoot = null;
     }
 
+    // Fetch stats for quick local connectivity hints (players implies handshake ok)
+    let stats: any = null;
+    try {
+      stats = baseURL ? await this.agent.getStats(baseURL, serverId) : null;
+    } catch {
+      stats = null;
+    }
+
     const cont = inv?.containers?.find((c: any) => c.serverId === s.id);
+    // Extract mapped host port for 25565/tcp if present
+    let mappedPort: number | null = null;
+    try {
+      const ports = (cont?.ports || []) as Array<{ privatePort: number; publicPort: number | null; type: string }>;
+      const match = ports.find(p => Number(p.privatePort) === 25565 && String(p.type || '').toLowerCase() === 'tcp' && Number(p.publicPort) > 0);
+      mappedPort = match ? Number(match.publicPort) : null;
+    } catch {}
+
     return {
       server: { id: s.id, status: s.status, nodeId: s.nodeId },
       image,
       container: cont || null,
       filesRoot: fsRoot,
+      mappedPort,
+      stats,
     };
   }
 }

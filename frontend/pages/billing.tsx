@@ -260,155 +260,200 @@ export default function Billing() {
               {plans.length === 0 ? (
                 <div className="text-slate-400">No active plans available.</div>
               ) : (
-                <div className="grid gap-6 md:grid-cols-2">
-                  {plans.map((p) => {
-                    const isCurrent = sub?.planId === p.id && sub?.status === 'active';
-                    const ramMB = Number(p?.resources?.ramMB) || 0;
-                    const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
-                    const cpu = p?.resources?.cpu;
-                    const disk = p?.resources?.diskGB;
+                <>
+                  {/* Helpers to map plans to tiers */}
+                  {(() => {
+                    const ramGB = (p: Plan | null) => {
+                      const mb = Number(p?.resources?.ramMB || 0);
+                      return mb > 0 ? Math.round((mb / 1024) * 10) / 10 : null;
+                    };
+                    const pickPlanFor = (tierGB: number) => {
+                      const withRam = plans
+                        .map(p => ({ p, g: ramGB(p) || 0 }))
+                        .filter(x => x.g > 0)
+                        .sort((a, b) => a.g - b.g);
+                      const exact = withRam.find(x => Math.round(x.g) === tierGB);
+                      if (exact) return exact.p;
+                      const above = withRam.find(x => x.g >= tierGB);
+                      if (above) return above.p;
+                      return withRam.length ? withRam[0].p : null;
+                    };
 
-                    const ramRange = p?.resources?.ramRange;
-                    const isCustom = !!ramRange;
-                    const minGB = isCustom ? Math.round((ramRange.minMB || 0) / 1024) : null;
-                    const maxGB = isCustom ? Math.round((ramRange.maxMB || 0) / 1024) : null;
-                    const perGB = isCustom ? (p?.resources?.pricePerGB ?? null) : null;
+                    const TierCard = ({ tier, highlight }: { tier: number; highlight?: boolean }) => {
+                      const plan = pickPlanFor(tier);
+                      const isCurrent = plan && sub?.planId === plan.id && sub?.status === 'active';
+                      const price = plan ? gbp(plan.pricePerMonth) : '—';
+                      const g = plan ? ramGB(plan) : null;
+                      const cpu = plan ? (plan.resources?.cpu ?? null) : null;
+                      const disk = plan ? (plan.resources?.diskGB ?? null) : null;
 
-                    const selectedGB = isCustom
-                      ? (customGB[p.id] ?? (minGB || 32))
-                      : ramGB;
+                      return (
+                        <div className={`relative rounded-xl border ${highlight ? 'border-sky-700' : 'border-slate-800'} bg-slate-900/60 card p-5`}>
+                          {highlight && (
+                            <div className="absolute -top-3 left-4 text-xs bg-emerald-600 text-emerald-50 px-2 py-0.5 rounded-full border border-emerald-700">Most Popular</div>
+                          )}
+                          <div className="flex items-start justify-between">
+                            <div className="text-3xl font-extrabold">
+                              {tier}GB <span className="text-sm font-semibold text-slate-400">RAM</span>
+                            </div>
+                            {isCurrent ? <span className="px-3 py-1 rounded bg-emerald-700 text-white text-sm">Current</span> : null}
+                          </div>
+                          <div className="mt-1 subtle text-sm">Pro • Premium 24/7 Server</div>
 
-                    const estimated = isCustom && perGB && selectedGB ? perGB * selectedGB : null;
+                          <div className="mt-4">
+                            <button
+                              className="btn btn-primary w-full"
+                              onClick={() => plan && onSubscribe(plan.id)}
+                              disabled={busy || !plan}
+                            >
+                              {sub ? 'Switch' : 'Start Free Trial'}
+                            </button>
+                          </div>
+
+                          <div className="mt-4 border-t border-slate-800 pt-3 space-y-2 text-sm">
+                            <div className="font-semibold">{tier}GB RAM</div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-slate-300">Price:</span>
+                              <span className="font-semibold">{price}/mo</span>
+                            </div>
+                            <div className="flex items-center gap-1">
+                              <span className="text-slate-300">Includes:</span>
+                              <span className="font-semibold">{g ? `${g}GB` : `${tier}GB`} RAM{cpu ? ` • ${cpu} CPU` : ''}{disk ? ` • ${disk}GB SSD` : ''}</span>
+                            </div>
+                            <div className="pt-2">
+                              <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-10 w-auto opacity-80" />
+                            </div>
+                            {!isCurrent && plan && (
+                              <div className="pt-2">
+                                <button
+                                  onClick={async () => {
+                                    try {
+                                      setBusy(true);
+                                      const payload: any = { planId: plan.id, currency: currency.toLowerCase() };
+                                      const res = await api.post('/billing/stripe/checkout', payload);
+                                      window.location.href = res.data.url;
+                                    } catch (e: any) {
+                                      const msg = e?.response?.data?.message || 'Failed to create Stripe session';
+                                      toast.show(msg, 'error');
+                                    } finally {
+                                      setBusy(false);
+                                    }
+                                  }}
+                                  className="px-4 py-2 rounded border border-indigo-700/40 hover:bg-indigo-900/30 transition shadow w-full"
+                                  disabled={busy}
+                                >
+                                  Subscribe with Stripe
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    };
+
+                    // Custom slider card
+                    const CustomCard = () => {
+                      const customPlan = plans.find(p => !!p?.resources?.ramRange);
+                      // per-GB from explicit custom price or median of plan ratios
+                      let perGb: number | null = null;
+                      if (customPlan && typeof customPlan.resources?.pricePerGB === 'number') perGb = Number(customPlan.resources.pricePerGB);
+                      if (perGb == null) {
+                        const ratios = plans
+                          .map(p => {
+                            const mb = Number(p?.resources?.ramMB || 0);
+                            const g = mb > 0 ? mb / 1024 : 0;
+                            const price = Number(p.pricePerMonth);
+                            if (g <= 0 || !isFinite(price) || price <= 0) return null;
+                            return price / g;
+                          })
+                          .filter((x): x is number => typeof x === 'number') as number[];
+                        const sorted = ratios.sort((a, b) => a - b);
+                        perGb = sorted.length ? (sorted.length % 2 ? sorted[(sorted.length - 1) / 2] : (sorted[sorted.length / 2 - 1] + sorted[sorted.length / 2]) / 2) : 2.5;
+                      }
+                      const minGB = 32, maxGB = 256;
+                      const selected = customGB[-1] ?? minGB;
+                      const price = gbp(selected * (perGb ?? 2.5));
+
+                      return (
+                        <div className="relative rounded-xl border border-slate-800 bg-slate-900/60 card p-5">
+                          <div className="text-2xl font-extrabold">Build Your Own Server</div>
+                          <div className="mt-1 subtle text-sm">{minGB}GB+ RAM • Fully Custom</div>
+
+                          <div className="mt-4">
+                            <div className="flex items-center justify-between text-sm">
+                              <span className="subtle">RAM</span>
+                              <span className="font-semibold">{selected} GB</span>
+                            </div>
+                            <input
+                              type="range"
+                              min={minGB}
+                              max={maxGB}
+                              step={1}
+                              value={selected}
+                              onChange={(e) => setCustomGB(prev => ({ ...prev, [-1]: Number(e.target.value) }))}
+                              className="w-full mt-2 appearance-none h-2 rounded bg-slate-800 outline-none accent-cyan-500"
+                            />
+                            <div className="flex justify-between text-[11px] mt-1 text-slate-400">
+                              <span>{minGB}GB</span>
+                              <span>{maxGB}GB</span>
+                            </div>
+                          </div>
+
+                          <div className="mt-3 text-3xl font-extrabold heading-gradient">{price}<span className="text-base text-slate-400"> / mo</span></div>
+
+                          <div className="mt-3">
+                            <button
+                              className="btn btn-primary w-full"
+                              onClick={() => onSubscribe(plans[0]?.id || 0, selected)}
+                              disabled={busy}
+                            >
+                              {sub ? 'Switch' : 'Get Started'}
+                            </button>
+                          </div>
+
+                          <div className="mt-4 border-t border-slate-800 pt-3 space-y-2 text-sm">
+                            <div className="font-semibold">{minGB}GB - {maxGB}GB RAM</div>
+                            <div>Choose your size, storage and location. Great for large worlds and communities.</div>
+                            <div className="pt-2">
+                              <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-10 w-auto opacity-80" />
+                            </div>
+                            <div className="pt-2">
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    setBusy(true);
+                                    const payload: any = { planId: plans[0]?.id || 0, currency: currency.toLowerCase(), customRamGB: selected };
+                                    const res = await api.post('/billing/stripe/checkout', payload);
+                                    window.location.href = res.data.url;
+                                  } catch (e: any) {
+                                    const msg = e?.response?.data?.message || 'Failed to create Stripe session';
+                                    toast.show(msg, 'error');
+                                  } finally {
+                                    setBusy(false);
+                                  }
+                                }}
+                                className="px-4 py-2 rounded border border-indigo-700/40 hover:bg-indigo-900/30 transition shadow w-full"
+                                disabled={busy}
+                              >
+                                Subscribe with Stripe
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    };
 
                     return (
-                      <div
-                        key={p.id}
-                        className="p-6 rounded-xl bg-slate-900/70 border border-slate-800 shadow-lg hover:shadow-xl hover:shadow-indigo-500/10 transition-transform duration-200 hover:-translate-y-0.5"
-                      >
-                        <div className="flex items-start justify-between gap-5">
-                          <div>
-                            <div className="text-sm uppercase tracking-wide text-slate-400">Server plan</div>
-                            <div className="mt-1 font-semibold text-lg">
-                              {isCustom ? 'Custom RAM' : (ramGB ? `${ramGB} GB RAM` : p.name)}
-                            </div>
-                            <div className="mt-2 text-3xl font-extrabold bg-gradient-to-r from-indigo-300 via-purple-300 to-pink-300 bg-clip-text text-transparent drop-shadow">
-                              {isCustom ? (estimated ? `${gbp(estimated)} / mo` : `From ${gbp(((minGB || 32) * (perGB || 0)))}/mo`) : `${gbp(p.pricePerMonth)} / mo`}
-                            </div>
-                          </div>
-                          {isCurrent ? (
-                            <span className="px-3 py-1 rounded bg-emerald-700 text-white text-sm self-start">Current</span>
-                          ) : null}
-                        </div>
-
-                        {/* Feature list */}
-                        <ul className="mt-4 space-y-2 text-sm text-slate-300">
-                          {isCustom ? (
-                            <>
-                              <li className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                Choose {minGB}–{maxGB} GB RAM
-                              </li>
-                              {perGB ? (
-                                <li className="flex items-center gap-2">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                  {gbp(perGB)} per GB per month
-                                </li>
-                              ) : null}
-                              <li className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                Install any supported game after creating your server
-                              </li>
-                            </>
-                          ) : (
-                            <>
-                              {ramGB ? (
-                                <li className="flex items-center gap-2">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                  {ramGB} GB RAM
-                                </li>
-                              ) : null}
-                              {cpu ? (
-                                <li className="flex items-center gap-2">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                  {cpu} CPU units
-                                </li>
-                              ) : null}
-                              {disk ? (
-                                <li className="flex items-center gap-2">
-                                  <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                  {disk} GB SSD
-                                </li>
-                              ) : null}
-                              <li className="flex items-center gap-2">
-                                <span className="h-1.5 w-1.5 rounded-full bg-indigo-400" />
-                                Install any supported game after creating your server
-                              </li>
-                            </>
-                          )}
-                        </ul>
-
-                        {/* Custom slider */}
-                        {isCustom && (
-                          <div className="mt-5">
-                            <label htmlFor={`ram-${p.id}`} className="text-sm text-slate-400">
-                              Select RAM: <span className="font-semibold text-slate-200">{selectedGB} GB</span>
-                            </label>
-                            <input
-                              id={`ram-${p.id}`}
-                              type="range"
-                              min={minGB || 32}
-                              max={maxGB || 128}
-                              step={1}
-                              value={selectedGB || (minGB || 32)}
-                              onChange={(e) => setCustomGB((prev) => ({ ...prev, [p.id]: Number(e.target.value) }))}
-                              className="w-full mt-2 accent-indigo-500"
-                            />
-                            {perGB ? (
-                              <div className="mt-1 text-sm text-slate-400">
-                                Estimated: <span className="font-semibold text-slate-200">{gbp((selectedGB || 0) * perGB)} / mo</span>
-                              </div>
-                            ) : null}
-                          </div>
-                        )}
-
-                        {/* CTAs */}
-                        <div className="flex flex-wrap gap-3 mt-6">
-                          {!isCurrent && (
-                            <button
-                              onClick={() => onSubscribe(p.id, isCustom ? selectedGB || minGB || 32 : undefined)}
-                              disabled={busy}
-                              className={`px-4 py-2 rounded bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 text-white shadow-lg hover:opacity-90 transition ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}
-                            >
-                              {sub ? 'Switch' : 'Subscribe'}
-                            </button>
-                          )}
-
-                          {/* Stripe CTA (supports per-GB for custom) */}
-                          <button
-                            onClick={async () => {
-                              try {
-                                setBusy(true);
-                                const payload: any = { planId: p.id, currency: currency.toLowerCase() };
-                                if (isCustom) payload.customRamGB = selectedGB || minGB || 32;
-                                const res = await api.post('/billing/stripe/checkout', payload);
-                                window.location.href = res.data.url;
-                              } catch (e: any) {
-                                const msg = e?.response?.data?.message || 'Failed to create Stripe session';
-                                toast.show(msg, 'error');
-                              } finally {
-                                setBusy(false);
-                              }
-                            }}
-                            className="px-4 py-2 rounded border border-indigo-700/40 hover:bg-indigo-900/30 transition shadow"
-                            disabled={busy}
-                          >
-                            Subscribe with Stripe
-                          </button>
-                        </div>
+                      <div className="grid gap-6 lg:grid-cols-3">
+                        <TierCard tier={4} highlight />
+                        <TierCard tier={8} />
+                        <TierCard tier={16} />
+                        <TierCard tier={32} />
+                        <CustomCard />
                       </div>
                     );
-                  })}
-                </div>
+                  })()}
+                </>
               )}
             </section>
 

@@ -289,6 +289,165 @@ function startHttpsServer() {
     }
   });
 
+  // Per-container instantaneous statistics (non-stream)
+  app.get('/stats/:id', async (req, res) => {
+    const id = req.params.id;
+    try {
+      const container = docker.getContainer(`vc-${id}`);
+
+      // Basic CPU/memory/net from Docker
+      const stats: any = await container.stats({ stream: false } as any);
+      const now = new Date().toISOString();
+      const cpuStats = stats.cpu_stats || {};
+      const preCpu = stats.precpu_stats || {};
+      const cpuDelta = Math.max(0, (cpuStats.cpu_usage?.total_usage || 0) - (preCpu.cpu_usage?.total_usage || 0));
+      const systemDelta = Math.max(1, (cpuStats.system_cpu_usage || 0) - (preCpu.system_cpu_usage || 0));
+      const online = (cpuStats.online_cpus || cpuStats.cpu_usage?.percpu_usage?.length || 1);
+      const cpuPercent = Math.max(0, Math.min(1000, (cpuDelta / systemDelta) * online * 100));
+
+      const memStats = stats.memory_stats || {};
+      const cache = Number(memStats.stats?.cache || 0);
+      const memUsage = Math.max(0, Number(memStats.usage || 0) - cache);
+      const memLimit = Math.max(0, Number(memStats.limit || 0));
+
+      // Network RX/TX sum
+      let rx = 0, tx = 0;
+      const nets = stats.networks || {};
+      for (const k of Object.keys(nets)) {
+        rx += Number(nets[k]?.rx_bytes || 0);
+        tx += Number(nets[k]?.tx_bytes || 0);
+      }
+
+      // Block IO read/write sum
+      let blkRead = 0, blkWrite = 0;
+      const io = stats.blkio_stats?.io_service_bytes_recursive || [];
+      if (Array.isArray(io)) {
+        for (const rec of io) {
+          const op = (rec?.op || '').toString().toLowerCase();
+          const v = Number(rec?.value || 0);
+          if (op === 'read') blkRead += v;
+          if (op === 'write') blkWrite += v;
+        }
+      }
+
+      const pids = Number(stats.pids_stats?.current || 0);
+
+      // Server disk usage on persistent volume
+      const root = serverDir(id);
+      ensureDir(root);
+      async function folderSize(dir: string): Promise<number> {
+        let total = 0;
+        const ents = await fs.promises.readdir(dir, { withFileTypes: true });
+        for (const ent of ents) {
+          const full = path.join(dir, ent.name);
+          try {
+            const st = await fs.promises.stat(full);
+            if (ent.isDirectory()) total += await folderSize(full);
+            else total += st.size;
+          } catch {}
+        }
+        return total;
+      }
+      let diskUsedBytes = 0;
+      try { diskUsedBytes = await folderSize(root); } catch {}
+
+      // Try to detect Minecraft players via server list ping on mapped host port
+      let players: { online?: number; max?: number } | undefined = undefined;
+      try {
+        const info = await container.inspect();
+        const ports = (info.NetworkSettings && info.NetworkSettings.Ports) || {};
+        const mc = ports['25565/tcp'];
+        const hostPort = Array.isArray(mc) && mc[0] && mc[0].HostPort ? Number(mc[0].HostPort) : undefined;
+        if (hostPort) {
+          players = await pingMinecraft('127.0.0.1', hostPort, Number(process.env.MC_PING_TIMEOUT_MS || 800));
+        }
+      } catch {}
+
+      res.json({
+        ts: now,
+        cpuPercent,
+        mem: { usage: memUsage, limit: memLimit },
+        net: { rxBytes: rx, txBytes: tx },
+        blkio: { readBytes: blkRead, writeBytes: blkWrite },
+        pids,
+        disk: { usedBytes: diskUsedBytes },
+        players: players || null,
+      });
+    } catch (e: any) {
+      const code = e?.statusCode;
+      const msg = String(e?.message || '');
+      if (code === 404 || /no such container/i.test(msg)) {
+        return res.status(404).json({ error: 'container_not_found' });
+      }
+      res.status(500).json({ error: e?.message || 'stats_failed' });
+    }
+  });
+
+  // Minimal Minecraft server list ping (status) over TCP
+  async function pingMinecraft(host: string, port: number, timeoutMs = 800): Promise<{ online: number; max: number } | undefined> {
+    return await new Promise((resolve) => {
+      const net = require('net');
+      const socket = new net.Socket();
+      let done = false;
+      const finish = (v?: any) => {
+        if (done) return;
+        done = true;
+        try { socket.destroy(); } catch {}
+        resolve(v);
+      };
+      const t = setTimeout(() => finish(undefined), timeoutMs);
+      socket.connect(port, host, () => {
+        // Handshake + Status request for protocol 47+ (modern)
+        function writeVarInt(val: number) {
+          const out: number[] = [];
+          // eslint-disable-next-line no-constant-condition
+          while (true) {
+            if ((val & 0xffffff80) === 0) { out.push(val); break; }
+            out.push((val & 0x7f) | 0x80);
+            val >>>= 7;
+          }
+          return Buffer.from(out);
+        }
+        const protocol = 47;
+        const hostBuf = Buffer.from(host, 'utf8');
+        const data = Buffer.concat([
+          Buffer.from([0x00]), // handshake packet id
+          writeVarInt(protocol),
+          writeVarInt(hostBuf.length), hostBuf,
+          Buffer.from([(port >> 8) & 0xff, port & 0xff]),
+          writeVarInt(1), // next state: status
+        ]);
+        const packet = Buffer.concat([writeVarInt(data.length), data]);
+        socket.write(packet);
+        // status request
+        socket.write(Buffer.from([0x01, 0x00]));
+      });
+      let buf = Buffer.alloc(0);
+      socket.on('data', (d: Buffer) => {
+        buf = Buffer.concat([buf, d]);
+        // Try to parse JSON payload
+        try {
+          // Skip length + packet id VarInts very loosely
+          const str = buf.toString('utf8');
+          const firstBrace = str.indexOf('{');
+          const lastBrace = str.lastIndexOf('}');
+          if (firstBrace >= 0 && lastBrace > firstBrace) {
+            const json = JSON.parse(str.slice(firstBrace, lastBrace + 1));
+            const p = json?.players;
+            if (p && typeof p.online === 'number' && typeof p.max === 'number') {
+              clearTimeout(t);
+              finish({ online: p.online, max: p.max });
+            }
+          }
+        } catch {
+          // ignore partial frames
+        }
+      });
+      socket.on('error', () => finish(undefined));
+      socket.on('close', () => finish(undefined));
+    });
+  }
+
   app.get('/inventory', async (_req, res) => {
     try {
       const list = await docker.listContainers({ all: true });
@@ -297,7 +456,12 @@ function startHttpsServer() {
         const m = name.match(/^vc-(\d+)$/);
         const serverId = m ? Number(m[1]) : undefined;
         const running = info.State === 'running';
-        return { id: info.Id, name, serverId, running };
+        const ports = (info.Ports || []).map(p => ({
+          privatePort: p.PrivatePort,
+          publicPort: p.PublicPort || null,
+          type: p.Type || 'tcp',
+        }));
+        return { id: info.Id, name, serverId, running, ports };
       });
       res.json({ containers });
     } catch (e: any) {
@@ -491,14 +655,38 @@ function startHttpsServer() {
   app.post('/exec/:id', async (req, res) => {
     const id = req.params.id;
     const cmd = (req.body?.cmd || '').toString();
-    if (!cmd || cmd.length > 1000) return res.status(400).json({ error: 'invalid_cmd' });
+    if (!cmd || cmd.length > 2000) return res.status(400).json({ error: 'invalid_cmd' });
     try {
       const container = docker.getContainer(`vc-${id}`);
+
+      // Special marker to run mc-send-to-console as uid 1000 without shell indirection
+      if (cmd.startsWith('__MC_PIPE__ ')) {
+        const arg = cmd.slice('__MC_PIPE__ '.length);
+        const exec = await container.exec({
+          AttachStdout: true,
+          AttachStderr: true,
+          Tty: false,
+          Cmd: ['mc-send-to-console', arg],
+          User: '1000',
+        } as any);
+        const stream = await exec.start({ hijack: true, stdin: false } as any);
+        let output = '';
+        await new Promise<void>((resolve, reject) => {
+          stream.on('data', (d: Buffer) => (output += d.toString('utf8')));
+          stream.on('end', resolve);
+          stream.on('error', reject);
+        });
+        return res.json({ ok: true, output });
+      }
+
+      // Fallback generic shell exec
+      const wantsUser1000 = /(^|\s)mc-send-to-console(\s|$)/.test(cmd);
       const exec = await container.exec({
         AttachStdout: true,
         AttachStderr: true,
         Tty: false,
         Cmd: ['/bin/sh', '-lc', cmd],
+        ...(wantsUser1000 ? { User: '1000' } : {}),
       } as any);
       const stream = await exec.start({ hijack: true, stdin: false } as any);
       let output = '';

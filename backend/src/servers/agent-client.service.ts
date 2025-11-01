@@ -138,7 +138,7 @@ export class AgentClientService {
     }
   }
 
-  async inventory(baseURL: string | undefined): Promise<{ containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> }> {
+  async inventory(baseURL: string | undefined): Promise<{ containers: Array<{ id: string; name: string; serverId?: number; running: boolean; ports?: Array<{ privatePort: number; publicPort: number | null; type: string }> }> }> {
     const res = await this.getClient(baseURL).get('/inventory');
     return res.data;
   }
@@ -210,6 +210,11 @@ export class AgentClientService {
 
   async fsList(baseURL: string | undefined, serverId: number, path: string) {
     const res = await this.getClient(baseURL).get(`/fs/${serverId}/list`, { params: { path } });
+    return res.data;
+  }
+
+  async getStats(baseURL: string | undefined, serverId: number) {
+    const res = await this.getClient(baseURL).get(`/stats/${serverId}`);
     return res.data;
   }
 
