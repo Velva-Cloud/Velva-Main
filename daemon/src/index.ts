@@ -785,6 +785,124 @@ function startHttpsServer() {
   // In-memory process table for SteamCMD provisioner
   const steamProcesses = new Map<number, any>();
 
+  // Robust image pull with fallbacks and aliases
+  async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
+    const REG_USER = (registryAuth?.username || process.env.REGISTRY_USERNAME || '');
+    const REG_PASS = (registryAuth?.password || process.env.REGISTRY_PASSWORD || '');
+    const SERVER_ADDR = (registryAuth?.serveraddress || process.env.REGISTRY_SERVER || 'https://index.docker.io/v1/');
+    const AUTH = (REG_USER && REG_PASS) ? { authconfig: { username: REG_USER, password: REG_PASS, serveraddress: SERVER_ADDR } } : {};
+    const tryPull = (ref: string) => new Promise<void>((resolve, reject) => {
+      docker.pull(ref, AUTH, (err: any, stream: any) => {
+        if (err) return reject(err);
+        docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
+      });
+    });
+
+    // Load optional alias map from DATA_DIR/image-aliases.json
+    function loadAliases(): Record<string, string> {
+      try {
+        const aliasPath = path.join(DATA_DIR, 'image-aliases.json');
+        if (!fs.existsSync(aliasPath)) return {};
+        const text = fs.readFileSync(aliasPath, 'utf8');
+        const json = JSON.parse(text);
+        return typeof json === 'object' && json ? json : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function resolveCandidates(baseImg: string): string[] {
+      const aliases = loadAliases();
+      const canonical = aliases[baseImg] || baseImg;
+      const hasTag = /:[^/]+$/.test(canonical);
+      const base = canonical;
+      const withTag = hasTag ? base : `${base}:latest`;
+      const candidates: string[] = [withTag];
+
+      // Explicit docker hub prefixes if none specified
+      const hasRegistryPrefix = /^[a-z0-9]+(\.[a-z0-9.-]+)+\//.test(base);
+      if (!hasRegistryPrefix) {
+        candidates.push(`docker.io/${withTag}`);
+        candidates.push(`registry-1.docker.io/${withTag}`);
+      }
+
+      // GitHub Container Registry fallback
+      const parts = base.split('/');
+      if (parts.length === 2 && !hasRegistryPrefix) {
+        const org = parts[0];
+        const repo = parts[1];
+        candidates.push(`ghcr.io/${org}/${hasTag ? repo : `${repo}:latest`}`);
+      }
+
+      // Known heuristics: any registry path ending in /cm2network/gmod -> /cm2network/garrysmod
+      const tag = hasTag ? base.split(':')[1] : 'latest';
+      const variantRefs: string[] = [];
+      const replaceRepo = (ref: string) => {
+        const m = ref.match(/^(?:([a-z0-9.-]+(?:\.[a-z0-9.-]+)+)\/)?([^\/]+)\/([^:]+)(?::([^:]+))?$/i);
+        if (!m) return null;
+        const registry = m[1] ? `${m[1]}/` : '';
+        const org = m[2];
+        const repo = m[3];
+        const t = m[4] || tag;
+        if (org.toLowerCase() === 'cm2network' && repo.toLowerCase() === 'gmod') {
+          return `${registry}${org}/garrysmod:${t}`;
+        }
+        return null;
+      };
+      const direct = replaceRepo(withTag);
+      if (direct) {
+        variantRefs.push(direct);
+        if (!hasRegistryPrefix) {
+          variantRefs.push(`docker.io/${direct}`);
+          variantRefs.push(`registry-1.docker.io/${direct}`);
+          variantRefs.push(`ghcr.io/${direct}`);
+        }
+      }
+      for (const v of variantRefs) {
+        candidates.push(v);
+      }
+
+      // De-duplicate while preserving order
+      const seen = new Set<string>();
+      const uniq: string[] = [];
+      for (const c of candidates) {
+        if (!seen.has(c)) {
+          seen.add(c);
+          uniq.push(c);
+        }
+      }
+      return uniq;
+    }
+
+    const candidates = resolveCandidates(img);
+
+    let lastErr: any = null;
+    for (const ref of candidates) {
+      try {
+        await tryPull(ref);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        const msg = String(e?.message || '');
+        // Continue to next candidate on common registry errors
+        if (/denied/i.test(msg) || /unauthorized/i.test(msg) || /manifest unknown/i.test(msg) || e?.statusCode === 404) {
+          continue;
+        }
+      }
+    }
+    // Final attempt with auth against the first candidate
+    if (AUTH && candidates.length > 0) {
+      try {
+        await tryPull(candidates[0]);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+      }
+    }
+    const reason = lastErr?.message || 'image_pull_failed';
+    throw new Error(`image_pull_failed: ${reason}`);
+  }
+
   app.post('/provision', async (req, res) => {
     const {
       serverId,
@@ -935,7 +1053,7 @@ function startHttpsServer() {
         }
 
         // Append user-provided args
-        const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map(a => String(a)) : [];
+        const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
         runArgs.push(...extraArgs);
 
         // Start process and persist state
