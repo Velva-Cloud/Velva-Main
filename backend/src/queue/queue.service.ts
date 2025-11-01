@@ -6,6 +6,7 @@ import { AgentClientService } from '../servers/agent-client.service';
 import { EventEmitter } from 'events';
 import * as client from 'prom-client';
 import { Interval } from '@nestjs/schedule';
+import { getHostPortPolicy, getInternalPorts } from '../servers/port-policy';
 
 function backoffOptions(): JobsOptions {
   const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
@@ -178,14 +179,10 @@ export class QueueService implements OnModuleInit {
           env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
-        // If using Minecraft image set sensible defaults and required env
+        // Image-specific defaults
         if (image && image.includes('itzg/minecraft-server')) {
           if (!mountPath || !mountPath.trim()) {
             mountPath = '/data';
-          }
-          if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
-            // Default game port; host mapping/firewall handled separately
-            exposePorts = [25565];
           }
           // Ensure EULA is accepted via env as well; image accepts EULA=TRUE
           if (!('EULA' in env)) {
@@ -215,17 +212,26 @@ export class QueueService implements OnModuleInit {
           }
         }
 
+        // Determine internal ports if not set by plan/resources
+        if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
+          const internal = getInternalPorts(image || '');
+          exposePorts = internal.map(p => p.port);
+        }
+
+        // Host port policy hint to daemon
+        const hostPortPolicy = getHostPortPolicy(image || '');
+
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
           const forceRecreate = !!(image && image.includes('itzg/minecraft-server'));
-          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate } as any);
-          // Record assigned Minecraft port if provided
+          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate, hostPortPolicy } as any);
+          // Record assigned port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
           if (assignedPort && Number.isFinite(assignedPort)) {
             await this.prisma.log.create({
-              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'minecraft_port_assigned', serverId: s.id, port: assignedPort } },
+              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'port_assigned', serverId: s.id, port: assignedPort } },
             });
-            await this.recordEvent(s.id, 'minecraft_port_assigned', String(assignedPort));
+            await this.recordEvent(s.id, 'port_assigned', String(assignedPort));
           }
         } catch (e: any) {
           if (isHardProvisionError(e)) {

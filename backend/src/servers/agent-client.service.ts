@@ -80,6 +80,7 @@ export class AgentClientService {
       mountPath?: string;
       cmd?: string[];
       exposePorts?: Array<number | string>;
+      hostPortPolicy?: { hostRange: [number, number]; contiguous?: number; protocol: 'tcp' | 'udp' | 'mixed' };
     },
   ) {
     try {
