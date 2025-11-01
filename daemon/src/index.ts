@@ -789,8 +789,11 @@ function startHttpsServer() {
   async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
     const REG_USER = (registryAuth?.username || process.env.REGISTRY_USERNAME || '');
     const REG_PASS = (registryAuth?.password || process.env.REGISTRY_PASSWORD || '');
-    const SERVER_ADDR = (registryAuth?.serveraddress || process.env.REGISTRY_SERVER || 'https://index.docker.io/v1/');
-    const AUTH = (REG_USER && REG_PASS) ? { authconfig: { username: REG_USER, password: REG_PASS, serveraddress: SERVER_ADDR } } : {};
+    const SERVER_ADDR_RAW = (registryAuth?.serveraddress || process.env.REGISTRY_SERVER || '');
+    const SERVER_ADDR = /^https?:\/\/[^/]+/.test(SERVER_ADDR_RAW) ? SERVER_ADDR_RAW : '';
+    const AUTH = (REG_USER && REG_PASS)
+      ? { authconfig: SERVER_ADDR ? { username: REG_USER, password: REG_PASS, serveraddress: SERVER_ADDR } : { username: REG_USER, password: REG_PASS } }
+      : {};
     const tryPull = (ref: string) => new Promise<void>((resolve, reject) => {
       docker.pull(ref, AUTH, (err: any, stream: any) => {
         if (err) return reject(err);
@@ -813,53 +816,19 @@ function startHttpsServer() {
 
     function resolveCandidates(baseImg: string): string[] {
       const aliases = loadAliases();
-      const canonical = aliases[baseImg] || baseImg;
+      let canonical = aliases[baseImg] || baseImg;
+      canonical = canonical.trim();
+      if (!canonical) throw new Error('image_ref_empty');
+
       const hasTag = /:[^/]+$/.test(canonical);
       const base = canonical;
       const withTag = hasTag ? base : `${base}:latest`;
       const candidates: string[] = [withTag];
 
-      // Explicit docker hub prefixes if none specified
-      const hasRegistryPrefix = /^[a-z0-9]+(\.[a-z0-9.-]+)+\//.test(base);
-      if (!hasRegistryPrefix) {
-        candidates.push(`docker.io/${withTag}`);
-        candidates.push(`registry-1.docker.io/${withTag}`);
-      }
-
-      // GitHub Container Registry fallback
-      const parts = base.split('/');
-      if (parts.length === 2 && !hasRegistryPrefix) {
-        const org = parts[0];
-        const repo = parts[1];
-        candidates.push(`ghcr.io/${org}/${hasTag ? repo : `${repo}:latest`}`);
-      }
-
-      // Known heuristics: any registry path ending in /cm2network/gmod -> /cm2network/garrysmod
-      const tag = hasTag ? base.split(':')[1] : 'latest';
-      const variantRefs: string[] = [];
-      const replaceRepo = (ref: string) => {
-        const m = ref.match(/^(?:([a-z0-9.-]+(?:\.[a-z0-9.-]+)+)\/)?([^\/]+)\/([^:]+)(?::([^:]+))?$/i);
-        if (!m) return null;
-        const registry = m[1] ? `${m[1]}/` : '';
-        const org = m[2];
-        const repo = m[3];
-        const t = m[4] || tag;
-        if (org.toLowerCase() === 'cm2network' && repo.toLowerCase() === 'gmod') {
-          return `${registry}${org}/garrysmod:${t}`;
-        }
-        return null;
-      };
-      const direct = replaceRepo(withTag);
-      if (direct) {
-        variantRefs.push(direct);
-        if (!hasRegistryPrefix) {
-          variantRefs.push(`docker.io/${direct}`);
-          variantRefs.push(`registry-1.docker.io/${direct}`);
-          variantRefs.push(`ghcr.io/${direct}`);
-        }
-      }
-      for (const v of variantRefs) {
-        candidates.push(v);
+      // Known heuristics: cm2network/gmod -> cm2network/garrysmod
+      if (/^cm2network\/gmod(?::.+)?$/i.test(base)) {
+        const tag = hasTag ? base.split(':')[1] : 'latest';
+        candidates.push(`cm2network/garrysmod:${tag}`);
       }
 
       // De-duplicate while preserving order
