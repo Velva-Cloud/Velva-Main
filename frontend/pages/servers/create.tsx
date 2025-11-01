@@ -413,18 +413,11 @@ export default function CreateServerPage() {
     ],
   };
 
-  // Tunnel env variable name by image (Minecraft requirement: MC_TUNNEL)
-  const tunnelKeyByImage: Record<string, string | undefined> = {
-    'itzg/minecraft-server': 'MC_TUNNEL',
-  };
-
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
-  const [tunnel, setTunnel] = useState('');
 
   // Reset advanced env when image changes
   useEffect(() => {
     setAdvancedEnv({});
-    setTunnel('');
   }, [image]);
 
   const planSummary = (() => {
@@ -472,16 +465,12 @@ export default function CreateServerPage() {
       }
       setCreating(true);
 
-      // Build env object from advanced settings + tunnel (if applicable)
+      // Build env object from advanced settings
       const env: Record<string, string> = {};
       Object.entries(advancedEnv).forEach(([k, v]) => {
         const vv = (v || '').toString().trim();
         if (vv.length > 0) env[k] = vv;
       });
-      const tKey = tunnelKeyByImage[image];
-      if (tKey && tunnel.trim().length > 0) {
-        env[tKey] = tunnel.trim();
-      }
 
       const res = await api.post('/servers', { name: name.trim(), planId, image: image.trim() || undefined, env: env });
       // After creation, redirect to server page
@@ -618,20 +607,6 @@ export default function CreateServerPage() {
                           />
                         </div>
                       ))}
-                      {(tunnelKeyByImage[image]) && (
-                        <div>
-                          <div className="text-xs mb-1">Tunnel address ({tunnelKeyByImage[image]})</div>
-                          <input
-                            className="input"
-                            placeholder="e.g., mydomain.example:25565"
-                            value={tunnel}
-                            onChange={(e) => setTunnel(e.target.value)}
-                          />
-                          <div className="text-xs subtle mt-1">
-                            This will be sent as {tunnelKeyByImage[image]} to the container.
-                          </div>
-                        </div>
-                      )}
                     </div>
                   </div>
 
