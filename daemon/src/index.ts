@@ -818,10 +818,11 @@ function startHttpsServer() {
       ensureDir(srvDir);
 
       // Robust image pull with fallbacks and aliases
-      async function pullImageWithFallback(img: string): Promise<void> {
-        const REG_USER = process.env.REGISTRY_USERNAME || '';
-        const REG_PASS = process.env.REGISTRY_PASSWORD || '';
-        const AUTH = (REG_USER && REG_PASS) ? { authconfig: { username: REG_USER, password: REG_PASS, serveraddress: 'https://index.docker.io/v1/' } } : {};
+      async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
+        const REG_USER = (registryAuth?.username || process.env.REGISTRY_USERNAME || '');
+        const REG_PASS = (registryAuth?.password || process.env.REGISTRY_PASSWORD || '');
+        const SERVER_ADDR = (registryAuth?.serveraddress || process.env.REGISTRY_SERVER || 'https://index.docker.io/v1/');
+        const AUTH = (REG_USER && REG_PASS) ? { authconfig: { username: REG_USER, password: REG_PASS, serveraddress: SERVER_ADDR } } : {};
         const tryPull = (ref: string) => new Promise<void>((resolve, reject) => {
           docker.pull(ref, AUTH, (err: any, stream: any) => {
             if (err) return reject(err);
@@ -914,7 +915,7 @@ function startHttpsServer() {
         throw new Error(`image_pull_failed: ${reason}`);
       }
 
-      await pullImageWithFallback(image);
+      await pullImageWithFallback(image, req.body?.registryAuth);
 
       // Environment variables: flatten object to ["KEY=value"]
       const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];

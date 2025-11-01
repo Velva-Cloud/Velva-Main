@@ -225,7 +225,24 @@ export class QueueService implements OnModuleInit {
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
           const forceRecreate = !!(image && image.includes('itzg/minecraft-server'));
-          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate, hostPortPolicy } as any);
+
+          // Load registry credentials from settings
+          let registryAuth: { username?: string; password?: string; serveraddress?: string } | undefined = undefined;
+          try {
+            const row = await this.prisma.setting.findUnique({ where: { key: 'registry' } });
+            const val = (row?.value as any) || {};
+            if (val && (val.username || val.password)) {
+              registryAuth = {
+                username: val.username || undefined,
+                password: val.password || undefined,
+                serveraddress: (val.serveraddress || 'https://index.docker.io/v1/'),
+              };
+            }
+          } catch {
+            registryAuth = undefined;
+          }
+
+          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate, hostPortPolicy, registryAuth } as any);
           // Record assigned port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
           if (assignedPort && Number.isFinite(assignedPort)) {

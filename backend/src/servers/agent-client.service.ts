@@ -81,6 +81,7 @@ export class AgentClientService {
       cmd?: string[];
       exposePorts?: Array<number | string>;
       hostPortPolicy?: { hostRange: [number, number]; contiguous?: number; protocol: 'tcp' | 'udp' | 'mixed' };
+      registryAuth?: { username?: string; password?: string; serveraddress?: string };
     },
   ) {
     try {
