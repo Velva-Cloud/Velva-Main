@@ -83,19 +83,219 @@ export default function CreateServerPage() {
   const suspended = !!me?.suspended;
 
   const images = [
+    // Web
     {
       id: 'nginx:alpine',
       label: 'Nginx (web)',
       description: 'Lightweight web server suitable for static sites and reverse proxy.',
-      img: '/images/nginx.png', // optional local placeholder if available
+      img: '/images/nginx.png',
       fallback: 'https://avatars.githubusercontent.com/u/529617?s=200&v=4',
     },
+
+    // Minecraft
     {
       id: 'itzg/minecraft-server',
       label: 'Minecraft (Java)',
-      description: 'Popular Java edition server image with extensive env configuration.',
+      description: 'Java edition server image with extensive env configuration.',
       img: '/images/minecraft.png',
       fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png',
+    },
+    {
+      id: 'itzg/minecraft-bedrock-server',
+      label: 'Minecraft (Bedrock)',
+      description: 'Bedrock edition server for Windows/console players.',
+      img: '/images/minecraft-bedrock.png',
+      fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png',
+    },
+
+    // Valheim
+    {
+      id: 'lloesche/valheim-server',
+      label: 'Valheim',
+      description: 'Full-featured Valheim dedicated server.',
+      img: '/images/valheim.png',
+      fallback: 'https://raw.githubusercontent.com/lloesche/valheim-server-docker/master/img/valheim.png',
+    },
+
+    // Palworld
+    {
+      id: 'thijsvanloef/palworld-server-docker',
+      label: 'Palworld',
+      description: 'Popular survival server; configure with env vars for admin/password.',
+      img: '/images/palworld.png',
+      fallback: 'https://raw.githubusercontent.com/THIJsvanLoEF/Palworld-Server-Docker/main/.github/img/logo.png',
+    },
+
+    // Rust
+    {
+      id: 'didstopia/rust-server',
+      label: 'Rust',
+      description: 'Rust dedicated server with SteamCMD.',
+      img: '/images/rust.png',
+      fallback: 'https://raw.githubusercontent.com/didstopia/rust-server/master/.github/logo.png',
+    },
+
+    // CSGO / CS 1.6 / TF2 / GMod / L4D2 via cm2network
+    {
+      id: 'cm2network/csgo',
+      label: 'Counter-Strike: Global Offensive',
+      description: 'CS:GO dedicated server.',
+      img: '/images/csgo.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
+    },
+    {
+      id: 'cm2network/counter-strike',
+      label: 'Counter-Strike 1.6',
+      description: 'Classic Counter-Strike 1.6 server.',
+      img: '/images/cs16.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
+    },
+    {
+      id: 'cm2network/tf2',
+      label: 'Team Fortress 2',
+      description: 'TF2 dedicated server.',
+      img: '/images/tf2.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
+    },
+    {
+      id: 'cm2network/gmod',
+      label: 'Garry\'s Mod',
+      description: 'GMod dedicated server.',
+      img: '/images/gmod.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
+    },
+    {
+      id: 'cm2network/l4d2',
+      label: 'Left 4 Dead 2',
+      description: 'L4D2 dedicated server.',
+      img: '/images/l4d2.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
+    },
+
+    // Factorio
+    {
+      id: 'factoriotools/factorio',
+      label: 'Factorio',
+      description: 'Factorio dedicated server (popular automation game).',
+      img: '/images/factorio.png',
+      fallback: 'https://raw.githubusercontent.com/factoriotools/factorio-docker/master/logo.png',
+    },
+
+    // Space Engineers (Wine/SteamCMD based)
+    {
+      id: 'ich777/steamcmd',
+      label: 'Space Engineers (via SteamCMD/WINE)',
+      description: 'Run Space Engineers dedicated server using SteamCMD/WINE; requires specific env vars (GAME_ID etc.).',
+      img: '/images/space-engineers.png',
+      fallback: 'https://raw.githubusercontent.com/ich777/docker-templates/master/img/steamcmd.png',
+    },
+
+    // 7 Days to Die
+    {
+      id: 'didstopia/7dtd-server',
+      label: '7 Days to Die',
+      description: '7DtD dedicated server with SteamCMD.',
+      img: '/images/7dtd.png',
+      fallback: 'https://raw.githubusercontent.com/didstopia/7dtd-server/master/.github/logo.png',
+    },
+
+    // Project Zomboid
+    {
+      id: 'cyrinux/pzserver',
+      label: 'Project Zomboid',
+      description: 'Project Zomboid dedicated server.',
+      img: '/images/pz.png',
+      fallback: 'https://raw.githubusercontent.com/cyrinux/docker-project-zomboid-server/master/pz.webp',
+    },
+
+    // ARK: Survival Evolved
+    {
+      id: 'Hermsi1337/ark-server',
+      label: 'ARK: Survival Evolved',
+      description: 'ARK dedicated server.',
+      img: '/images/ark.png',
+      fallback: 'https://raw.githubusercontent.com/Hermsi1337/docker-ark-server/master/.github/images/logo.png',
+    },
+
+    // Terraria
+    {
+      id: 'beardedio/terraria',
+      label: 'Terraria',
+      description: 'Terraria dedicated server.',
+      img: '/images/terraria.png',
+      fallback: 'https://raw.githubusercontent.com/ryanrhee/terraria/master/icon.png',
+    },
+
+    // V Rising
+    {
+      id: 'devidian/vrising-server',
+      label: 'V Rising',
+      description: 'V Rising dedicated server.',
+      img: '/images/vrising.png',
+      fallback: 'https://raw.githubusercontent.com/Didstopia/docker-images/master/vrising/logo.png',
+    },
+
+    // Satisfactory
+    {
+      id: 'wolveix/satisfactory-server',
+      label: 'Satisfactory',
+      description: 'Satisfactory dedicated server (early access).',
+      img: '/images/satisfactory.png',
+      fallback: 'https://raw.githubusercontent.com/wolveix/satisfactory-server/main/.github/assets/logo.png',
+    },
+
+    // Conan Exiles
+    {
+      id: 'notruffy/conanexiles',
+      label: 'Conan Exiles',
+      description: 'Conan Exiles dedicated server.',
+      img: '/images/conan.png',
+      fallback: 'https://raw.githubusercontent.com/ich777/docker-templates/master/img/conanexiles.png',
+    },
+
+    // Don\'t Starve Together
+    {
+      id: 'jammsen/docker-dontstarvetogether',
+      label: "Don't Starve Together",
+      description: 'DST dedicated server.',
+      img: '/images/dst.png',
+      fallback: 'https://raw.githubusercontent.com/jammsen/docker-dontstarvetogether/master/.github/img/dst.png',
+    },
+
+    // Unturned
+    {
+      id: 'didstopia/unturned',
+      label: 'Unturned',
+      description: 'Unturned dedicated server.',
+      img: '/images/unturned.png',
+      fallback: 'https://raw.githubusercontent.com/didstopia/docker-images/master/unturned/logo.png',
+    },
+
+    // ECO
+    {
+      id: 'nicolas654/eco-server',
+      label: 'Eco',
+      description: 'Eco dedicated server.',
+      img: '/images/eco.png',
+      fallback: 'https://raw.githubusercontent.com/Nicolas654/docker-eco-server/main/icon.png',
+    },
+
+    // Pavlov VR
+    {
+      id: 'cm2network/pavlov',
+      label: 'Pavlov VR',
+      description: 'Pavlov VR dedicated server (Linux).',
+      img: '/images/pavlov.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
+    },
+
+    // Mordhau
+    {
+      id: 'cm2network/mordhau',
+      label: 'MORDHAU',
+      description: 'MORDHAU dedicated server.',
+      img: '/images/mordhau.png',
+      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
     },
   ];
 
@@ -106,6 +306,18 @@ export default function CreateServerPage() {
     const disk = sub?.plan?.resources?.diskGB;
     return ramGB ? `${ramGB} GB RAM${cpu ? ` • ${cpu} CPU` : ''}${disk ? ` • ${disk} GB SSD` : ''}` : sub?.plan?.name || '—';
   })();
+
+  // Search support for images
+  const [search, setSearch] = useState('');
+  const filteredImages = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return images;
+    return images.filter(i =>
+      i.label.toLowerCase().includes(q) ||
+      i.id.toLowerCase().includes(q) ||
+      (i.description || '').toLowerCase().includes(q)
+    );
+  }, [search, images]);
 
   const createServer = async () => {
     setErr(null);
@@ -200,7 +412,7 @@ export default function CreateServerPage() {
                         const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
                         const cpu = (p as any)?.resources?.cpu;
                         const disk = (p as any)?.resources?.diskGB;
-                        const labelParts = [];
+                        const labelParts: string[] = [];
                         if (ramGB) labelParts.push(`${ramGB} GB RAM`);
                         if (cpu) labelParts.push(`${cpu} CPU`);
                         if (disk) labelParts.push(`${disk} GB SSD`);
@@ -211,9 +423,18 @@ export default function CreateServerPage() {
                   </div>
 
                   <div>
-                    <div className="text-sm mb-2">Game/Application image</div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-sm">Game/Application image</div>
+                      <input
+                        type="text"
+                        placeholder="Search images..."
+                        className="input w-48"
+                        onChange={(e) => setSearch(e.target.value)}
+                        aria-label="Search images"
+                      />
+                    </div>
                     <div className="grid sm:grid-cols-2 gap-3">
-                      {images.map(img => {
+                      {filteredImages.map(img => {
                         const selected = image === img.id;
                         return (
                           <button
