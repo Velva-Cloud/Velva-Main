@@ -866,12 +866,33 @@ function startHttpsServer() {
             candidates.push(`ghcr.io/${org}/${hasTag ? repo : `${repo}:latest`}`);
           }
 
-          // Known heuristics: cm2network gmod => garrysmod alias
-          if (/^cm2network\/gmod$/i.test(base) || /^cm2network\/gmod:[^/]+$/i.test(base)) {
-            const tag = hasTag ? base.split(':')[1] : 'latest';
-            candidates.push(`cm2network/garrysmod:${tag}`);
-            candidates.push(`docker.io/cm2network/garrysmod:${tag}`);
-            candidates.push(`ghcr.io/cm2network/garrysmod:${tag}`);
+          // Known heuristics: any registry path ending in /cm2network/gmod -> /cm2network/garrysmod
+          const tag = hasTag ? base.split(':')[1] : 'latest';
+          const variantRefs: string[] = [];
+          const replaceRepo = (ref: string) => {
+            // replace only the repository segment 'gmod' when namespace is 'cm2network'
+            const m = ref.match(/^(?:([a-z0-9.-]+(?:\.[a-z0-9.-]+)+)\/)?([^\/]+)\/([^:]+)(?::([^:]+))?$/i);
+            if (!m) return null;
+            const registry = m[1] ? `${m[1]}/` : '';
+            const org = m[2];
+            const repo = m[3];
+            const t = m[4] || tag;
+            if (org.toLowerCase() === 'cm2network' && repo.toLowerCase() === 'gmod') {
+              return `${registry}${org}/garrysmod:${t}`;
+            }
+            return null;
+          };
+          const direct = replaceRepo(withTag);
+          if (direct) {
+            variantRefs.push(direct);
+            if (!hasRegistryPrefix) {
+              variantRefs.push(`docker.io/${direct}`);
+              variantRefs.push(`registry-1.docker.io/${direct}`);
+              variantRefs.push(`ghcr.io/${direct}`);
+            }
+          }
+          for (const v of variantRefs) {
+            candidates.push(v);
           }
 
           // De-duplicate while preserving order
