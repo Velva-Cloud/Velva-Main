@@ -172,6 +172,8 @@ export class QueueService implements OnModuleInit {
         const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
         const overrideImage = createLog ? (createLog.metadata as any)?.image : undefined;
         const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
+        const provisioner = createLog ? (createLog.metadata as any)?.provisioner : undefined;
+        const steam = createLog ? (createLog.metadata as any)?.steam : undefined;
         if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
           image = overrideImage.trim();
         }
@@ -179,8 +181,15 @@ export class QueueService implements OnModuleInit {
           env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
+        // If SteamCMD provisioner, override image to a placeholder and derive ports from title/appId
+        let usingSteam = (provisioner === 'steamcmd');
+        if (usingSteam) {
+          // For SteamCMD, do not rely on docker image; leave image undefined
+          image = '';
+        }
+
         // Image-specific defaults
-        if (image && image.includes('itzg/minecraft-server')) {
+        if (!usingSteam && image && image.includes('itzg/minecraft-server')) {
           if (!mountPath || !mountPath.trim()) {
             mountPath = '/data';
           }
@@ -214,13 +223,22 @@ export class QueueService implements OnModuleInit {
 
         // Determine internal ports if not set by plan/resources
         if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
-          const internal = getInternalPorts(image || '');
+          const internal = usingSteam ? (() => {
+            // Minimal SRCDS defaults by appId if provided
+            const appId = Number(steam?.appId || 0);
+            if (appId === 740) return [{ port: 27015, protocol: 'udp' }]; // CSGO
+            if (appId === 4020) return [{ port: 27015, protocol: 'udp' }]; // GMod
+            if (appId === 232250) return [{ port: 27015, protocol: 'udp' }]; // TF2
+            if (appId === 222860) return [{ port: 27015, protocol: 'udp' }]; // L4D2
+            if (appId === 629760) return [{ port: 7777, protocol: 'udp' }]; // Mordhau
+            return [{ port: 27015, protocol: 'udp' }];
+          })() : getInternalPorts(image || '');
           // Send ports with protocol so daemon can validate TCP/UDP when opening firewall/NAT
           exposePorts = internal.map(p => `${p.port}/${p.protocol}`);
         }
 
         // Host port policy hint to daemon
-        const hostPortPolicy = getHostPortPolicy(image || '');
+        const hostPortPolicy = usingSteam ? { hostRange: [36000, 39999], protocol: 'udp', contiguous: 1 } : getHostPortPolicy(image || '');
 
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {

@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength, IsObject } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength, IsObject, IsIn, ValidateNested } from 'class-validator';
 
 export class CreateServerDto {
   @ApiProperty({ example: 1 })
@@ -28,4 +28,20 @@ export class CreateServerDto {
   @IsObject()
   @IsOptional()
   env?: Record<string, string>;
+
+  @ApiProperty({ example: 'docker', enum: ['docker', 'steamcmd'], required: false })
+  @IsString()
+  @IsOptional()
+  @IsIn(['docker', 'steamcmd'])
+  provisioner?: 'docker' | 'steamcmd';
+
+  @ApiProperty({
+    required: false,
+    description: 'SteamCMD settings when provisioner=steamcmd',
+    type: Object,
+    example: { appId: 4020, branch: 'public', args: ['-tickrate', '66'] },
+  })
+  @IsObject()
+  @IsOptional()
+  steam?: { appId: number; branch?: string; args?: string[] };
 }

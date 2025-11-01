@@ -82,6 +82,8 @@ export class AgentClientService {
       exposePorts?: Array<number | string>;
       hostPortPolicy?: { hostRange: [number, number]; contiguous?: number; protocol: 'tcp' | 'udp' | 'mixed' };
       registryAuth?: { username?: string; password?: string; serveraddress?: string };
+      provisioner?: 'docker' | 'steamcmd';
+      steam?: { appId: number; branch?: string; args?: string[] };
     },
   ) {
     try {

@@ -401,6 +401,28 @@ export default function CreateServerPage() {
 
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
 
+  // Provisioner selection: default Docker, allow SteamCMD for SRCDS titles
+  const isSRCDS = useMemo(() => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image), [image]);
+  const [provisioner, setProvisioner] = useState<'docker' | 'steamcmd'>(isSRCDS ? 'steamcmd' : 'docker');
+
+  useEffect(() => {
+    // When switching image, default to steamcmd for SRCDS; docker otherwise
+    setProvisioner((prev) => (['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image) ? 'steamcmd' : 'docker'));
+  }, [image]);
+
+  // Map SRCDS image to Steam appId
+  function steamAppIdFor(imageId: string): number | null {
+    switch (imageId) {
+      case 'cm2network/csgo': return 740;
+      case 'cm2network/gmod': return 4020;
+      case 'cm2network/tf2': return 232250;
+      case 'cm2network/l4d2': return 222860;
+      case 'cm2network/mordhau': return 629760;
+      case 'cm2network/counter-strike': return 90; // CS 1.6 (legacy HLDS)
+      default: return null;
+    }
+  }
+
   // Reset advanced env when image changes
   useEffect(() => {
     setAdvancedEnv({});
@@ -458,7 +480,19 @@ export default function CreateServerPage() {
         if (vv.length > 0) env[k] = vv;
       });
 
-      const res = await api.post('/servers', { name: name.trim(), planId, image: image.trim() || undefined, env: env });
+      // Build steam options if SRCDS and provisioner is steamcmd
+      const steamApp = steamAppIdFor(image);
+      const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env: env };
+      if (isSRCDS) {
+        body.provisioner = provisioner;
+        if (provisioner === 'steamcmd' && steamApp) {
+          body.steam = { appId: steamApp, branch: 'public', args: [] };
+          // Do not send docker image when using steamcmd; agent ignores image
+          body.image = undefined;
+        }
+      }
+
+      const res = await api.post('/servers', body);
       // After creation, redirect to server page
       const server = res.data as { id: number };
       router.push(`/servers/${server.id}`);
@@ -598,6 +632,26 @@ export default function CreateServerPage() {
                       ))}
                     </div>
                   </div>
+
+                  {/* Provisioner selection for SRCDS */}
+                  {isSRCDS && (
+                    <div className="mt-4">
+                      <div className="text-sm font-medium mb-2">Provisioner</div>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        <label className={`p-3 rounded border ${provisioner === 'steamcmd' ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800'}`}>
+                          <input type="radio" name="prov" checked={provisioner === 'steamcmd'} onChange={() => setProvisioner('steamcmd')} />
+                          <span className="ml-2">SteamCMD (recommended for SRCDS titles)</span>
+                        </label>
+                        <label className={`p-3 rounded border ${provisioner === 'docker' ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800'}`}>
+                          <input type="radio" name="prov" checked={provisioner === 'docker'} onChange={() => setProvisioner('docker')} />
+                          <span className="ml-2">Docker</span>
+                        </label>
+                      </div>
+                      <div className="text-xs subtle mt-2">
+                        Docker uses community images; SteamCMD installs official dedicated server files via Steam.
+                      </div>
+                    </div>
+                  )}
 
                   <div className="flex items-center justify-between">
                     <div className="text-xs subtle">
