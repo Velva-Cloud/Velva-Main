@@ -658,11 +658,14 @@ function startHttpsServer() {
     if (!cmd || cmd.length > 1000) return res.status(400).json({ error: 'invalid_cmd' });
     try {
       const container = docker.getContainer(`vc-${id}`);
+      // Some helper scripts in itzg image (mc-send-to-console) require uid 1000
+      const wantsUser1000 = /(^|\\s)mc-send-to-console(\\s|$)/.test(cmd);
       const exec = await container.exec({
         AttachStdout: true,
         AttachStderr: true,
         Tty: false,
         Cmd: ['/bin/sh', '-lc', cmd],
+        ...(wantsUser1000 ? { User: '1000' } : {}),
       } as any);
       const stream = await exec.start({ hijack: true, stdin: false } as any);
       let output = '';
