@@ -704,9 +704,10 @@ export class ServersService {
       const toSend = (cmd || '').trim();
       const escaped = toSend.replace(/(["`$\\])/g, '\\$1');
       try {
-        const res = await this.agent.exec(baseURL, serverId, `mc-send-to-console "${escaped}"`);
+        // Send a special marker so the daemon can run mc-send-to-console as uid 1000 without shell indirection
+        const res = await this.agent.exec(baseURL, serverId, `__MC_PIPE__ ${escaped}`);
         const out = String(res?.output || '');
-        if (/Console pipe needs to be enabled/i.test(out) || /Named pipe .* is missing/i.test(out)) {
+        if (/Console pipe needs to be enabled/i.test(out) || /Named pipe .* is missing/i.test(out) || /needs to be run with user ID 1000/i.test(out)) {
           // Fallback to RCON without surfacing an error to the user
           const r = await this.agent.exec(baseURL, serverId, `rcon-cli ${escaped}`);
           return r;

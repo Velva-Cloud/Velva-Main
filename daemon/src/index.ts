@@ -655,11 +655,32 @@ function startHttpsServer() {
   app.post('/exec/:id', async (req, res) => {
     const id = req.params.id;
     const cmd = (req.body?.cmd || '').toString();
-    if (!cmd || cmd.length > 1000) return res.status(400).json({ error: 'invalid_cmd' });
+    if (!cmd || cmd.length > 2000) return res.status(400).json({ error: 'invalid_cmd' });
     try {
       const container = docker.getContainer(`vc-${id}`);
-      // Some helper scripts in itzg image (mc-send-to-console) require uid 1000
-      const wantsUser1000 = /(^|\\s)mc-send-to-console(\\s|$)/.test(cmd);
+
+      // Special marker to run mc-send-to-console as uid 1000 without shell indirection
+      if (cmd.startsWith('__MC_PIPE__ ')) {
+        const arg = cmd.slice('__MC_PIPE__ '.length);
+        const exec = await container.exec({
+          AttachStdout: true,
+          AttachStderr: true,
+          Tty: false,
+          Cmd: ['mc-send-to-console', arg],
+          User: '1000',
+        } as any);
+        const stream = await exec.start({ hijack: true, stdin: false } as any);
+        let output = '';
+        await new Promise<void>((resolve, reject) => {
+          stream.on('data', (d: Buffer) => (output += d.toString('utf8')));
+          stream.on('end', resolve);
+          stream.on('error', reject);
+        });
+        return res.json({ ok: true, output });
+      }
+
+      // Fallback generic shell exec
+      const wantsUser1000 = /(^|\s)mc-send-to-console(\s|$)/.test(cmd);
       const exec = await container.exec({
         AttachStdout: true,
         AttachStderr: true,
