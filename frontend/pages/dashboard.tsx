@@ -182,7 +182,7 @@ export default function Dashboard() {
           </div>
         )}
 
-        {/* Quick create */}
+        {/* Create server CTA */}
         <section className="card p-5 mb-8">
           {!sub ? (
             <div className="flex items-center justify-between">
@@ -190,65 +190,18 @@ export default function Dashboard() {
               <a className="btn btn-primary" href="/billing">Go to Billing</a>
             </div>
           ) : (
-            <>
-              <div className="grid md:grid-cols-4 gap-3 items-end">
-                <div className="md:col-span-2">
-                  <div className="text-sm mb-1">Server name</div>
-                  <input
-                    id="server-name"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder="e.g., my-server"
-                    className="input"
-                    aria-invalid={!!nameError}
-                    disabled={!sub || sub.status !== 'active' || limitReached}
-                  />
-                </div>
-                <div>
-                  <div className="text-sm mb-1">Plan</div>
-                  <select
-                    value={planId}
-                    onChange={e => setPlanId(Number(e.target.value))}
-                    className="input"
-                    aria-label="Select server size"
-                    disabled={!sub || sub.status !== 'active' || plans.length === 0 || limitReached}
-                  >
-                    {plans.map(p => {
-                      const ramMB = Number((p as any)?.resources?.ramMB) || 0;
-                      const ramGB = ramMB ? Math.round((ramMB / 1024) * 10) / 10 : null;
-                      const label = ramGB ? `${ramGB} GB RAM • ${p.pricePerMonth}/mo` : p.name;
-                      return <option key={p.id} value={p.id}>{label}</option>;
-                    })}
-                  </select>
-                </div>
-                <div>
-                  <div className="text-sm mb-1">Image</div>
-                  <select
-                    value={image}
-                    onChange={e => setImage(e.target.value)}
-                    className="input"
-                    aria-label="Docker image"
-                    disabled={!sub || sub.status !== 'active' || limitReached}
-                  >
-                    <option value="nginx:alpine">Nginx (web) — nginx:alpine</option>
-                    <option value="itzg/minecraft-server">Minecraft (Java) — itzg/minecraft-server</option>
-                  </select>
-                </div>
+            <div className="flex items-center justify-between">
+              <div className="text-sm subtle">
+                Configure a new server with name, plan, and game/application image on the creation page.
               </div>
-              <div className="mt-3 flex items-center justify-between">
-                <div className="text-xs subtle">
-                  Your plan allows up to <span className="text-slate-200 font-medium">{maxServers}</span> server{maxServers > 1 ? 's' : ''}. You currently have {total}.
-                </div>
-                <button
-                  onClick={createServer}
-                  disabled={creating || !sub || sub.status !== 'active' || limitReached}
-                  className={`btn btn-primary ${creating || !sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}
-                >
-                  {creating ? 'Creating…' : 'Create server'}
-                </button>
-              </div>
-              {(err || nameError) && <div className="text-red-400 mt-2">{err || nameError}</div>}
-            </>
+              <a
+                href="/servers/create"
+                className={`btn btn-primary ${!sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}
+                aria-disabled={!sub || sub.status !== 'active' || limitReached}
+              >
+                Create server
+              </a>
+            </div>
           )}
         </section>
 
@@ -263,8 +216,8 @@ export default function Dashboard() {
             <div className="relative overflow-hidden card p-10 text-center">
               <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
               <h3 className="text-xl font-semibold mb-2">No servers yet</h3>
-              <p className="subtle mb-5">Use the quick create above to spin up your first server.</p>
-              <button onClick={createServer} disabled={creating || !sub || sub.status !== 'active' || limitReached} className={`btn btn-primary ${creating || !sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}>{creating ? 'Creating…' : 'Create server'}</button>
+              <p className="subtle mb-5">Use the creation page to spin up your first server.</p>
+              <a href="/servers/create" className={`btn btn-primary ${!sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`} aria-disabled={!sub || sub.status !== 'active' || limitReached}>Create server</a>
             </div>
           ) : (
             <>

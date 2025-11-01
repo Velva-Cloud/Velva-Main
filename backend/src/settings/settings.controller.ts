@@ -61,3 +61,49 @@ export class AgentsSettingsController {
     return { ok: true, requireJoinCodeOnly };
   }
 }
+
+@ApiTags('settings')
+@ApiBearerAuth()
+@UseGuards(AuthGuard('jwt'), RolesGuard)
+@Controller('settings/registry')
+export class RegistrySettingsController {
+  constructor(private prisma: PrismaService) {}
+
+  @Get()
+  @Roles(Role.ADMIN, Role.OWNER)
+  async getRegistry() {
+    const row = await this.prisma.setting.findUnique({ where: { key: 'registry' } });
+    const val = (row?.value as any) || {};
+    return {
+      serveraddress: val.serveraddress || 'https://index.docker.io/v1/',
+      username: val.username || '',
+      // Do not return password in cleartext; indicate presence only
+      hasPassword: !!val.password,
+    };
+  }
+
+  @Post()
+  @Roles(Role.ADMIN, Role.OWNER)
+  async saveRegistry(@Body() body: { serveraddress?: string; username?: string; password?: string }, @Req() req: any) {
+    const serveraddress = (body.serveraddress || 'https://index.docker.io/v1/').trim();
+    const username = (body.username || '').trim();
+    const password = (body.password || '').trim();
+
+    // Persist credentials; password stored as-is (assume encrypted at rest by DB or use vault in future)
+    await this.prisma.setting.upsert({
+      where: { key: 'registry' },
+      update: { value: { serveraddress, username, password: password || undefined } },
+      create: { key: 'registry', value: { serveraddress, username, password: password || undefined } },
+    });
+
+    await this.prisma.log.create({
+      data: {
+        userId: req?.user?.userId ?? null,
+        action: 'plan_change',
+        metadata: { event: 'registry_settings_update', serveraddress, usernameSet: !!username, passwordSet: !!password },
+      },
+    });
+
+    return { ok: true };
+  }
+}

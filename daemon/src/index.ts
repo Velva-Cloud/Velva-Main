@@ -701,35 +701,346 @@ function startHttpsServer() {
     }
   });
 
+  // Persistent port allocation store
+  const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
+  type PortAllocation = { serverId: number; range: [number, number]; ports: number[]; protocol: 'tcp' | 'udp' | 'mixed' };
+  function loadPortStore(): Record<string, PortAllocation> {
+    try {
+      if (!fs.existsSync(PORT_STORE_PATH)) return {};
+      const text = fs.readFileSync(PORT_STORE_PATH, 'utf8');
+      const json = JSON.parse(text);
+      return typeof json === 'object' && json ? json : {};
+    } catch {
+      return {};
+    }
+  }
+  function savePortStore(store: Record<string, PortAllocation>) {
+    try {
+      ensureDir(DATA_DIR);
+      fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
+    } catch {}
+  }
+  async function listUsedHostPorts(): Promise<Set<number>> {
+    const used = new Set<number>();
+    try {
+      const list = await docker.listContainers({ all: true });
+      for (const info of list) {
+        const ports = info.Ports || [];
+        for (const prt of ports) {
+          if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
+        }
+      }
+    } catch {}
+    // Also reserve ports from persisted store to avoid race conditions
+    const store = loadPortStore();
+    for (const key of Object.keys(store)) {
+      const alloc = store[key];
+      for (const p of alloc.ports) used.add(p);
+    }
+    return used;
+  }
+  function allocateContiguous(range: [number, number], count: number, used: Set<number>, seed = 0): number[] | null {
+    const [start, end] = range;
+    const total = Math.max(0, end - start + 1);
+    if (count <= 0 || total < count) return null;
+    let idxStart = (seed % total + total) % total;
+    for (let tries = 0; tries < total; tries++, idxStart = (idxStart + 1) % total) {
+      const candidateStart = start + idxStart;
+      if (candidateStart + count - 1 > end) continue;
+      let ok = true;
+      for (let i = 0; i < count; i++) {
+        const port = candidateStart + i;
+        if (used.has(port)) {
+          ok = false;
+          break;
+        }
+      }
+      if (ok) {
+        const ports = Array.from({ length: count }, (_, i) => candidateStart + i);
+        for (const p of ports) used.add(p);
+        return ports;
+      }
+    }
+    return null;
+  }
+  function allocateDistinct(range: [number, number], count: number, used: Set<number>, seed = 0): number[] | null {
+    const [start, end] = range;
+    const total = Math.max(0, end - start + 1);
+    if (count <= 0 || total < count) return null;
+    const result: number[] = [];
+    let idx = (seed % total + total) % total;
+    let tries = 0;
+    while (result.length < count && tries < total * 2) {
+      const candidate = start + idx;
+      if (!used.has(candidate)) {
+        used.add(candidate);
+        result.push(candidate);
+      }
+      idx = (idx + 1) % total;
+      tries++;
+    }
+    return result.length === count ? result : null;
+  }
+
+  // In-memory process table for SteamCMD provisioner
+  const steamProcesses = new Map<number, any>();
+
+  // Robust image pull with fallbacks and aliases
+  async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
+    const REG_USER = (registryAuth?.username || process.env.REGISTRY_USERNAME || '');
+    const REG_PASS = (registryAuth?.password || process.env.REGISTRY_PASSWORD || '');
+    const SERVER_ADDR_RAW = (registryAuth?.serveraddress || process.env.REGISTRY_SERVER || '');
+    const SERVER_ADDR = /^https?:\/\/[^/]+/.test(SERVER_ADDR_RAW) ? SERVER_ADDR_RAW : '';
+    const AUTH = (REG_USER && REG_PASS)
+      ? { authconfig: SERVER_ADDR ? { username: REG_USER, password: REG_PASS, serveraddress: SERVER_ADDR } : { username: REG_USER, password: REG_PASS } }
+      : {};
+    const tryPull = (ref: string) => new Promise<void>((resolve, reject) => {
+      docker.pull(ref, AUTH, (err: any, stream: any) => {
+        if (err) return reject(err);
+        docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
+      });
+    });
+
+    // Load optional alias map from DATA_DIR/image-aliases.json
+    function loadAliases(): Record<string, string> {
+      try {
+        const aliasPath = path.join(DATA_DIR, 'image-aliases.json');
+        if (!fs.existsSync(aliasPath)) return {};
+        const text = fs.readFileSync(aliasPath, 'utf8');
+        const json = JSON.parse(text);
+        return typeof json === 'object' && json ? json : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function resolveCandidates(baseImg: string): string[] {
+      const aliases = loadAliases();
+      let canonical = aliases[baseImg] || baseImg;
+      canonical = canonical.trim();
+      if (!canonical) throw new Error('image_ref_empty');
+
+      const hasTag = /:[^/]+$/.test(canonical);
+      const base = canonical;
+      const withTag = hasTag ? base : `${base}:latest`;
+      const candidates: string[] = [withTag];
+
+      // Known heuristics: cm2network/gmod -> cm2network/garrysmod
+      if (/^cm2network\/gmod(?::.+)?$/i.test(base)) {
+        const tag = hasTag ? base.split(':')[1] : 'latest';
+        candidates.push(`cm2network/garrysmod:${tag}`);
+      }
+
+      // De-duplicate while preserving order
+      const seen = new Set<string>();
+      const uniq: string[] = [];
+      for (const c of candidates) {
+        if (!seen.has(c)) {
+          seen.add(c);
+          uniq.push(c);
+        }
+      }
+      return uniq;
+    }
+
+    const candidates = resolveCandidates(img);
+
+    let lastErr: any = null;
+    for (const ref of candidates) {
+      try {
+        await tryPull(ref);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+        const msg = String(e?.message || '');
+        // Continue to next candidate on common registry errors
+        if (/denied/i.test(msg) || /unauthorized/i.test(msg) || /manifest unknown/i.test(msg) || e?.statusCode === 404) {
+          continue;
+        }
+      }
+    }
+    // Final attempt with auth against the first candidate
+    if (AUTH && candidates.length > 0) {
+      try {
+        await tryPull(candidates[0]);
+        return;
+      } catch (e: any) {
+        lastErr = e;
+      }
+    }
+    const reason = lastErr?.message || 'image_pull_failed';
+    throw new Error(`image_pull_failed: ${reason}`);
+  }
+
   app.post('/provision', async (req, res) => {
-    const { serverId, name, image = 'nginx:alpine', cpu, ramMB, env = {}, mountPath = '/srv', cmd = [], exposePorts = [], forceRecreate = false } = req.body || {};
+    const {
+      serverId,
+      name,
+      image = 'nginx:alpine',
+      cpu,
+      ramMB,
+      env = {},
+      mountPath = '/srv',
+      cmd = [],
+      exposePorts = [],
+      forceRecreate = false,
+      hostPortPolicy,
+      provisioner = 'docker',
+      steam,
+    } = req.body || {};
     if (!serverId || !name) return res.status(400).json({ error: 'serverId and name required' });
 
     const containerName = `vc-${serverId}`;
 
     try {
-      // Existence check by name
-      let existingId: string | null = null;
-      try {
-        const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
-        if (Array.isArray(matches) && matches.length > 0) {
-          existingId = matches[0].Id;
-        }
-      } catch {
-        // ignore pre-check failures and proceed
-      }
-
-      // Ensure persistent server directory and image presence
+      // Ensure persistent server directory
       const srvDir = serverDir(serverId);
       ensureDir(SERVERS_DIR);
       ensureDir(srvDir);
 
-      await new Promise<void>((resolve, reject) => {
-        docker.pull(image, (err: any, stream: any) => {
-          if (err) return reject(err);
-          docker.modem.followProgress(stream, (err2: any) => (err2 ? reject(err2) : resolve()));
+      // Exposed ports from request: support "<port>/<proto>" to validate protocol
+      const exposed: Record<string, {}> = {};
+      const internalPorts: Array<{ containerPort: number; proto: 'tcp' | 'udp' }> = [];
+      for (const p of exposePorts || []) {
+        const s = String(p);
+        let containerPort = Number(s.split('/')[0]);
+        let proto: 'tcp' | 'udp' = (s.includes('/') && s.split('/')[1] === 'udp') ? 'udp' : 'tcp';
+        if (!Number.isFinite(containerPort) || containerPort <= 0) continue;
+        internalPorts.push({ containerPort, proto });
+        exposed[`${containerPort}/${proto}`] = {};
+      }
+
+      // Host port allocation
+      let portBindings: Record<string, Array<{ HostPort: string }>> | undefined = undefined;
+      let chosenHostPort: number | undefined = undefined;
+
+      const store = loadPortStore();
+      const key = String(serverId);
+      const existingAlloc = store[key];
+
+      // Validate protocol family hint
+      const policyRange: [number, number] | undefined = (hostPortPolicy && Array.isArray(hostPortPolicy.hostRange)) ? hostPortPolicy.hostRange : undefined;
+      const policyContig = hostPortPolicy?.contiguous && Number(hostPortPolicy.contiguous) > 0 ? Number(hostPortPolicy.contiguous) : undefined;
+      const policyProto: 'tcp' | 'udp' | 'mixed' = (hostPortPolicy?.protocol as any) || 'mixed';
+
+      if (internalPorts.length > 0 && policyRange) {
+        const used = await listUsedHostPorts();
+        let allocated: number[] | null = null;
+
+        if (policyContig && policyContig > 1) {
+          allocated = allocateContiguous(policyRange, Math.max(policyContig, internalPorts.length), used, serverId);
+        } else {
+          allocated = allocateDistinct(policyRange, internalPorts.length, used, serverId);
+        }
+
+        // Reuse existing allocation if present and sufficient
+        if (existingAlloc && Array.isArray(existingAlloc.ports) && existingAlloc.ports.length >= (allocated?.length || internalPorts.length)) {
+          allocated = existingAlloc.ports.slice(0, Math.max(policyContig || internalPorts.length, internalPorts.length));
+        }
+
+        if (allocated && allocated.length > 0) {
+          // Persist allocation
+          store[key] = { serverId: Number(serverId), range: policyRange, ports: allocated, protocol: policyProto };
+          savePortStore(store);
+
+          // If using Docker, build PortBindings mapping internal ports to allocated host ports
+          // If using SteamCMD, we'll pass allocated[0] to the process as -port
+          if (provisioner === 'docker') {
+            portBindings = {};
+            for (let i = 0; i < internalPorts.length; i++) {
+              const entry = internalPorts[i];
+              const host = allocated[i] || allocated[0];
+              const bindingKey = `${entry.containerPort}/${entry.proto}`;
+              portBindings[bindingKey] = [{ HostPort: String(host) }];
+            }
+          }
+          // Use the first mapped port as chosenHostPort for convenience
+          chosenHostPort = allocated[0];
+        }
+      }
+
+      if (provisioner === 'steamcmd') {
+        // Ensure steamcmd is available
+        const candidates = [
+          process.env.STEAMCMD_PATH || '',
+          '/usr/bin/steamcmd',
+          '/usr/local/bin/steamcmd',
+          '/opt/steamcmd/steamcmd.sh',
+        ].filter(Boolean);
+        let steamcmdPath: string | null = null;
+        for (const c of candidates) {
+          try {
+            if (c && fs.existsSync(c)) { steamcmdPath = c; break; }
+          } catch {}
+        }
+        if (!steamcmdPath) {
+          return res.status(500).json({ error: 'steamcmd_not_found', detail: 'Install SteamCMD and set STEAMCMD_PATH env or place it at /usr/bin/steamcmd' });
+        }
+
+        const appId = Number(steam?.appId || 0);
+        if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
+        const branch = (steam?.branch || 'public').toString();
+
+        // Install/update into srvDir via SteamCMD
+        const installArgs = [
+          '+login', 'anonymous',
+          '+force_install_dir', srvDir,
+          '+app_update', String(appId),
+          '-beta', branch,
+          '+quit',
+        ];
+
+        await new Promise<void>((resolve, reject) => {
+          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: 'inherit' });
+          cp.on('error', reject);
+          cp.on('exit', (code: number) => (code === 0 ? resolve() : reject(new Error('steamcmd_install_failed'))));
         });
-      });
+
+        // Build launch command per appId (SRCDS family)
+        let runCmd: string;
+        let runArgs: string[];
+        const hostPort = Number(chosenHostPort || 27015);
+        if (appId === 4020) { // Garry's Mod
+          runCmd = path.join(srvDir, 'srcds_run');
+          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+exec', 'server.cfg'];
+        } else if (appId === 740) { // CS:GO
+          runCmd = path.join(srvDir, 'srcds_run');
+          runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2'];
+        } else if (appId === 232250) { // TF2
+          runCmd = path.join(srvDir, 'srcds_run');
+          runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl'];
+        } else if (appId === 222860) { // L4D2
+          runCmd = path.join(srvDir, 'srcds_run');
+          runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort)];
+        } else if (appId === 629760) { // Mordhau
+          runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
+          runArgs = ['-Port=' + String(hostPort)];
+        } else {
+          // Generic SRCDS default
+          runCmd = path.join(srvDir, 'srcds_run');
+          runArgs = ['-console', '-port', String(hostPort)];
+        }
+
+        // Append user-provided args
+        const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
+        runArgs.push(...extraArgs);
+
+        // Start process and persist state
+        const child = require('child_process').spawn(runCmd, runArgs, {
+          cwd: srvDir,
+          env: { ...process.env, VC_SERVER_ID: String(serverId), VC_NAME: name },
+          stdio: 'ignore',
+          detached: true,
+        });
+        steamProcesses.set(Number(serverId), child);
+        try { fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify({ appId, branch, runCmd, runArgs, port: hostPort }, null, 2)); } catch {}
+
+        return res.json({ ok: true, id: `proc-${serverId}`, existed: false, volume: mountPath, port: hostPort, provisioner: 'steamcmd' });
+      }
+
+      // Docker path
+      // Pre-pull image with auth + fallbacks
+      await pullImageWithFallback(image, req.body?.registryAuth);
 
       // Environment variables: flatten object to ["KEY=value"]
       const envArr: string[] = [`VC_SERVER_ID=${serverId}`, `VC_NAME=${name}`];
@@ -737,13 +1048,6 @@ function startHttpsServer() {
         for (const [k, v] of Object.entries(env)) {
           envArr.push(`${k}=${String(v)}`);
         }
-      }
-
-      // Exposed ports
-      const exposed: Record<string, {}> = {};
-      for (const p of exposePorts || []) {
-        const port = String(p).includes('/') ? String(p) : `${String(p)}/tcp`;
-        exposed[port] = {};
       }
 
       // CPU units to NanoCpus:
@@ -756,37 +1060,16 @@ function startHttpsServer() {
         nanoCpus = Math.round(coreLimit * 1e9);
       }
 
-      // Unique host port assignment for Minecraft
-      let portBindings: Record<string, Array<{ HostPort: string }>> | undefined = undefined;
-      let chosenHostPort: number | undefined = undefined;
-      const isMinecraft = typeof image === 'string' && image.includes('itzg/minecraft-server');
-      if (isMinecraft) {
-        const containerPort = 25565;
-        const base = Number(process.env.MC_PORT_BASE || 25000);
-        const range = Number(process.env.MC_PORT_RANGE || 10000);
-        const maxTries = Number(process.env.MC_PORT_MAX_TRIES || 200);
-        const used = new Set<number>();
-        try {
-          const list = await docker.listContainers({ all: true });
-          for (const info of list) {
-            const ports = info.Ports || [];
-            for (const prt of ports) {
-              if (typeof prt.PublicPort === 'number') used.add(prt.PublicPort);
-            }
-          }
-        } catch {}
-        let candidate = base + ((serverId * 17) % Math.max(1, range));
-        let tries = 0;
-        while (used.has(candidate) && tries < maxTries) {
-          candidate = base + (((candidate - base + 1) % Math.max(1, range)));
-          tries++;
-        }
-        chosenHostPort = candidate;
-        exposed[`${containerPort}/tcp`] = {};
-        portBindings = { [`${containerPort}/tcp`]: [{ HostPort: String(chosenHostPort) }] };
-      }
-
       // If container exists and forceRecreate, remove it to apply new config
+      // Existence check by name
+      let existingId: string | null = null;
+      try {
+        const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+        if (Array.isArray(matches) && matches.length > 0) {
+          existingId = matches[0].Id;
+        }
+      } catch {}
+
       if (existingId && forceRecreate) {
         try {
           const c = docker.getContainer(existingId);
@@ -850,24 +1133,101 @@ function startHttpsServer() {
       res.status(500).json({ error: e?.message || 'provision_failed' });
     }
   });
+        
+
+  // Helpers for SteamCMD-managed servers
+  function steamMetaPath(serverId: number | string) {
+    return path.join(serverDir(serverId), 'steam.json');
+  }
+  function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number } | null {
+    try {
+      const p = steamMetaPath(serverId);
+      if (!fs.existsSync(p)) return null;
+      const j = JSON.parse(fs.readFileSync(p, 'utf8'));
+      if (j && j.runCmd && Array.isArray(j.runArgs)) return j;
+      return null;
+    } catch {
+      return null;
+    }
+  }
+  function writeSteamMeta(serverId: number | string, meta: any) {
+    try {
+      fs.writeFileSync(steamMetaPath(serverId), JSON.stringify(meta, null, 2));
+    } catch {}
+  }
+  function isSteamManaged(serverId: number | string): boolean {
+    return !!readSteamMeta(serverId);
+  }
+  function startSteamProcess(serverId: number | string): { ok: boolean; pid?: number } {
+    const meta = readSteamMeta(serverId);
+    if (!meta) return { ok: false };
+    const srvDir = serverDir(serverId);
+    ensureDir(srvDir);
+    const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
+      cwd: srvDir,
+      env: { ...process.env, VC_SERVER_ID: String(serverId) },
+      stdio: 'ignore',
+      detached: true,
+    });
+    steamProcesses.set(Number(serverId), child);
+    try {
+      writeSteamMeta(serverId, { ...meta, pid: child.pid });
+    } catch {}
+    try { child.unref(); } catch {}
+    return { ok: true, pid: child.pid };
+  }
+  async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean }> {
+    const meta = readSteamMeta(serverId);
+    const child = steamProcesses.get(Number(serverId));
+    const pid = child?.pid || meta?.pid;
+    if (!pid) return { ok: true, already: true };
+    try {
+      process.kill(pid, 'SIGTERM');
+    } catch {}
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(pid, 0);
+        await new Promise(r => setTimeout(r, 200));
+      } catch {
+        // process no longer exists
+        steamProcesses.delete(Number(serverId));
+        try { writeSteamMeta(serverId, { ...meta, pid: undefined }); } catch {}
+        return { ok: true };
+      }
+    }
+    // Force kill
+    try { process.kill(pid, 'SIGKILL'); } catch {}
+    steamProcesses.delete(Number(serverId));
+    try { writeSteamMeta(serverId, { ...meta, pid: undefined }); } catch {}
+    return { ok: true };
+  }
 
   app.post('/start/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Try Docker container start first
       const container = docker.getContainer(`vc-${id}`);
-      await container.start();
-      res.json({ ok: true });
+      try {
+        await container.start();
+        return res.json({ ok: true });
+      } catch (e: any) {
+        const code = e?.statusCode;
+        const msg = String(e?.message || '');
+        // Treat already started (304) as success
+        if (code === 304 || /already started/i.test(msg) || /not modified/i.test(msg)) {
+          return res.json({ ok: true, already: true });
+        }
+        // If container not found and Steam-managed, start native process
+        if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
+          const r = startSteamProcess(id);
+          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+          return res.status(500).json({ error: 'steam_start_failed' });
+        }
+        // Other docker error
+        return res.status(500).json({ error: e?.message || 'start_failed' });
+      }
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      // Treat already started (304) as success
-      if (code === 304 || /already started/i.test(msg) || /not modified/i.test(msg)) {
-        return res.json({ ok: true, already: true });
-      }
-      // Propagate not found as 404 with a stable error code
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
-      }
       res.status(500).json({ error: e?.message || 'start_failed' });
     }
   });
@@ -875,19 +1235,31 @@ function startHttpsServer() {
   app.post('/stop/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Try Docker stop
       const container = docker.getContainer(`vc-${id}`);
-      await container.stop({ t: Number(process.env.STOP_TIMEOUT || 10) });
-      res.json({ ok: true });
-    } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      // Treat already stopped (304) as success
-      if (code === 304 || /not running/i.test(msg) || /not modified/i.test(msg)) {
-        return res.json({ ok: true, already: true });
+      try {
+        await container.stop({ t: Number(process.env.STOP_TIMEOUT || 10) });
+        return res.json({ ok: true });
+      } catch (e: any) {
+        const code = e?.statusCode;
+        const msg = String(e?.message || '');
+        // Treat already stopped (304) as success
+        if (code === 304 || /not running/i.test(msg) || /not modified/i.test(msg)) {
+          return res.json({ ok: true, already: true });
+        }
+        // If container missing and Steam-managed, stop native process
+        if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
+          const r = await stopSteamProcess(id);
+          return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
+        }
+        // Other errors
+        return res.status(500).json({ error: e?.message || 'stop_failed' });
       }
-      // If container is missing, treat stop as a no-op success
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.json({ ok: true, missing: true });
+    } catch (e: any) {
+      // If docker interaction failed entirely, try steam stop as best-effort
+      if (isSteamManaged(id)) {
+        const r = await stopSteamProcess(id);
+        return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
       }
       res.status(500).json({ error: e?.message || 'stop_failed' });
     }
@@ -896,14 +1268,30 @@ function startHttpsServer() {
   app.post('/restart/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Try Docker restart
       const container = docker.getContainer(`vc-${id}`);
-      await container.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) });
-      res.json({ ok: true });
+      try {
+        await container.restart({ t: Number(process.env.RESTART_TIMEOUT || 5) });
+        return res.json({ ok: true });
+      } catch (e: any) {
+        const code = e?.statusCode;
+        const msg = String(e?.message || '');
+        if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
+          // Steam restart: stop then start
+          await stopSteamProcess(id);
+          const r = startSteamProcess(id);
+          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+          return res.status(500).json({ error: 'steam_restart_failed' });
+        }
+        return res.status(500).json({ error: e?.message || 'restart_failed' });
+      }
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
+      // Fallback to steam if steam-managed
+      if (isSteamManaged(id)) {
+        await stopSteamProcess(id);
+        const r = startSteamProcess(id);
+        if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+        return res.status(500).json({ error: 'steam_restart_failed' });
       }
       res.status(500).json({ error: e?.message || 'restart_failed' });
     }
@@ -914,12 +1302,32 @@ function startHttpsServer() {
     try {
       const container = docker.getContainer(`vc-${id}`);
       await container.remove({ force: true });
+      // Release any persisted host port allocations for this server
+      try {
+        const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
+        const text = fs.existsSync(PORT_STORE_PATH) ? fs.readFileSync(PORT_STORE_PATH, 'utf8') : '';
+        const store = text ? JSON.parse(text) : {};
+        if (store && store[id]) {
+          delete store[id];
+          fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
+        }
+      } catch {}
       res.json({ ok: true });
     } catch (e: any) {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
       // Deleting a missing container is idempotent success
       if (code === 404 || /no such container/i.test(msg)) {
+        // Still release allocation
+        try {
+          const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
+          const text = fs.existsSync(PORT_STORE_PATH) ? fs.readFileSync(PORT_STORE_PATH, 'utf8') : '';
+          const store = text ? JSON.parse(text) : {};
+          if (store && store[id]) {
+            delete store[id];
+            fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
+          }
+        } catch {}
         return res.json({ ok: true, missing: true });
       }
       res.status(500).json({ error: e?.message || 'delete_failed' });
