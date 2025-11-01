@@ -817,7 +817,7 @@ function startHttpsServer() {
       ensureDir(SERVERS_DIR);
       ensureDir(srvDir);
 
-      // Robust image pull with fallbacks
+      // Robust image pull with fallbacks and aliases
       async function pullImageWithFallback(img: string): Promise<void> {
         const REG_USER = process.env.REGISTRY_USERNAME || '';
         const REG_PASS = process.env.REGISTRY_PASSWORD || '';
@@ -829,25 +829,63 @@ function startHttpsServer() {
           });
         });
 
-        const candidates: string[] = [];
-        const hasTag = /:[^/]+$/.test(img);
-        const base = img;
-        if (hasTag) {
-          candidates.push(base);
-        } else {
-          candidates.push(`${base}:latest`);
+        // Load optional alias map from DATA_DIR/image-aliases.json
+        function loadAliases(): Record<string, string> {
+          try {
+            const aliasPath = path.join(DATA_DIR, 'image-aliases.json');
+            if (!fs.existsSync(aliasPath)) return {};
+            const text = fs.readFileSync(aliasPath, 'utf8');
+            const json = JSON.parse(text);
+            return typeof json === 'object' && json ? json : {};
+          } catch {
+            return {};
+          }
         }
-        // Explicit docker.io prefix fallback
-        const noRegistry = !/^[a-z0-9]+(\.[a-z0-9.-]+)+\//.test(base);
-        if (noRegistry) {
-          candidates.push(`docker.io/${hasTag ? base : `${base}:latest`}`);
-          candidates.push(`registry-1.docker.io/${hasTag ? base : `${base}:latest`}`);
+
+        function resolveCandidates(baseImg: string): string[] {
+          const aliases = loadAliases();
+          const canonical = aliases[baseImg] || baseImg;
+          const hasTag = /:[^/]+$/.test(canonical);
+          const base = canonical;
+          const withTag = hasTag ? base : `${base}:latest`;
+          const candidates: string[] = [withTag];
+
+          // Explicit docker hub prefixes if none specified
+          const hasRegistryPrefix = /^[a-z0-9]+(\.[a-z0-9.-]+)+\//.test(base);
+          if (!hasRegistryPrefix) {
+            candidates.push(`docker.io/${withTag}`);
+            candidates.push(`registry-1.docker.io/${withTag}`);
+          }
+
+          // GitHub Container Registry fallback
+          const parts = base.split('/');
+          if (parts.length === 2 && !hasRegistryPrefix) {
+            const org = parts[0];
+            const repo = parts[1];
+            candidates.push(`ghcr.io/${org}/${hasTag ? repo : `${repo}:latest`}`);
+          }
+
+          // Known heuristics: cm2network gmod => garrysmod alias
+          if (/^cm2network\/gmod$/i.test(base) || /^cm2network\/gmod:[^/]+$/i.test(base)) {
+            const tag = hasTag ? base.split(':')[1] : 'latest';
+            candidates.push(`cm2network/garrysmod:${tag}`);
+            candidates.push(`docker.io/cm2network/garrysmod:${tag}`);
+            candidates.push(`ghcr.io/cm2network/garrysmod:${tag}`);
+          }
+
+          // De-duplicate while preserving order
+          const seen = new Set<string>();
+          const uniq: string[] = [];
+          for (const c of candidates) {
+            if (!seen.has(c)) {
+              seen.add(c);
+              uniq.push(c);
+            }
+          }
+          return uniq;
         }
-        // Known family aliases (best-effort)
-        if (/^cm2network\//i.test(base)) {
-          const tail = base.replace(/^cm2network\//i, '');
-          candidates.push(`docker.io/cm2network/${hasTag ? tail : `${tail}:latest`}`);
-        }
+
+        const candidates = resolveCandidates(img);
 
         let lastErr: any = null;
         for (const ref of candidates) {
@@ -857,13 +895,13 @@ function startHttpsServer() {
           } catch (e: any) {
             lastErr = e;
             const msg = String(e?.message || '');
-            // If rate-limited or unauthorized, continue to next candidate
+            // Continue to next candidate on common registry errors
             if (/denied/i.test(msg) || /unauthorized/i.test(msg) || /manifest unknown/i.test(msg) || e?.statusCode === 404) {
               continue;
             }
           }
         }
-        // Final attempt with auth if not already tried
+        // Final attempt with auth against the first candidate
         if (AUTH && candidates.length > 0) {
           try {
             await tryPull(candidates[0]);
