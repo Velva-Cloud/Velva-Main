@@ -699,13 +699,23 @@ export class ServersService {
       return { ok: false, output: 'Agent not configured; cannot execute commands.' } as any;
     }
 
-    // For Minecraft, send as true console using itzg's mc-send-to-console (falls back to RCON if needed)
+    // For Minecraft, prefer true console via mc-send-to-console, but gracefully fall back to RCON if the pipe isn't present yet
     if (isMinecraft) {
       const toSend = (cmd || '').trim();
-      // basic escaping for shell
       const escaped = toSend.replace(/(["`$\\])/g, '\\$1');
-      // mc-send-to-console will use the console pipe when available; otherwise it falls back to RCON
-      return this.agent.exec(baseURL, serverId, `mc-send-to-console "${escaped}"`);
+      try {
+        const res = await this.agent.exec(baseURL, serverId, `mc-send-to-console "${escaped}"`);
+        const out = String(res?.output || '');
+        if (/Console pipe needs to be enabled/i.test(out) || /Named pipe .* is missing/i.test(out)) {
+          // Fallback to RCON without surfacing an error to the user
+          const r = await this.agent.exec(baseURL, serverId, `rcon-cli ${escaped}`);
+          return r;
+        }
+        return res;
+      } catch {
+        // Fallback to RCON on any mc-send-to-console failure
+        return this.agent.exec(baseURL, serverId, `rcon-cli ${escaped}`);
+      }
     }
 
     // Default: run inside container shell
