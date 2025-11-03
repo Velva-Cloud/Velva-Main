@@ -6,6 +6,7 @@ import { AgentClientService } from '../servers/agent-client.service';
 import { EventEmitter } from 'events';
 import * as client from 'prom-client';
 import { Interval } from '@nestjs/schedule';
+import { getHostPortPolicy, getInternalPorts } from '../servers/port-policy';
 
 function backoffOptions(): JobsOptions {
   const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
@@ -162,26 +163,35 @@ export class QueueService implements OnModuleInit {
         let exposePorts = Array.isArray(resources.exposePorts) ? resources.exposePorts : undefined;
         const cmd = Array.isArray(resources.cmd) ? resources.cmd : undefined;
 
-        // Check if an image override was provided at creation
+        // Check if an image/env override was provided at creation
         const recentCreates = await this.prisma.log.findMany({
           where: { action: 'server_create' as any },
           orderBy: { id: 'desc' },
           take: 50,
         });
         const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
-        const override = createLog ? (createLog.metadata as any)?.image : undefined;
-        if (override && typeof override === 'string' && override.trim().length > 0) {
-          image = override.trim();
+        const overrideImage = createLog ? (createLog.metadata as any)?.image : undefined;
+        const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
+        const provisioner = createLog ? (createLog.metadata as any)?.provisioner : undefined;
+        const steam = createLog ? (createLog.metadata as any)?.steam : undefined;
+        if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
+          image = overrideImage.trim();
+        }
+        if (overrideEnv && typeof overrideEnv === 'object') {
+          env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
-        // If using Minecraft image set sensible defaults and required env
-        if (image && image.includes('itzg/minecraft-server')) {
+        // If SteamCMD provisioner, override image to a placeholder and derive ports from title/appId
+        let usingSteam = (provisioner === 'steamcmd');
+        if (usingSteam) {
+          // For SteamCMD, do not rely on docker image; leave image undefined
+          image = '';
+        }
+
+        // Image-specific defaults
+        if (!usingSteam && image && image.includes('itzg/minecraft-server')) {
           if (!mountPath || !mountPath.trim()) {
             mountPath = '/data';
-          }
-          if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
-            // Default game port; host mapping/firewall handled separately
-            exposePorts = [25565];
           }
           // Ensure EULA is accepted via env as well; image accepts EULA=TRUE
           if (!('EULA' in env)) {
@@ -211,17 +221,53 @@ export class QueueService implements OnModuleInit {
           }
         }
 
+        // Determine internal ports if not set by plan/resources
+        if (!exposePorts || !Array.isArray(exposePorts) || exposePorts.length === 0) {
+          const internal = usingSteam ? (() => {
+            // Minimal SRCDS defaults by appId if provided
+            const appId = Number(steam?.appId || 0);
+            if (appId === 740) return [{ port: 27015, protocol: 'udp' }]; // CSGO
+            if (appId === 4020) return [{ port: 27015, protocol: 'udp' }]; // GMod
+            if (appId === 232250) return [{ port: 27015, protocol: 'udp' }]; // TF2
+            if (appId === 222860) return [{ port: 27015, protocol: 'udp' }]; // L4D2
+            if (appId === 629760) return [{ port: 7777, protocol: 'udp' }]; // Mordhau
+            return [{ port: 27015, protocol: 'udp' }];
+          })() : getInternalPorts(image || '');
+          // Send ports with protocol so daemon can validate TCP/UDP when opening firewall/NAT
+          exposePorts = internal.map(p => `${p.port}/${p.protocol}`);
+        }
+
+        // Host port policy hint to daemon
+        const hostPortPolicy = usingSteam ? { hostRange: [36000, 39999], protocol: 'udp', contiguous: 1 } : getHostPortPolicy(image || '');
+
         const baseURL = await this.nodeBaseUrl(s.nodeId);
         try {
           const forceRecreate = !!(image && image.includes('itzg/minecraft-server'));
-          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate } as any);
-          // Record assigned Minecraft port if provided
+
+          // Load registry credentials from settings
+          let registryAuth: { username?: string; password?: string; serveraddress?: string } | undefined = undefined;
+          try {
+            const row = await this.prisma.setting.findUnique({ where: { key: 'registry' } });
+            const val = (row?.value as any) || {};
+            if (val && (val.username || val.password)) {
+              registryAuth = {
+                username: val.username || undefined,
+                password: val.password || undefined,
+                serveraddress: (val.serveraddress || 'https://index.docker.io/v1/'),
+              };
+            }
+          } catch {
+            registryAuth = undefined;
+          }
+
+          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate, hostPortPolicy, registryAuth } as any);
+          // Record assigned port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
           if (assignedPort && Number.isFinite(assignedPort)) {
             await this.prisma.log.create({
-              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'minecraft_port_assigned', serverId: s.id, port: assignedPort } },
+              data: { userId: s.userId, action: 'plan_change', metadata: { event: 'port_assigned', serverId: s.id, port: assignedPort } },
             });
-            await this.recordEvent(s.id, 'minecraft_port_assigned', String(assignedPort));
+            await this.recordEvent(s.id, 'port_assigned', String(assignedPort));
           }
         } catch (e: any) {
           if (isHardProvisionError(e)) {

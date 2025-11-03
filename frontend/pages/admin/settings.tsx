@@ -173,7 +173,96 @@ export default function AdminSettings() {
             <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>Save</button>
           </div>
         </section>
+
+        <section className="card p-4 mt-6">
+          <h2 className="font-semibold mb-3">Docker Registry Credentials</h2>
+          <p className="text-xs subtle mb-3">
+            Used by nodes to pull images from registries (e.g., Docker Hub). If set, credentials are passed to the daemon during provisioning.
+          </p>
+          <DockerRegistrySettings />
+        </section>
       </AdminLayout>
     </>
+  );
+}
+
+function DockerRegistrySettings() {
+  const toast = useToast();
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const [serveraddress, setServeraddress] = useState('https://index.docker.io/v1/');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+
+  const load = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const res = await api.get('/settings/registry');
+      const data = res.data || {};
+      setServeraddress(data.serveraddress || 'https://index.docker.io/v1/');
+      setUsername(data.username || '');
+      setPassword(''); // do not prefill existing password
+    } catch (e: any) {
+      setErr(e?.response?.data?.message || 'Failed to load registry settings');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const save = async () => {
+    setSaving(true);
+    setErr(null);
+    try {
+      await api.post('/settings/registry', {
+        serveraddress: serveraddress,
+        username: username || undefined,
+        password: password || undefined,
+      });
+      toast.show('Registry settings saved', 'success');
+      // Clear password field after save
+      setPassword('');
+    } catch (e: any) {
+      const msg = e?.response?.data?.message || 'Failed to save registry settings';
+      setErr(msg);
+      toast.show(msg, 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="space-y-2">
+        <div className="h-4 w-40 bg-slate-800 rounded animate-pulse" />
+        <div className="h-4 w-64 bg-slate-800 rounded animate-pulse" />
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      {err && <div className="mb-2 text-red-400">{err}</div>}
+      <div className="grid gap-3 md:grid-cols-2">
+        <FormField label="Registry server address">
+          <input className="input" value={serveraddress} onChange={e => setServeraddress(e.target.value)} placeholder="https://index.docker.io/v1/" />
+        </FormField>
+        <FormField label="Username">
+          <input className="input" value={username} onChange={e => setUsername(e.target.value)} placeholder="your-dockerhub-user" />
+        </FormField>
+        <FormField label="Password">
+          <input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" />
+        </FormField>
+      </div>
+      <div className="mt-3">
+        <button onClick={save} disabled={saving} className={`btn btn-primary ${saving ? 'opacity-70 cursor-not-allowed' : ''}`}>{saving ? 'Saving…' : 'Save'}</button>
+      </div>
+    </div>
   );
 }
