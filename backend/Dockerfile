@@ -16,8 +16,14 @@ WORKDIR /app
 ENV NODE_ENV=production
 # Install OpenSSL and wget for Prisma engines and healthchecks at runtime
 RUN apt-get update && apt-get install -y openssl wget && rm -rf /var/lib/apt/lists/*
+# Copy lockfile and install only production dependencies to keep image small
 COPY --from=builder /app/package.json ./
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/package-lock.json* ./
+RUN npm ci --omit=dev || npm i --omit=dev
+# Copy generated Prisma client from builder to avoid re-generating
+COPY --from=builder /app/node_modules/@prisma /app/node_modules/@prisma
+COPY --from=builder /app/node_modules/.prisma /app/node_modules/.prisma
+# Copy built artifacts
 COPY --from=builder /app/dist ./dist
 # Ensure email templates are available at runtime
 COPY --from=builder /app/src/mail/templates /app/dist/src/mail/templates
