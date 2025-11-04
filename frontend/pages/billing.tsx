@@ -321,7 +321,7 @@ export default function Billing() {
                               <span className="font-semibold">{g ? `${g}GB` : `${tier}GB`} RAM{cpu ? ` • ${cpu} CPU` : ''}{disk ? ` • ${disk}GB SSD` : ''}</span>
                             </div>
                             <div className="pt-2">
-                              <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-10 w-auto opacity-80" />
+                              <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-12 w-auto opacity-80" />
                             </div>
                             {!isCurrent && plan && (
                               <div className="pt-2">
@@ -415,7 +415,7 @@ export default function Billing() {
                             <div className="font-semibold">{minGB}GB - {maxGB}GB RAM</div>
                             <div>Choose your size, storage and location. Great for large worlds and communities.</div>
                             <div className="pt-2">
-                              <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-10 w-auto opacity-80" />
+                              <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-12 w-auto opacity-80" />
                             </div>
                             <div className="pt-2">
                               <button

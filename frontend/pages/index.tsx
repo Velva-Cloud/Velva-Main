@@ -67,7 +67,7 @@ function PlanCard({ plan, label, highlight }: { plan: Plan | null; label: string
         </div>
         {/* Placeholder power image (logo for now) */}
         <div className="pt-2">
-          <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-10 w-auto opacity-80" />
+          <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-12 w-auto opacity-80" />
         </div>
       </div>
     </div>
@@ -143,7 +143,7 @@ function CustomCard({ plans }: { plans: Plan[] }) {
         <div>Choose your size, storage and location. Great for large worlds and communities.</div>
         {/* Placeholder power image (logo) */}
         <div className="pt-2">
-          <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-10 w-auto opacity-80" />
+          <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-12 w-auto opacity-80" />
         </div>
       </div>
     </div>
