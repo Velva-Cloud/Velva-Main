@@ -18,6 +18,8 @@ RUN npm prune --omit=dev --omit=optional || true
 FROM node:20-bookworm-slim
 WORKDIR /app
 ENV NODE_ENV=production
+# Force Prisma to use the binary engine to avoid Node-API constructor option mismatches
+ENV PRISMA_CLIENT_ENGINE_TYPE=binary
 # Install OpenSSL and wget for Prisma engines and healthchecks at runtime
 RUN apt-get update && apt-get install -y openssl wget && rm -rf /var/lib/apt/lists/*
 # Copy only what we need
