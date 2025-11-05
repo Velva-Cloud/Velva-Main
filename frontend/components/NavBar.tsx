@@ -49,7 +49,7 @@ export default function NavBar() {
             <img
               src="https://velvacloud.com/logo.png"
               alt="VelvaCloud"
-              className="h-12 w-auto"
+              className="h-16 w-auto"
             />
             <span className="sr-only">VelvaCloud</span>
           </Link>

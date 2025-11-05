@@ -615,12 +615,12 @@ export default function CreateServerPage() {
                             className={`text-left p-3 rounded border ${selected ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800 hover:bg-slate-800'} transition`}
                             disabled={!sub || sub.status !== 'active' || limitReached}
                           >
-                            <div className="flex items-center gap-3">
+                            <div className="flex flex-col items-center text-center gap-3">
                               <img
                                 src={img.img}
                                 onError={(e) => { (e.currentTarget as HTMLImageElement).src = img.fallback; }}
                                 alt={img.label}
-                                className="h-16 w-16 rounded object-contain object-center bg-slate-800"
+                                className="h-20 w-20 rounded object-contain object-center bg-slate-800"
                               />
                               <div>
                                 <div className="font-medium">{img.label}</div>
