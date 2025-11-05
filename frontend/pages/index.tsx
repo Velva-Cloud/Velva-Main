@@ -56,18 +56,18 @@ function PlanCard({ plan, label, highlight }: { plan: Plan | null; label: string
       </div>
 
       <div className="mt-4 border-t border-slate-800 pt-3 space-y-2 text-sm">
-        <div className="font-semibold">{label} RAM</div>
-        <div className="flex items-center gap-1">
+        {/* Placeholder power image (logo for now) */}
+        <div className="pt-2 flex justify-center">
+          <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-20 w-auto opacity-80 mx-auto" />
+        </div>
+        <div className="font-semibold text-center">{label} RAM</div>
+        <div className="flex items-center justify-center gap-1">
           <span className="text-slate-300">Price:</span>
           <span className="font-semibold">{price}/mo</span>
         </div>
-        <div className="flex items-center gap-1">
+        <div className="flex items-center justify-center gap-1">
           <span className="text-slate-300">Includes:</span>
           <span className="font-semibold">{g ? `${g}GB` : label} RAM{cpu ? ` • ${cpu} CPU` : ''}{disk ? ` • ${disk}GB SSD` : ''}</span>
-        </div>
-        {/* Placeholder power image (logo for now) */}
-        <div className="pt-2">
-          <img src="https://velvacloud.com/logo.png" alt="Power tier" className="h-12 w-auto opacity-80" />
         </div>
       </div>
     </div>
@@ -138,13 +138,13 @@ function CustomCard({ plans }: { plans: Plan[] }) {
         <a className="btn btn-primary w-full" href={`/register?ramGB=${gb}`}>Get Started</a>
       </div>
 
-      <div className="mt-4 border-t border-slate-800 pt-3 space-y-2 text-sm">
+      <div className="mt-4 border-t border-slate-800 pt-3 space-y-2 text-sm text-center">
+        {/* Placeholder power image (logo) */}
+        <div className="pt-2 flex justify-center">
+          <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-20 w-auto opacity-80 mx-auto" />
+        </div>
         <div className="font-semibold">{minGB}GB - {maxGB}GB RAM</div>
         <div>Choose your size, storage and location. Great for large worlds and communities.</div>
-        {/* Placeholder power image (logo) */}
-        <div className="pt-2">
-          <img src="https://velvacloud.com/logo.png" alt="Custom power" className="h-12 w-auto opacity-80" />
-        </div>
       </div>
     </div>
   );
