@@ -620,7 +620,7 @@ export default function CreateServerPage() {
                                 src={img.img}
                                 onError={(e) => { (e.currentTarget as HTMLImageElement).src = img.fallback; }}
                                 alt={img.label}
-                                className="h-10 w-10 rounded object-contain bg-slate-800"
+                                className="h-16 w-16 rounded object-contain object-center bg-slate-800"
                               />
                               <div>
                                 <div className="font-medium">{img.label}</div>
