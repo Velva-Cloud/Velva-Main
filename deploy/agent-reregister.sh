@@ -4,14 +4,14 @@ set -euo pipefail
 # Re-register the daemon node to issue a new TLS certificate with updated SANs.
 # This script:
 #  - Ensures docker compose is available
-#  - Stops the daemon container
+#  - Stops the daemon service
 #  - Clears existing TLS artifacts in CERTS_DIR (/data/certs by default)
 #  - Starts the daemon so it performs registration and fetches a new cert
-#  - Verifies health endpoint
+#  - Verifies health endpoint from inside the daemon container
 
-DAEMON_SERVICE="${DAEMON_SERVICE:-hosting_daemon}"
+# Use the Docker Compose service name (not container_name)
+DAEMON_SERVICE="${DAEMON_SERVICE:-daemon}"
 CERTS_DIR_IN_CONTAINER="${CERTS_DIR_IN_CONTAINER:-/data/certs}"
-HEALTH_URL="${HEALTH_URL:-https://localhost:9443/health}"
 PANEL_API_KEY="${PANEL_API_KEY:-}"
 
 echo "Re-registering daemon node for fresh TLS cert..."
@@ -19,7 +19,7 @@ echo "Service: ${DAEMON_SERVICE}"
 echo "Certs dir (container path): ${CERTS_DIR_IN_CONTAINER}"
 echo
 
-# Stop daemon container
+# Stop daemon service
 echo "Stopping ${DAEMON_SERVICE}..."
 docker compose stop "${DAEMON_SERVICE}"
 
@@ -36,7 +36,7 @@ docker compose run --rm -T "${DAEMON_SERVICE}" sh -lc "
         '${CERTS_DIR_IN_CONTAINER}/nodeId'
 "
 
-# Start daemon container
+# Start daemon service
 echo "Starting ${DAEMON_SERVICE}..."
 docker compose up -d "${DAEMON_SERVICE}"
 
@@ -44,15 +44,15 @@ docker compose up -d "${DAEMON_SERVICE}"
 echo "Waiting for daemon to start and register..."
 sleep 5
 
-# Verify health; allow API key header if provided
-echo "Verifying daemon health at ${HEALTH_URL} ..."
+# Verify health inside the daemon container (localhost:9443)
+echo "Verifying daemon health from inside the container ..."
 if [ -n "${PANEL_API_KEY}" ]; then
-  wget -qO- --no-check-certificate --header="x-panel-api-key: ${PANEL_API_KEY}" "${HEALTH_URL}" > /dev/null 2>&1 || {
+  docker compose exec -T "${DAEMON_SERVICE}" sh -lc "wget -qO- --no-check-certificate --header='x-panel-api-key: ${PANEL_API_KEY}' https://localhost:9443/health" > /dev/null 2>&1 || {
     echo "Health check failed (with API key)."
     exit 1
   }
 else
-  wget -qO- --no-check-certificate "${HEALTH_URL}" > /dev/null 2>&1 || {
+  docker compose exec -T "${DAEMON_SERVICE}" sh -lc "wget -qO- --no-check-certificate https://localhost:9443/health" > /dev/null 2>&1 || {
     echo "Health check failed."
     exit 1
   }
