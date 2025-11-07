@@ -37,6 +37,8 @@ export default function CreateServerPage() {
 
   const [total, setTotal] = useState(0);
 
+  const isAdmin = (me?.role === 'ADMIN' || me?.role === 'OWNER');
+
   const nameError = useMemo(() => {
     const n = name.trim();
     if (n.length < 3) return 'Name must be at least 3 characters';
@@ -63,8 +65,11 @@ export default function CreateServerPage() {
           .map((p: any) => ({ id: p.id, name: p.name, pricePerMonth: p.pricePerMonth, resources: p.resources }))
           .filter((p: any) => p.id !== undefined);
 
-        // Only allow selecting the subscribed plan on the creation page if subscription exists
-        const filtered = subData ? normalized.filter(p => p.id === subData.planId) : normalized;
+        // For normal users: only allow selecting the subscribed plan
+        // For ADMIN/OWNER: allow all plans
+        const filtered = (meRes.data && (meRes.data.role === 'ADMIN' || meRes.data.role === 'OWNER'))
+          ? normalized
+          : (subData ? normalized.filter(p => p.id === subData.planId) : normalized);
         setPlans(filtered);
         if (filtered.length > 0) setPlanId(filtered[0].id);
 
@@ -253,7 +258,7 @@ export default function CreateServerPage() {
       fallback: 'https://raw.githubusercontent.com/ich777/docker-templates/master/img/conanexiles.png',
     },
 
-    // Don\'t Starve Together
+    // Don't Starve Together
     {
       id: 'jammsen/docker-dontstarvetogether',
       label: "Don't Starve Together",
@@ -400,16 +405,16 @@ export default function CreateServerPage() {
   };
 
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
-  
-  // Provisioner selection: default Docker, allow SteamCMD for SRCDS titles
-  const isSRCDS = useMemo(() => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image), [image]);
-  const [provisioner, setProvisioner] = useState<'docker' | 'steamcmd'>(isSRCDS ? 'steamcmd' : 'docker');
-  
-  useEffect(() => {
-    // When switching image, default to steamcmd for SRCDS; docker otherwise
-    setProvisioner((prev) => (['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image) ? 'steamcmd' : 'docker'));
-  }, [image]);
-  
+
+  // Auto-flag for Steam-based titles
+  const isSRCDS = useMemo(
+    () => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image),
+    [image]
+  );
+
+  // Admin-only assignment
+  const [assignUserId, setAssignUserId] = useState<number | ''>('');
+
   // Map SRCDS image to Steam appId
   function steamAppIdFor(imageId: string): number | null {
     switch (imageId) {
@@ -418,7 +423,7 @@ export default function CreateServerPage() {
       case 'cm2network/tf2': return 232250;
       case 'cm2network/l4d2': return 222860;
       case 'cm2network/mordhau': return 629760;
-      case 'cm2network/counter-strike': return 90; // CS 1.6 (legacy HLDS)
+      case 'cm2network/counter-strike': return 90; // CS 1.6 (legacy HLDS/HLDS)
       default: return null;
     }
   }
@@ -459,21 +464,29 @@ export default function CreateServerPage() {
   const createServer = async () => {
     setErr(null);
     try {
-      if (suspended) {
+      if (suspended && !isAdmin) {
         setErr('Your account is suspended. Please contact support.');
         return;
       }
-      if (!sub || sub.status !== 'active') {
-        setErr('You need an active subscription to create a server.');
-        return;
-      }
-      if (!planId) {
-        setErr('Please select a plan');
-        return;
-      }
-      if (limitReached) {
-        setErr(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}.`);
-        return;
+      if (!isAdmin) {
+        if (!sub || sub.status !== 'active') {
+          setErr('You need an active subscription to create a server.');
+          return;
+        }
+        if (!planId) {
+          setErr('Please select a plan');
+          return;
+        }
+        if (limitReached) {
+          setErr(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}.`);
+          return;
+        }
+      } else {
+        // Admin must still select a plan
+        if (!planId) {
+          setErr('Please select a plan');
+          return;
+        }
       }
       if (nameError) {
         setErr(nameError);
@@ -488,34 +501,27 @@ export default function CreateServerPage() {
         if (vv.length > 0) env[k] = vv;
       });
 
-      // Build steam options if provisioner is steamcmd
-      const steamApp = steamAppIdFor(image);
-      const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env: env };
+      const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env };
 
-      if (provisioner === 'steamcmd') {
-        body.provisioner = 'steamcmd';
-        // Build args from SRCDS controls + extra text
+      // Admin assignment
+      if (isAdmin && assignUserId && Number(assignUserId) > 0) {
+        body.userId = Number(assignUserId);
+      }
+
+      // Auto-attach Steam settings for SRCDS titles
+      if (isSRCDS) {
+        const appId = steamAppIdFor(image) || 0;
         const args: string[] = [];
         if (srStartMap.trim()) args.push('+map', srStartMap.trim());
         if (srMaxPlayers && Number(srMaxPlayers) > 0) args.push('-maxplayers', String(srMaxPlayers));
         if (srTickrate && Number(srTickrate) > 0) args.push('-tickrate', String(srTickrate));
         if (srGsltToken.trim()) args.push('+sv_setsteamaccount', srGsltToken.trim());
-        // Append extra args (lines)
         const extra = steamArgsText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
         args.push(...extra);
-
-        if (steamApp) {
-          body.steam = { appId: steamApp, branch: steamBranch.trim() || 'public', args };
-        } else {
-          // Generic steamcmd without appId mapping; backend/daemon will validate
-          body.steam = { appId: 0, branch: steamBranch.trim() || 'public', args };
-        }
-        // Agent ignores image for steamcmd
-        body.image = undefined;
+        body.steam = { appId, branch: (steamBranch.trim() || 'public'), args };
       }
 
       const res = await api.post('/servers', body);
-      // After creation, redirect to server page
       const server = res.data as { id: number };
       router.push(`/servers/${server.id}`);
     } catch (e: any) {
@@ -538,7 +544,7 @@ export default function CreateServerPage() {
             Configure your server name, select a plan, and choose a game/application image.
           </p>
 
-          {!sub ? (
+          {(!sub && !isAdmin) ? (
             <div className="card p-5 mb-8">
               <div className="flex items-center justify-between">
                 <div className="subtle">No active subscription. Choose a server size to subscribe.</div>
@@ -547,7 +553,7 @@ export default function CreateServerPage() {
             </div>
           ) : (
             <>
-              {suspended && (
+              {suspended && !isAdmin && (
                 <div className="mb-6 p-3 rounded border border-amber-800 bg-amber-900/30 text-amber-200">
                   Your account is currently suspended. You can view servers but cannot perform actions. Please contact support.
                 </div>
@@ -564,10 +570,24 @@ export default function CreateServerPage() {
                       placeholder="e.g., my-server"
                       className="input"
                       aria-invalid={!!nameError}
-                      disabled={!sub || sub.status !== 'active' || limitReached}
+                      disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}
                     />
                     {(nameError) && <div className="text-red-400 mt-1 text-sm">{nameError}</div>}
                   </div>
+
+                  {isAdmin && (
+                    <div>
+                      <div className="text-sm mb-1">Assign to user (ID)</div>
+                      <input
+                        className="input"
+                        type="number"
+                        placeholder="User ID (optional)"
+                        value={assignUserId || ''}
+                        onChange={(e) => setAssignUserId(Number(e.target.value) || '')}
+                      />
+                      <div className="text-xs subtle mt-1">Leave empty to assign to yourself.</div>
+                    </div>
+                  )}
 
                   <div>
                     <div className="text-sm mb-1">Plan</div>
@@ -576,7 +596,7 @@ export default function CreateServerPage() {
                       onChange={e => setPlanId(Number(e.target.value))}
                       className="input"
                       aria-label="Select server size"
-                      disabled={!sub || sub.status !== 'active' || plans.length === 0 || limitReached}
+                      disabled={!isAdmin && (!sub || sub.status !== 'active' || plans.length === 0 || limitReached)}
                     >
                       {plans.map(p => {
                         const ramMB = Number((p as any)?.resources?.ramMB) || 0;
@@ -613,7 +633,7 @@ export default function CreateServerPage() {
                             type="button"
                             onClick={() => setImage(img.id)}
                             className={`text-left p-3 rounded border ${selected ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800 hover:bg-slate-800'} transition`}
-                            disabled={!sub || sub.status !== 'active' || limitReached}
+                            disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}
                           >
                             <div className="flex items-center gap-3">
                               <img
@@ -654,8 +674,8 @@ export default function CreateServerPage() {
                       ))}
                     </div>
 
-                    {/* SteamCMD controls (available whenever provisioner is steamcmd, for any supported image) */}
-                    {provisioner === 'steamcmd' && (
+                    {/* SteamCMD controls: auto-shown for SRCDS/Steam titles */}
+                    {isSRCDS && (
                       <div className="mt-4">
                         <div className="text-sm font-medium mb-2">SteamCMD settings</div>
                         <div className="grid gap-3 md:grid-cols-2">
@@ -665,7 +685,7 @@ export default function CreateServerPage() {
                           </div>
                           <div className="md:col-span-2">
                             <div className="text-xs mb-1">Extra launch args (one per line)</div>
-                            <textarea className="input min-h-[80px]" value={steamArgsText} onChange={(e) => setSteamArgsText(e.target.value)} placeholder="-someFlag value&#10;+exec server.cfg" />
+                            <textarea className="input min-h-[80px]" value={steamArgsText} onChange={(e) => setSteamArgsText(e.target.value)} placeholder="-tickrate 66&#10;+exec server.cfg" />
                           </div>
                         </div>
 
@@ -698,17 +718,32 @@ export default function CreateServerPage() {
                     )}
                   </div>
 
-                  {/* Provisioner selection for SRCDS */}
-                  {isSRCDS && (
-                    <div className="mt-4">
-                      <div className="text-sm font-medium mb-2">Provisioner</div>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        <label className={`p-3 rounded border ${provisioner === 'steamcmd' ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800'}`}>
-                          <input type="radio" name="prov" checked={provisioner === 'steamcmd'} onChange={() => setProvisioner('steamcmd')} />
-                          <span className="ml-2">SteamCMD (recommended for SRCDS titles)</span>
-                        </label>
-                        <label className={`p-3 rounded border ${provisioner === 'docker' ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800'}`}>
-                          <input type="radio" name="prov" checked={provisioner === 'docker'} onChange={() => setProvisioner('docker')} />
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs subtle">
+                      {isAdmin ? (
+                        <>Admin mode: creating for any user • Plan {plans.find(p => p.id === planId)?.name || '—'}</>
+                      ) : (
+                        <>Subscription: <span className="text-slate-200 font-medium">{sub?.status?.toUpperCase?.() || '—'}</span> • Plan {planSummary} • Usage {Math.min(total, maxServers)} / {maxServers}</>
+                      )}
+                    </div>
+                    <button
+                      onClick={createServer}
+                      disabled={creating || (!isAdmin && (!sub || sub.status !== 'active' || limitReached))}
+                      className={`btn btn-primary ${creating || (!isAdmin && (!sub || sub.status !== 'active' || limitReached)) ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    >
+                      {creating ? 'Creating…' : 'Create server'}
+                    </button>
+                  </div>
+                  {(err) && <div className="text-red-400 mt-1">{err}</div>}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      </main>
+    </>
+  );
+} onChange={() => setProvisioner('docker')} />
                           <span className="ml-2">Docker</span>
                         </label>
                       </div>
