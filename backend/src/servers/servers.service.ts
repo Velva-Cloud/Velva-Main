@@ -309,7 +309,16 @@ export class ServersService {
     });
   }
 
-  async create(userId: number, planId: number, name: string, imageOverride?: string, envOverride?: Record<string, string>, provisioner?: 'docker' | 'steamcmd', steam?: { appId: number; branch?: string; args?: string[] }) {
+  async create(
+    userId: number,
+    planId: number,
+    name: string,
+    imageOverride?: string,
+    envOverride?: Record<string, string>,
+    provisioner?: 'docker' | 'steamcmd',
+    steam?: { appId: number; branch?: string; args?: string[] },
+    options?: { asAdmin?: boolean },
+  ) {
     // Normalize and validate inputs (additional to DTO validation)
     const n = (name || '').trim();
     if (n.length < 3 || n.length > 32) {
@@ -335,25 +344,24 @@ export class ServersService {
       throw new BadRequestException('User not found. Please sign out and sign in again.');
     }
 
-    // Enforce subscription plan and limits:
-    // - Require an active subscription
-    // - Only allow creating servers that match the subscribed plan
-    // - Enforce maxServers (default 1) per plan
-    const activeSub = await this.prisma.subscription.findFirst({
-      where: { userId, status: 'active' },
-      include: { plan: true },
-      orderBy: { id: 'desc' },
-    });
-    if (!activeSub) {
-      throw new BadRequestException('You need an active subscription to create a server.');
-    }
-    if (activeSub.planId !== plan.id) {
-      throw new BadRequestException('Selected server size does not match your subscription.');
-    }
-    const maxServers = Number((activeSub.plan?.resources as any)?.maxServers ?? 1);
-    const existingCount = await this.prisma.server.count({ where: { userId } });
-    if (existingCount >= maxServers) {
-      throw new BadRequestException(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}. You already have ${existingCount}.`);
+    // Enforce subscription plan and limits unless created by ADMIN/OWNER
+    if (!options?.asAdmin) {
+      const activeSub = await this.prisma.subscription.findFirst({
+        where: { userId, status: 'active' },
+        include: { plan: true },
+        orderBy: { id: 'desc' },
+      });
+      if (!activeSub) {
+        throw new BadRequestException('You need an active subscription to create a server.');
+      }
+      if (activeSub.planId !== plan.id) {
+        throw new BadRequestException('Selected server size does not match your subscription.');
+      }
+      const maxServers = Number((activeSub.plan?.resources as any)?.maxServers ?? 1);
+      const existingCount = await this.prisma.server.count({ where: { userId } });
+      if (existingCount >= maxServers) {
+        throw new BadRequestException(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}. You already have ${existingCount}.`);
+      }
     }
 
     // Optional uniqueness by user to avoid confusion
@@ -491,7 +499,8 @@ export class ServersService {
           nodeId: chosenId,
           image: imageOverride || null,
           env: envOverride || {},
-          provisioner: provisioner || (imageOverride ? 'docker' : undefined),
+          // No user-facing toggle; record inferred provisioner for workers/diagnostics
+          provisioner: provisioner || undefined,
           steam: steam || undefined,
         },
       },

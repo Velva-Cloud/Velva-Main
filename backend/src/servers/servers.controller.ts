@@ -178,8 +178,26 @@ export class ServersController {
 
   @Post()
   async create(@Request() req: any, @Body() body: CreateServerDto) {
-    const user = req.user as { userId: number };
-    return this.service.create(user.userId, body.planId, body.name, body.image, body.env, body.provisioner, body.steam);
+    const actor = req.user as { userId: number; role: Role };
+    // Allow ADMIN/OWNER to create for any user; others create for themselves
+    const targetUserId = (actor.role === Role.ADMIN || actor.role === Role.OWNER) && body.userId ? Number(body.userId) : actor.userId;
+
+    // Auto-detect provisioner:
+    // - If Steam appId provided OR image looks like a Steam-based title (cm2network/gmod, garrysmod, etc.), use steamcmd
+    // - Otherwise use docker
+    let provisioner: 'docker' | 'steamcmd' = 'docker';
+    let steam = body.steam;
+    const image = (body.image || '').toLowerCase();
+    const looksGmod = /^cm2network\/(gmod|garrysmod)(:.+)?$/.test(image);
+    if ((steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod) {
+      provisioner = 'steamcmd';
+      if (!steam && looksGmod) {
+        steam = { appId: 4020 };
+      }
+    }
+
+    const asAdmin = actor.role === Role.ADMIN || actor.role === Role.OWNER;
+    return this.service.create(targetUserId, body.planId, body.name, body.image, body.env, provisioner, steam, { asAdmin });
   }
 
   // Admin-only updates

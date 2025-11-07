@@ -172,7 +172,7 @@ export class QueueService implements OnModuleInit {
         const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
         const overrideImage = createLog ? (createLog.metadata as any)?.image : undefined;
         const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
-        const provisioner = createLog ? (createLog.metadata as any)?.provisioner : undefined;
+        const provisionerMeta = createLog ? (createLog.metadata as any)?.provisioner : undefined;
         const steam = createLog ? (createLog.metadata as any)?.steam : undefined;
         if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
           image = overrideImage.trim();
@@ -181,8 +181,11 @@ export class QueueService implements OnModuleInit {
           env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
-        // If SteamCMD provisioner, override image to a placeholder and derive ports from title/appId
-        let usingSteam = (provisioner === 'steamcmd');
+        // Infer SteamCMD usage:
+        // - If steam.appId present -> SteamCMD
+        // - Or if image matches known Steam-only tags (e.g., cm2network/gmod/garrysmod)
+        const looksGmod = typeof image === 'string' && /^cm2network\/(gmod|garrysmod)(:.+)?$/i.test(image);
+        let usingSteam = !!(steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod || provisionerMeta === 'steamcmd';
         if (usingSteam) {
           // For SteamCMD, do not rely on docker image; leave image undefined
           image = '';
@@ -260,7 +263,21 @@ export class QueueService implements OnModuleInit {
             registryAuth = undefined;
           }
 
-          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate, hostPortPolicy, registryAuth } as any);
+          const ret = await this.agents.provision(baseURL, {
+            serverId: s.id,
+            name: s.name,
+            image,
+            cpu,
+            ramMB,
+            env,
+            mountPath,
+            exposePorts,
+            cmd,
+            forceRecreate,
+            hostPortPolicy,
+            registryAuth,
+            ...(usingSteam ? { provisioner: 'steamcmd' as const, steam } : { provisioner: 'docker' as const }),
+          } as any);
           // Record assigned port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
           if (assignedPort && Number.isFinite(assignedPort)) {
