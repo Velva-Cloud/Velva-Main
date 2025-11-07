@@ -137,12 +137,10 @@ services:
         source: /data
         target: /data
       - /var/run/docker.sock:/var/run/docker.sock
-    # Publish SFTP to host
+    # Publish SFTP and daemon TLS to host
     ports:
       - "2223:2222"
-    # Do not publish the daemon TLS port to host
-    expose:
-      - "9443"
+      - "9443:9443"
     healthcheck:
       # Verify daemon is up using API key over TLS, ignoring hostname during dev
       test: ["CMD-SHELL", "wget -qO- --no-check-certificate --header='x-panel-api-key: dev-panel-key' https://localhost:9443/health > /dev/null 2>&1 || exit 1"]
