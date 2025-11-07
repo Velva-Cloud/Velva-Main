@@ -55,8 +55,8 @@ services:
       NODE_REGISTRATION_SECRET: localdev
       AUTO_APPROVE_NODES: "false"
       INTERNAL_AUTO_APPROVE: "true"
-      # Agent URL inside compose network (use DNS that matches cert SAN)
-      DAEMON_URL: https://local-node:9443
+      # Agent URL for node daemon (DNS-only, bypass Cloudflare proxy)
+      DAEMON_URL: https://node.velvacloud.com:9443
       # Auto-generate panel client cert if missing
       AUTO_GENERATE_PANEL_CERT: "true"
       # Development: allow CN/SAN hostname mismatch while CA is still enforced
@@ -111,6 +111,8 @@ services:
     environment:
       # Inform daemon about service name for DNS SAN
       DOCKER_SERVICE_NAME: daemon
+      # Public DNS name for daemon certificate SANs (for mTLS hostname verification)
+      NODE_DNS_NAME: node.velvacloud.com
       # Point agent to panel API (inside compose network)
       PANEL_URL: http://backend:4000/api
       # Auto-bootstrap using static registration secret (matches backend)
