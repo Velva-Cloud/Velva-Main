@@ -55,8 +55,8 @@ services:
       NODE_REGISTRATION_SECRET: localdev
       AUTO_APPROVE_NODES: "false"
       INTERNAL_AUTO_APPROVE: "true"
-      # Agent URL inside compose network (use DNS that matches cert SAN)
-      DAEMON_URL: https://local-node:9443
+      # Agent URL for node daemon (DNS-only, bypass Cloudflare proxy)
+      DAEMON_URL: https://node.velvacloud.com:9443
       # Auto-generate panel client cert if missing
       AUTO_GENERATE_PANEL_CERT: "true"
       # Development: allow CN/SAN hostname mismatch while CA is still enforced
@@ -111,6 +111,8 @@ services:
     environment:
       # Inform daemon about service name for DNS SAN
       DOCKER_SERVICE_NAME: daemon
+      # Public DNS name for daemon certificate SANs (for mTLS hostname verification)
+      NODE_DNS_NAME: node.velvacloud.com
       # Point agent to panel API (inside compose network)
       PANEL_URL: http://backend:4000/api
       # Auto-bootstrap using static registration secret (matches backend)
@@ -135,12 +137,10 @@ services:
         source: /data
         target: /data
       - /var/run/docker.sock:/var/run/docker.sock
-    # Publish SFTP to host
+    # Publish SFTP and daemon TLS to host
     ports:
       - "2223:2222"
-    # Do not publish the daemon TLS port to host
-    expose:
-      - "9443"
+      - "9443:9443"
     healthcheck:
       # Verify daemon is up using API key over TLS, ignoring hostname during dev
       test: ["CMD-SHELL", "wget -qO- --no-check-certificate --header='x-panel-api-key: dev-panel-key' https://localhost:9443/health > /dev/null 2>&1 || exit 1"]

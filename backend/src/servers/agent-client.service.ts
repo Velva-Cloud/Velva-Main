@@ -35,9 +35,10 @@ export class AgentClientService {
     const ca = loadPEM(process.env.DAEMON_CA);
     const cert = loadPEM(process.env.DAEMON_CLIENT_CERT);
     const key = loadPEM(process.env.DAEMON_CLIENT_KEY);
+    const apiKey = process.env.AGENT_API_KEY || '';
 
-    if (!url || !ca || !cert || !key) {
-      this.logger.warn('DAEMON_URL/DAEMON_CA/DAEMON_CLIENT_CERT/DAEMON_CLIENT_KEY not fully configured. Agent calls will be skipped.');
+    if (!url) {
+      this.logger.warn('DAEMON_URL not set; Agent calls will be skipped.');
       const dummy = axios.create();
       this.clients.set(url, dummy);
       return dummy;
@@ -45,25 +46,36 @@ export class AgentClientService {
 
     const skipHostname = (process.env.AGENT_SKIP_HOSTNAME_VERIFY || 'false') === 'true';
 
-    const agent = new https.Agent({
-      ca,
-      cert,
-      key,
-      rejectUnauthorized: true,
-      // In development, allow certificate CN/SAN hostname mismatch while still verifying CA
-      ...(skipHostname
-        ? {
-            checkServerIdentity: () => undefined,
-          }
-        : {}),
-    } as https.AgentOptions);
+    let httpsAgent: https.Agent;
+    let headers: Record<string, string> = {};
 
-    const headers: Record<string, string> = {};
-    if (process.env.AGENT_API_KEY) {
-      headers['x-panel-api-key'] = process.env.AGENT_API_KEY;
+    if (ca && cert && key) {
+      // Preferred: mutual TLS using panel-issued CA and client cert
+      httpsAgent = new https.Agent({
+        ca,
+        cert,
+        key,
+        rejectUnauthorized: true,
+        ...(skipHostname ? { checkServerIdentity: () => undefined } : {}),
+      } as https.AgentOptions);
+      if (apiKey) headers['x-panel-api-key'] = apiKey;
+      this.logger.log('Agent client configured for mTLS.');
+    } else if (apiKey) {
+      // Fallback: Public CA TLS without client certificate, authenticate via API key header
+      httpsAgent = new https.Agent({
+        rejectUnauthorized: true,
+        ...(skipHostname ? { checkServerIdentity: () => undefined } : {}),
+      } as https.AgentOptions);
+      headers['x-panel-api-key'] = apiKey;
+      this.logger.warn('Agent client using API key over public TLS (no client certificate). Ensure the agent is reachable via a public CA (e.g., behind Cloudflare) and configured with the same API key.');
+    } else {
+      this.logger.warn('Agent TLS not fully configured (missing CA/cert/key) and no AGENT_API_KEY provided. Agent calls will be skipped.');
+      const dummy = axios.create();
+      this.clients.set(url, dummy);
+      return dummy;
     }
 
-    const client = axios.create({ baseURL: url, httpsAgent: agent, timeout: getTimeoutMs(), headers });
+    const client = axios.create({ baseURL: url, httpsAgent, timeout: getTimeoutMs(), headers });
     this.clients.set(url, client);
     return client;
   }
