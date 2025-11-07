@@ -9,6 +9,7 @@ set -euo pipefail
 #  - Starts the daemon so it performs registration and fetches a new cert
 #  - Verifies health endpoint from inside the daemon container
 #  - Automatically uses the PANEL_API_KEY from the container env if set
+#  - Prints daemon logs if health fails
 
 # Use the Docker Compose service name (not container_name)
 DAEMON_SERVICE="${DAEMON_SERVICE:-daemon}"
@@ -42,21 +43,24 @@ docker compose up -d "${DAEMON_SERVICE}"
 
 # Poll for health inside the daemon container (localhost:9443), using API key if available
 echo "Waiting for daemon to start and register..."
-RETRIES=20
+RETRIES=60
 SLEEP_SECS=2
 
 # Try to read PANEL_API_KEY from the running container
 CONTAINER_API_KEY="$(docker compose exec -T "${DAEMON_SERVICE}" sh -lc 'echo -n "${PANEL_API_KEY:-}"' || true)"
 
+HEALTH_OK=0
 for i in $(seq 1 "${RETRIES}"); do
   if [ -n "${CONTAINER_API_KEY}" ]; then
     if docker compose exec -T "${DAEMON_SERVICE}" sh -lc "wget -qO- --no-check-certificate --header='x-panel-api-key: ${CONTAINER_API_KEY}' https://localhost:9443/health" > /dev/null 2>&1; then
       echo "Daemon health OK (API key)."
+      HEALTH_OK=1
       break
     fi
   else
     if docker compose exec -T "${DAEMON_SERVICE}" sh -lc "wget -qO- --no-check-certificate https://localhost:9443/health" > /dev/null 2>&1; then
       echo "Daemon health OK."
+      HEALTH_OK=1
       break
     fi
   fi
@@ -64,8 +68,10 @@ for i in $(seq 1 "${RETRIES}"); do
   sleep "${SLEEP_SECS}"
 done
 
-if [ "${i}" -ge "${RETRIES}" ]; then
+if [ "${HEALTH_OK}" -eq 0 ]; then
   echo "Health check failed after ${RETRIES} attempts."
+  echo "Recent daemon logs:"
+  docker compose logs --since=5m "${DAEMON_SERVICE}" || true
   exit 1
 fi
 
