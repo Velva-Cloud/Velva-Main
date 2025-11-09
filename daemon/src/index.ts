@@ -637,7 +637,6 @@ function startHttpsServer() {
           res.status(500).json({ error: msg || 'logs_failed', code });
           return;
         }
-   }
 
         // Demux stdout/stderr when needed
         const out = new PassThrough();
@@ -677,22 +676,17 @@ function startHttpsServer() {
         try { req.on('close', closeAll); } catch {}
       });
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      if (code === 404 || /no such container/i.test(msg)) {
+      // Final fallback: try reading steam log file directly
+      try {
         const meta = readSteamMeta(id);
         const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
         if (logPath && fs.existsSync(logPath)) {
-          try {
-            const txt = fs.readFileSync(logPath, 'utf8');
-            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            res.send(txt);
-            return;
-          } catch {}
+          const txt = fs.readFileSync(logPath, 'utf8');
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          res.send(txt);
+          return;
         }
-        res.status(404).json({ error: 'container_not_found' });
-        return;
-      }
+      } catch {}
       res.status(500).json({ error: e?.message || 'logs_failed' });
     }
   });
