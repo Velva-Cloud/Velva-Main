@@ -573,7 +573,9 @@ function startHttpsServer() {
           // Fallback to steam console log file if container missing
           const meta = readSteamMeta(id);
           const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
-          if ((err?.statusCode === 404 || /no such container/i.test(String(err?.message || ''))) && logPath && fs.existsSync(logPath)) {
+          const is404 = !!err && (err.statusCode === 404 || /no such container/i.test(String(err.message || '')));
+          const hasLog = !!logPath && fs.existsSync(logPath || '');
+          if (is404 && hasLog && logPath) {
             // Emit last lines
             try {
               const text = fs.readFileSync(logPath, 'utf8');
