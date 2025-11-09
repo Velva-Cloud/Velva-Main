@@ -196,10 +196,26 @@ export class QueueService implements OnModuleInit {
           if (!mountPath || !String(mountPath).trim()) {
             mountPath = `/data/servers/${s.id}`;
           }
+
+          // Normalize Steam settings and default branch
+          const defaultBranchFor = (appId: number, existing?: string): string => {
+            if (existing && String(existing).trim().length > 0) return String(existing).trim();
+            // Default GMOD to 64-bit branch
+            if (appId === 4020) return 'x86-64';
+            return 'public';
+          };
+
           // Pass installDir to daemon explicitly for force_install_dir (support both keys)
           if (!steam || typeof steam !== 'object') {
-            steam = { appId: Number(steam?.appId || 0), branch: (steam?.branch || 'public'), args: [] } as any;
+            // If we inferred from image (looksGmod) and no steam metadata exists, default appId to 4020
+            const inferredAppId = looksGmod ? 4020 : Number(steam?.appId || 0);
+            steam = { appId: inferredAppId, branch: defaultBranchFor(inferredAppId, (steam as any)?.branch), args: [] } as any;
+          } else {
+            // Ensure branch defaults to x86-64 for GMOD when missing/empty
+            const appIdNum = Number((steam as any).appId || 0);
+            (steam as any).branch = defaultBranchFor(appIdNum, (steam as any).branch);
           }
+
           (steam as any).installDir = mountPath;
           (steam as any).forceInstallDir = mountPath;
 
