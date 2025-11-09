@@ -1178,7 +1178,7 @@ function startHttpsServer() {
           throw new Error(`steamcmd_install_failed: code=${lastCode} out=${lastOut.slice(-1000)}`);
         }
 
-        // Ensure SRCDS binaries are executable
+        // Ensure SRCDS binaries are executable and try to grant CAP_SYS_NICE for non-root thread priority
         try {
           const bin1 = path.join(srvDir, 'srcds_linux');
           const bin1x = path.join(srvDir, 'srcds_linux64');
@@ -1186,6 +1186,13 @@ function startHttpsServer() {
           try { fs.chmodSync(bin1, 0o755); } catch {}
           try { fs.chmodSync(bin1x, 0o755); } catch {}
           try { fs.chmodSync(bin2, 0o755); } catch {}
+          // Best-effort setcap; requires libcap2-bin present in image
+          try {
+            const has = (p: string) => p && fs.existsSync(p);
+            const sh = (cmd: string) => require('child_process').spawnSync('/bin/sh', ['-lc', cmd], { stdio: 'ignore' });
+            if (has(bin1)) sh(`setcap 'cap_sys_nice+ep' "${bin1}" || true`);
+            if (has(bin1x)) sh(`setcap 'cap_sys_nice+ep' "${bin1x}" || true`);
+          } catch {}
         } catch {}
 
         // Build launch command per appId (SRCDS family)
