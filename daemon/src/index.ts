@@ -595,16 +595,16 @@ function startHttpsServer() {
                   const newSize = st.size;
                   if (newSize > lastSize) {
                     const stream = fs.createReadStream(logPath, { start: lastSize, end: newSize - 1, encoding: 'utf8' });
-                    stream.on('data', (chunk: string) => {
-                      const parts = chunk.split(/\r?\n/);
+                    const onChunk = (chunk: Buffer | string) => {
+                      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+                      const parts = text.split(/\r?\n/);
                       for (const ln of parts) {
                         if (!ln) continue;
                         res.write(`data: ${JSON.stringify(ln)}\n\n`);
                       }
-                    });
-                    stream.on('end', () => { lastSize = newSize; });
-                    stream.on('error', () => {});
-                  } else {
+                    };
+                    stream.on('data', onChunk);
+                    stream.on('end', () =>                  } else {
                     lastSize = newSize;
                   }
                 } catch {}
