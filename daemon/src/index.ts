@@ -1235,8 +1235,10 @@ function startHttpsServer() {
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
         // Ensure Steam runtime hints in server dir
         ensureSteamRuntime(srvDir, appId);
-        // If running as root, drop privileges automatically to avoid SRCDS root warning
-        const ids = pickNonRootUser();
+        // NOTE: Some SRCDS builds assert on thread priority (Permission denied) when not running as root.
+        // To avoid exit code 100, do not drop privileges by default. Enable via SRCDS_DROP_PRIVS=1 if desired.
+        const dropPrivs = String(process.env.SRCDS_DROP_PRIVS || '').trim() === '1';
+        const ids = dropPrivs ? pickNonRootUser() : null;
         try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
@@ -1245,7 +1247,8 @@ function startHttpsServer() {
             VC_SERVER_ID: String(serverId),
             VC_NAME: name,
             HOME: srvDir,
-            LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+            // Include linux64 in library path for 64-bit branches
+            LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${path.join(srvDir, 'bin', 'linux64')}:${process.env.LD_LIBRARY_PATH || ''}`,
           },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
@@ -1418,32 +1421,50 @@ function startHttpsServer() {
     }
   }
 
-  // Ensure Steam runtime hints for SRCDS: steam_appid.txt and sdk32 steamclient symlink inside HOME
+  // Ensure Steam runtime hints for SRCDS: steam_appid.txt and sdk32/sdk64 steamclient symlinks inside HOME
   function ensureSteamRuntime(srvDir: string, appId: number): void {
     try {
       // steam_appid.txt
       const appidPath = path.join(srvDir, 'steam_appid.txt');
       try { fs.writeFileSync(appidPath, String(appId)); } catch {}
 
-      // Setup HOME-relative .steam/sdk32 symlink to steamclient.so if present
-      const sdkDir = path.join(srvDir, '.steam', 'sdk32');
-      try { fs.mkdirSync(sdkDir, { recursive: true }); } catch {}
-      const srcCandidates = [
-        path.join(srvDir, 'bin', 'steamclient.so'),
-        path.join(srvDir, 'steamclient.so'),
-      ];
-      let src: string | null = null;
-      for (const c of srcCandidates) {
-        try { if (fs.existsSync(c)) { src = c; break; } } catch {}
-      }
-      if (src) {
-        const dst = path.join(sdkDir, 'steamclient.so');
-        try {
-          // Replace any existing file/symlink
-          try { fs.unlinkSync(dst); } catch {}
-          fs.symlinkSync(src, dst);
-        } catch {}
-      }
+      // Setup HOME-relative .steam/sdk32 symlink to steamclient.so if present (32-bit)
+      try {
+        const sdk32 = path.join(srvDir, '.steam', 'sdk32');
+        fs.mkdirSync(sdk32, { recursive: true });
+        const src32Candidates = [
+          path.join(srvDir, 'bin', 'steamclient.so'),
+          path.join(srvDir, 'steamclient.so'),
+        ];
+        let src32: string | null = null;
+        for (const c of src32Candidates) {
+          try { if (fs.existsSync(c)) { src32 = c; break; } } catch {}
+        }
+        if (src32) {
+          const dst32 = path.join(sdk32, 'steamclient.so');
+          try { fs.unlinkSync(dst32); } catch {}
+          try { fs.symlinkSync(src32, dst32); } catch {}
+        }
+      } catch {}
+
+      // Setup HOME-relative .steam/sdk64 symlink to 64-bit steamclient.so when available
+      try {
+        const sdk64 = path.join(srvDir, '.steam', 'sdk64');
+        fs.mkdirSync(sdk64, { recursive: true });
+        const src64Candidates = [
+          path.join(srvDir, 'bin', 'linux64', 'steamclient.so'),
+          path.join(srvDir, 'linux64', 'steamclient.so'),
+        ];
+        let src64: string | null = null;
+        for (const c of src64Candidates) {
+          try { if (fs.existsSync(c)) { src64 = c; break; } } catch {}
+        }
+        if (src64) {
+          const dst64 = path.join(sdk64, 'steamclient.so');
+          try { fs.unlinkSync(dst64); } catch {}
+          try { fs.symlinkSync(src64, dst64); } catch {}
+        }
+      } catch {}
     } catch {
       // ignore
     }
@@ -1498,8 +1519,9 @@ function startHttpsServer() {
     try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
     // Ensure Steam runtime hints in server dir
     ensureSteamRuntime(srvDir, meta.appId || 0);
-    // If running as root, drop privileges automatically to avoid SRCDS root warning
-    const ids = pickNonRootUser();
+    // Do not drop privileges by default to avoid thread priority assertions; enable via SRCDS_DROP_PRIVS=1
+    const dropPrivs = String(process.env.SRCDS_DROP_PRIVS || '').trim() === '1';
+    const ids = dropPrivs ? pickNonRootUser() : null;
     try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
 
     // Validate/resolve SRCDS binary before spawning to avoid ENOENT crash
@@ -1521,7 +1543,8 @@ function startHttpsServer() {
         ...process.env,
         VC_SERVER_ID: String(serverId),
         HOME: srvDir,
-        LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+        // Include linux64 in library path for 64-bit branches
+        LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${path.join(srvDir, 'bin', 'linux64')}:${process.env.LD_LIBRARY_PATH || ''}`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
