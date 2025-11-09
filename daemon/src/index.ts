@@ -1344,6 +1344,113 @@ function startHttpsServer() {
         return res.json({ ok: true, id: `proc-${serverId}`, existed: false, volume: mountPath, port: hostPort, provisioner: 'steamcmd' });
       }
 
+      // Docker-based SRCDS runner (containerized SteamCMD + SRCDS, like Minecraft model)
+      else if (provisioner === 'docker_srds') {
+        const runnerImage = (req.body?.image && String(req.body.image).trim()) || 'velva/srds-runner:latest';
+        await pullImageWithFallback(runnerImage, req.body?.registryAuth);
+
+        // Decide internal/container port and mapping
+        const internal = internalPorts.length > 0 ? internalPorts[0] : { containerPort: 27015, proto: 'udp' as const };
+        const hostPort = Number(chosenHostPort || internal.containerPort);
+        // Build ExposedPorts and PortBindings
+        const expKey = `${internal.containerPort}/${internal.proto}`;
+        const exposedDocker: Record<string, {}> = { [expKey]: {} };
+        const portBindingsDocker: Record<string, Array<{ HostPort: string }>> = { [expKey]: [{ HostPort: String(hostPort) }] };
+
+        // Env for runner
+        const appId = Number(steam?.appId || 0);
+        if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
+        const branch = (steam?.branch || 'public').toString();
+        const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
+        // Ensure essential flags
+        if (!extraArgs.includes('-game')) { extraArgs.unshift('garrysmod'); extraArgs.unshift('-game'); }
+        if (!extraArgs.includes('-console')) { extraArgs.unshift('-console'); }
+        // Compose SRCDS_ARGS as single string
+        const srdsArgsStr = extraArgs.join(' ');
+        const gslt = (steam as any)?.gslt || process.env.SV_STEAM_TOKEN || '';
+
+        const envArr: string[] = [
+          `VC_SERVER_ID=${serverId}`,
+          `VC_NAME=${name}`,
+          `APP_ID=${appId}`,
+          `BRANCH=${branch}`,
+          `PORT=${internal.containerPort}`,
+          `SRCDS_ARGS=${srdsArgsStr}`,
+        ];
+        if (gslt) envArr.push(`GSLT=${gslt}`);
+        if (env && typeof env === 'object') {
+          for (const [k, v] of Object.entries(env)) envArr.push(`${k}=${String(v)}`);
+        }
+
+        // CPU units to NanoCpus:
+        let nanoCpus: number | undefined = undefined;
+        if (typeof cpu === 'number' && isFinite(cpu) && cpu > 0) {
+          const unitsPerCore = Number(process.env.CPU_UNITS_PER_CORE || 100);
+          const coresAvail = Math.max(1, (os.cpus()?.length || 1));
+          let coreLimit = cpu / (unitsPerCore > 0 ? unitsPerCore : 100);
+          coreLimit = Math.max(0.01, Math.min(coresAvail, coreLimit));
+          nanoCpus = Math.round(coreLimit * 1e9);
+        }
+
+        // Handle existing container
+        let existingId: string | null = null;
+        try {
+          const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+          if (Array.isArray(matches) && matches.length > 0) existingId = matches[0].Id;
+        } catch {}
+
+        if (existingId && forceRecreate) {
+          try {
+            const c = docker.getContainer(existingId);
+            try { await c.stop({ t: Number(process.env.STOP_TIMEOUT || 5) } as any); } catch {}
+            await c.remove({ force: true });
+            existingId = null;
+          } catch {}
+        }
+
+        if (existingId) {
+          return res.json({ ok: true, id: existingId, existed: true, volume: mountPath, port: hostPort });
+        }
+
+        // Create container
+        try {
+          const container = await docker.createContainer({
+            name: containerName,
+            Image: runnerImage,
+            Tty: false,
+            OpenStdin: false,
+            AttachStdin: false,
+            AttachStdout: true,
+            AttachStderr: true,
+            HostConfig: {
+              Binds: [`${srvDir}:/home/steam/server`],
+              NanoCpus: nanoCpus,
+              Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
+              RestartPolicy: { Name: 'unless-stopped' },
+              CapAdd: ['SYS_NICE'],
+              SecurityOpt: ['seccomp=unconfined'],
+              PortBindings: portBindingsDocker,
+            } as any,
+            Env: envArr,
+            ExposedPorts: exposedDocker,
+          } as any);
+          return res.json({ ok: true, id: container.id, existed: false, volume: mountPath, port: hostPort, provisioner: 'docker_srds' });
+        } catch (e: any) {
+          const msg = String(e?.message || '');
+          if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
+            try {
+              const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+              if (Array.isArray(matches) && matches.length > 0) {
+                const info = matches[0];
+                return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath, port: hostPort, provisioner: 'docker_srds' });
+              }
+            } catch {}
+          }
+          console.error('provision_error_docker_srds:', e);
+          return res.status(500).json({ error: e?.message || 'provision_failed' });
+        }
+      }
+
       // Docker path
       // Pre-pull image with auth + fallbacks
       await pullImageWithFallback(image, req.body?.registryAuth);
