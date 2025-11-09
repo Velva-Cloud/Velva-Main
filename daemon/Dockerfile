@@ -1,3 +1,14 @@
+# ---- Builder: install dev deps and compile TypeScript ----
+FROM node:20-bullseye AS builder
+
+WORKDIR /app
+COPY package.json package-lock.json* tsconfig.json ./
+# Faster, deterministic installs using lockfile; skip audits/fund prompts
+RUN npm ci --no-audit --no-fund
+COPY src ./src
+RUN npm run build
+
+# ---- Runtime: install only production deps + SteamCMD runtime ----
 FROM node:20-bullseye
 
 # Install SteamCMD dependencies and SteamCMD itself
@@ -16,18 +27,18 @@ RUN apt-get update && \
     ln -sf /opt/steamcmd/linux32 /usr/bin/linux32 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Provide PATH-based SteamCMD by default; the daemon can also work with /opt/steamcmd/steamcmd.sh
+# Provide PATH-based SteamCMD by default; daemon can also work with /opt/steamcmd/steamcmd.sh
 ENV STEAMCMD_PATH=steamcmd
 
+# Reduce npm noise/logging
+ENV NPM_CONFIG_LOGLEVEL=warn
+
 WORKDIR /app
-COPY package.json package-lock.json* tsconfig.json ./
-# Install all dependencies including dev for build step
-RUN npm install
-COPY src ./src
-# Build TypeScript -> dist
-RUN npm run build
-# Remove devDependencies to minimize image size
-RUN npm prune --production
+COPY package.json package-lock.json* ./
+# Install only production dependencies using lockfile; skip audits/fund prompts
+RUN npm ci --omit=dev --no-audit --no-fund
+# Copy compiled app from builder
+COPY --from=builder /app/dist ./dist
 
 # Expose TLS port
 EXPOSE 9443
