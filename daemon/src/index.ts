@@ -1285,7 +1285,7 @@ function startHttpsServer() {
         const keepRoot = String(process.env.SRCDS_KEEP_ROOT || '').trim() === '1';
         const ids = keepRoot ? null : pickNonRootUser();
         try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
-        const child = require('child_process').spawn(runCmd, runArgs, {
+        const launch = (rootOverride = false) => require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
           env: {
             ...process.env,
@@ -1297,22 +1297,37 @@ function startHttpsServer() {
           },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
-          ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
+          ...(rootOverride ? {} : (ids ? { uid: ids.uid, gid: ids.gid } : {})),
         });
+        let child = launch(false);
+        const startedAt = Date.now();
+        let retriedAsRoot = false;
+
         // Append stdout/stderr to console.log and record exit codes
         try {
           const append = (data: Buffer | string) => {
             const text = typeof data === 'string' ? data : data.toString('utf8');
             try { fs.appendFileSync(logPath, text); } catch {}
           };
-          child.stdout?.on('data', append);
-          child.stderr?.on('data', append);
-          child.on('error', (err: any) => {
-            append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
-          });
-          child.on('exit', (code: number, signal: string) => {
-            append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
-          });
+          const attach = (proc: any) => {
+            proc.stdout?.on('data', append);
+            proc.stderr?.on('data', append);
+            proc.on('error', (err: any) => {
+              append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
+            });
+            proc.on('exit', (code: number, signal: string) => {
+              const lifetime = Date.now() - startedAt;
+              append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+              // Auto-retry once as root if early exit with scheduler assertion (code 100)
+              if (!retriedAsRoot && lifetime < 8000 && Number(code) === 100) {
+                retriedAsRoot = true;
+                append(`[INFO] Early exit with code 100 detected; retrying once with root to bypass scheduler assertion\n`);
+                try { child.removeAllListeners(); } catch {}
+                try { child = launch(true); attach(child); steamProcesses.set(Number(serverId), child); } catch {}
+              }
+            });
+          };
+          attach(child);
         } catch {}
         steamProcesses.set(Number(serverId), child);
         try {
@@ -1582,7 +1597,7 @@ function startHttpsServer() {
       }
     }
 
-    const child = require('child_process').spawn(binary, meta.runArgs, {
+    const launch = (rootOverride = false) => require('child_process').spawn(binary, meta.runArgs, {
       cwd: srvDir,
       env: {
         ...process.env,
@@ -1593,22 +1608,36 @@ function startHttpsServer() {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
-      ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
+      ...(rootOverride ? {} : (ids ? { uid: ids.uid, gid: ids.gid } : {})),
     });
+
+    let child = launch(false);
+    const startedAt = Date.now();
+    let retriedAsRoot = false;
 
     try {
       const append = (data: Buffer | string) => {
         const text = typeof data === 'string' ? data : data.toString('utf8');
         try { fs.appendFileSync(logPath, text); } catch {}
       };
-      child.stdout?.on('data', append);
-      child.stderr?.on('data', append);
-      child.on('error', (err: any) => {
-        append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
-      });
-      child.on('exit', (code: number, signal: string) => {
-        append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
-      });
+      const attach = (proc: any) => {
+        proc.stdout?.on('data', append);
+        proc.stderr?.on('data', append);
+        proc.on('error', (err: any) => {
+          append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
+        });
+        proc.on('exit', (code: number, signal: string) => {
+          const lifetime = Date.now() - startedAt;
+          append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+          if (!retriedAsRoot && lifetime < 8000 && Number(code) === 100) {
+            retriedAsRoot = true;
+            append(`[INFO] Early exit with code 100 detected; retrying once with root to bypass scheduler assertion\n`);
+            try { child.removeAllListeners(); } catch {}
+            try { child = launch(true); attach(child); steamProcesses.set(Number(serverId), child); } catch {}
+          }
+        });
+      };
+      attach(child);
     } catch {}
 
     steamProcesses.set(Number(serverId), child);
