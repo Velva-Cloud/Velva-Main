@@ -21,6 +21,8 @@ COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 # Ensure email templates are available at runtime
 COPY --from=builder /app/src/mail/templates /app/dist/src/mail/templates
+# Copy game catalog config for runtime
+COPY --from=builder /app/config ./config
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/start.sh ./start.sh
 RUN chmod +x /app/start.sh
