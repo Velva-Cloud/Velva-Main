@@ -317,7 +317,7 @@ export class ServersService {
     envOverride?: Record<string, string>,
     provisioner?: 'docker' | 'steamcmd',
     steam?: { appId: number; branch?: string; args?: string[] },
-    options?: { asAdmin?: boolean },
+    options?: { asAdmin?: boolean; gameId?: string },
   ) {
     // Normalize and validate inputs (additional to DTO validation)
     const n = (name || '').trim();
@@ -536,6 +536,7 @@ export class ServersService {
           // No user-facing toggle; record inferred provisioner for workers/diagnostics
           provisioner: provisioner || undefined,
           steam: steam || undefined,
+          gameId: options?.gameId || null,
         },
       },
     });

@@ -32,6 +32,8 @@ export default function CreateServerPage() {
   const [name, setName] = useState('');
   const [planId, setPlanId] = useState<number | ''>('');
   const [image, setImage] = useState('nginx:alpine');
+  const [catalog, setCatalog] = useState<Array<{ id: string; name: string; provider: 'srds_runner' | 'docker'; image?: string }>>([]);
+  const [selectedGameId, setSelectedGameId] = useState<string>('');
   const [creating, setCreating] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -53,8 +55,9 @@ export default function CreateServerPage() {
       api.get('/subscriptions/me').catch(() => ({ data: null })),
       api.get('/plans'),
       api.get('/servers', { params: { page: 1, pageSize: 1 } }).catch(() => ({ data: { total: 0 } })),
+      api.get('/servers/games').catch(() => ({ data: [] })),
     ])
-      .then(([meRes, subRes, plansRes, serversRes]) => {
+      .then(([meRes, subRes, plansRes, serversRes, gamesRes]) => {
         setMe(meRes.data as any);
         const subData = subRes.data as any;
         setSub(subData);
@@ -72,11 +75,15 @@ export default function CreateServerPage() {
 
         const serversData = serversRes.data as any;
         setTotal(Number(serversData?.total ?? 0));
+
+        const gamesArr = Array.isArray(gamesRes.data) ? gamesRes.data : [];
+        setCatalog(gamesArr);
       })
       .catch(() => {
         setPlans([]);
         setSub(null);
         setTotal(0);
+        setCatalog([]);
       });
   }, []);
 
@@ -223,9 +230,7 @@ export default function CreateServerPage() {
         body.steam = { appId, branch: 'public', args: [] };
       }
 
-      const res = await api.post('/servers', body);
-      const server = res.data as { id: number };
-      router.push(`/servers/${server.id}`);
+      const res = await api.post('/servers', { name: name.trim(), planId, image: (image || '').trim() || undefined, gameId: selectedGameId ||   router.push(`/servers/${server.id}`);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to create server');
     } finally {
@@ -303,37 +308,24 @@ export default function CreateServerPage() {
 
                   <div>
                     <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm">Game/Application image</div>
-                      <input
-                        type="text"
-                        placeholder="Search images..."
-                        className="input w-48"
-                        onChange={(e) => setSearch(e.target.value)}
-                        aria-label="Search images"
-                      />
+                      <div className="text-sm">Game (from catalog)</div>
                     </div>
                     <div className="grid sm:grid-cols-2 gap-3">
-                      {filteredImages.map(img => {
-                        const selected = image === img.id;
+                      {catalog.map(g => {
+                        const selected = selectedGameId === g.id;
                         return (
                           <button
-                            key={img.id}
+                            key={g.id}
                             type="button"
-                            onClick={() => setImage(img.id)}
+                            onClick={() => { setSelectedGameId(g.id); setImage(g.image || ''); }}
                             className={`text-left p-3 rounded border ${selected ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800 hover:bg-slate-800'} transition`}
                             disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}
                           >
                             <div className="flex items-center gap-3">
-                              <img
-                                src={img.img}
-                                onError={(e) => { (e.currentTarget as HTMLImageElement).src = img.fallback; }}
-                                alt={img.label}
-                                className="h-10 w-10 rounded object-contain bg-slate-800"
-                              />
+                              <div className="h-10 w-10 rounded bg-slate-800 flex items-center justify-center text-xs">{g.id.slice(0,2).toUpperCase()}</div>
                               <div>
-                                <div className="font-medium">{img.label}</div>
-                                <div className="text-xs subtle">{img.id}</div>
-                                <div className="text-xs subtle mt-1">{img.description}</div>
+                                <div className="font-medium">{g.name}</div>
+                                <div className="text-xs subtle">{g.id} • {g.provider}</div>
                               </div>
                             </div>
                           </button>

@@ -74,37 +74,32 @@ export default function AdminCreateServerPage() {
     }
   }
 
-  const images = [
-    { id: 'nginx:alpine', label: 'Nginx (web)', description: 'Lightweight web server', img: '/images/nginx.png', fallback: 'https://avatars.githubusercontent.com/u/529617?s=200&v=4' },
-    { id: 'itzg/minecraft-server', label: 'Minecraft (Java)', description: 'Java edition server', img: '/images/minecraft.png', fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png' },
-    { id: 'itzg/minecraft-bedrock-server', label: 'Minecraft (Bedrock)', description: 'Bedrock edition server', img: '/images/minecraft-bedrock.png', fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png' },
-    { id: 'lloesche/valheim-server', label: 'Valheim', description: 'Valheim dedicated server', img: '/images/valheim.png', fallback: 'https://raw.githubusercontent.com/lloesche/valheim-server-docker/master/img/valheim.png' },
-    { id: 'thijsvanloef/palworld-server-docker', label: 'Palworld', description: 'Palworld dedicated server', img: '/images/palworld.png', fallback: 'https://raw.githubusercontent.com/THIJsvanLoEF/Palworld-Server-Docker/main/.github/img/logo.png' },
-    { id: 'didstopia/rust-server', label: 'Rust', description: 'Rust dedicated server (SteamCMD)', img: '/images/rust.png', fallback: 'https://raw.githubusercontent.com/didstopia/rust-server/master/.github/logo.png' },
-    { id: 'cm2network/csgo', label: 'CS:GO', description: 'CS:GO dedicated server', img: '/images/csgo.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
-    { id: 'cm2network/counter-strike', label: 'Counter-Strike 1.6', description: 'Classic CS 1.6 server', img: '/images/cs16.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
-    { id: 'cm2network/tf2', label: 'Team Fortress 2', description: 'TF2 dedicated server', img: '/images/tf2.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
-    { id: 'cm2network/gmod', label: 'Garry\'s Mod', description: 'GMod dedicated server', img: '/images/gmod.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
-    { id: 'cm2network/l4d2', label: 'Left 4 Dead 2', description: 'L4D2 dedicated server', img: '/images/l4d2.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
-    { id: 'factoriotools/factorio', label: 'Factorio', description: 'Factorio dedicated server', img: '/images/factorio.png', fallback: 'https://raw.githubusercontent.com/factoriotools/factorio-docker/master/logo.png' },
-    { id: 'cm2network/mordhau', label: 'MORDHAU', description: 'MORDHAU dedicated server', img: '/images/mordhau.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
-  ];
+  // Load catalog from backend
+  type CatalogGame = { id: string; name: string; provider: 'srds_runner' | 'docker'; image?: string; defaults?: { args?: string[]; env?: Record<string, string> } };
+  const [catalog, setCatalog] = useState<CatalogGame[]>([]);
+  const [selectedGameId, setSelectedGameId] = useState<string>('');
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    api.get('/servers/games')
+      .then(res => {
+        const arr = Array.isArray(res.data) ? res.data : [];
+        setCatalog(arr);
+      })
+      .catch(() => setCatalog([]));
+  }, []);
+
+  const catalogCards = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const items = q ? catalog.filter(g => g.name.toLowerCase().includes(q) || g.id.toLowerCase().includes(q)) : catalog;
+    return items;
+  }, [search, catalog]);
 
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
-  const [search, setSearch] = useState('');
-  const filteredImages = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    if (!q) return images;
-    return images.filter(i =>
-      i.label.toLowerCase().includes(q) ||
-      i.id.toLowerCase().includes(q) ||
-      (i.description || '').toLowerCase().includes(q)
-    );
-  }, [search]);
 
   const isSRCDS = useMemo(
-    () => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image),
-    [image]
+    () => !!catalog.find(g => g.id === selectedGameId && g.provider === 'srds_runner'),
+    [catalog, selectedGameId]
   );
 
   function steamAppIdFor(imageId: string): number | null {
@@ -156,7 +151,7 @@ export default function AdminCreateServerPage() {
         if (vv.length > 0) env[k] = vv;
       });
 
-      const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env, userId: Number(assignUserId) };
+      const body: any = { name: name.trim(), planId, image: (image || '').trim() || undefined, env, userId: Number(assignUserId), gameId: selectedGameId || undefined };
 
       if (isSRCDS) {
         const appId = steamAppIdFor(image) || 0;
@@ -281,36 +276,30 @@ export default function AdminCreateServerPage() {
 
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm">Game/Application image</div>
+                  <div className="text-sm">Game (from catalog)</div>
                   <input
                     type="text"
-                    placeholder="Search images..."
+                    placeholder="Search games..."
                     className="input w-48"
                     onChange={(e) => setSearch(e.target.value)}
-                    aria-label="Search images"
+                    aria-label="Search games"
                   />
                 </div>
                 <div className="grid sm:grid-cols-2 gap-3">
-                  {filteredImages.map(img => {
-                    const selected = image === img.id;
+                  {catalogCards.map(g => {
+                    const selected = selectedGameId === g.id;
                     return (
                       <button
-                        key={img.id}
+                        key={g.id}
                         type="button"
-                        onClick={() => setImage(img.id)}
+                        onClick={() => { setSelectedGameId(g.id); setImage(g.image || ''); }}
                         className={`text-left p-3 rounded border ${selected ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800 hover:bg-slate-800'} transition`}
                       >
                         <div className="flex items-center gap-3">
-                          <img
-                            src={img.img}
-                            onError={(e) => { (e.currentTarget as HTMLImageElement).src = img.fallback; }}
-                            alt={img.label}
-                            className="h-10 w-10 rounded object-contain bg-slate-800"
-                          />
+                          <div className="h-10 w-10 rounded bg-slate-800 flex items-center justify-center text-xs">{g.id.slice(0,2).toUpperCase()}</div>
                           <div>
-                            <div className="font-medium">{img.label}</div>
-                            <div className="text-xs subtle">{img.id}</div>
-                            <div className="text-xs subtle mt-1">{img.description}</div>
+                            <div className="font-medium">{g.name}</div>
+                            <div className="text-xs subtle">{g.id} • {g.provider}</div>
                           </div>
                         </div>
                       </button>

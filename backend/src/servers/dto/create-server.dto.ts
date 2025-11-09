@@ -41,6 +41,15 @@ export class CreateServerDto {
 
   @ApiProperty({
     required: false,
+    description: 'Catalog game identifier (e.g., gmod, minecraft_paper). When provided, backend will use catalog defaults.',
+    example: 'gmod',
+  })
+  @IsString()
+  @IsOptional()
+  gameId?: string;
+
+  @ApiProperty({
+    required: false,
     description: 'For ADMIN/OWNER only: create the server for this user id.',
     example: 123,
   })
