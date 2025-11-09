@@ -104,6 +104,20 @@ export default function NavBar() {
               </div>
             )}
 
+            {role && token && (
+              <span
+                className={`text-xs px-2 py-1 rounded-full border ${
+                  role === 'OWNER' ? 'border-amber-500 text-amber-300 bg-amber-900/30' :
+                  role === 'ADMIN' ? 'border-emerald-600 text-emerald-300 bg-emerald-900/30' :
+                  role === 'SUPPORT' ? 'border-sky-600 text-sky-300 bg-sky-900/30' :
+                  'border-slate-700 text-slate-300 bg-slate-800/40'
+                }`}
+                title="Current role (verified against server)"
+              >
+                {role}
+              </span>
+            )}
+
             {!token ? (
               <>
                 <Link href="/login" className="nav-link">Login</Link>
