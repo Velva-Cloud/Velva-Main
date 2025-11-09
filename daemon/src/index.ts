@@ -560,16 +560,56 @@ function startHttpsServer() {
         try { res.write(': ping\n\n'); } catch {}
       }, 25000);
 
-      // Use callback overload to obtain a stream and satisfy TS types
+      // Try container logs first
       container.logs(opts, (err: any, stream: any) => {
         if (err || !stream) {
+          // If container missing and steam-managed, tail the steam console log file
+          const meta = readSteamMeta(id);
+          const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
+          if ((err?.statusCode === 404 || /no such container/i.test(String(err?.message || ''))) && logPath && fs.existsSync(logPath)) {
+            try {
+              const spawn = require('child_process').spawn;
+              // Emit last lines first
+              const head = spawn('tail', ['-n', String(tail), logPath]);
+              head.stdout.on('data', (chunk: Buffer) => {
+                const line = chunk.toString('utf8');
+                res.write(`data: ${JSON.stringify(line)}\n\n`);
+              });
+              head.on('close', () => {
+                if (!follow) {
+                  clearInterval(ping);
+                  try { res.end(); } catch {}
+                  return;
+                }
+                // Follow
+                const t = spawn('tail', ['-F', '-n', '0', logPath]);
+                const onData = (chunk: Buffer) => {
+                  const line = chunk.toString('utf8');
+                  res.write(`data: ${JSON.stringify(line)}\n\n`);
+                };
+                t.stdout.on('data', onData);
+                t.stderr.on('data', onData);
+                const endAll = () => {
+                  clearInterval(ping);
+                  try { t.kill('SIGTERM'); } catch {}
+                  try { res.end(); } catch {}
+                };
+                t.on('close', endAll);
+                const reqRaw = (res as any).req || undefined;
+                if (reqRaw && typeof reqRaw.on === 'function') {
+                  reqRaw.on('close', endAll);
+                }
+              });
+              return;
+            } catch {
+              clearInterval(ping);
+              return res.status(404).json({ error: 'container_not_found' });
+            }
+          }
           clearInterval(ping);
           const code = err?.statusCode;
           const msg = String(err?.message || '');
-          if (code === 404 || /no such container/i.test(msg)) {
-            return res.status(404).json({ error: 'container_not_found' });
-          }
-          return res.status(500).json({ error: err?.message || 'logs_failed' });
+          return res.status(500).json({ error: msg || 'logs_failed' });
         }
 
         // Demux stdout/stderr when needed
@@ -612,6 +652,17 @@ function startHttpsServer() {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
       if (code === 404 || /no such container/i.test(msg)) {
+        // Try steam log file
+        const meta = readSteamMeta(id);
+        const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
+        if (logPath && fs.existsSync(logPath)) {
+          // Fall back to last logs endpoint
+          try {
+            const txt = fs.readFileSync(logPath, 'utf8');
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            return res.send(txt);
+          } catch {}
+        }
         return res.status(404).json({ error: 'container_not_found' });
       }
       res.status(500).json({ error: e?.message || 'logs_failed' });
@@ -626,46 +677,50 @@ function startHttpsServer() {
       const tail = Number(req.query.tail || 200);
       const opts = { follow: false, stdout: true, stderr: true, tail } as any;
 
-      let result: any;
       try {
         // Prefer promise form; returns Buffer for follow=false
-        result = await container.logs(opts);
-      } catch (err: any) {
-        const code = err?.statusCode;
-        const msg = String(err?.message || '');
-        if (code === 404 || /no such container/i.test(msg)) {
-          return res.status(404).json({ error: 'container_not_found' });
-        }
-        return res.status(500).json({ error: err?.message || 'logs_failed' });
-      }
-
-      // Handle Buffer/string vs stream defensively
-      let output = '';
-      if (result && typeof (result as any).on === 'function') {
-        // It's a stream (unexpected for follow=false, but handle)
-        const stream: any = result;
-        stream.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
-        stream.on('end', () => {
+        const result = await container.logs(opts);
+        let output = '';
+        if (result && typeof (result as any).on === 'function') {
+          const stream: any = result;
+          stream.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
+          stream.on('end', () => {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.send(output);
+          });
+          stream.on('error', (err: any) => {
+            res.status(500).json({ error: err?.message || 'logs_failed' });
+          });
+        } else {
+          if (Buffer.isBuffer(result)) output = result.toString('utf8');
+          else if (typeof result === 'string') output = result;
+          else output = String(result || '');
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           res.send(output);
-        });
-        stream.on('error', (err: any) => {
-          res.status(500).json({ error: err?.message || 'logs_failed' });
-        });
-      } else {
-        // Buffer or string
-        if (Buffer.isBuffer(result)) output = result.toString('utf8');
-        else if (typeof result === 'string') output = result;
-        else output = String(result || '');
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.send(output);
+        }
+        return;
+      } catch (err: any) {
+        // Fall through to steam log file if container missing
+        const code = err?.statusCode;
+        const msg = String(err?.message || '');
+        if (!(code === 404 || /no such container/i.test(msg))) {
+          return res.status(500).json({ error: err?.message || 'logs_failed' });
+        }
       }
+
+      const meta = readSteamMeta(id);
+      const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
+      if (logPath && fs.existsSync(logPath)) {
+        try {
+          const text = fs.readFileSync(logPath, 'utf8');
+          const lines = text.split(/\r?\n/);
+          const last = lines.slice(Math.max(0, lines.length - tail)).join('\n');
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          return res.send(last);
+        } catch {}
+      }
+      return res.status(404).json({ error: 'container_not_found' });
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
-      }
       res.status(500).json({ error: e?.message || 'logs_failed' });
     }
   });
@@ -1044,16 +1099,25 @@ function startHttpsServer() {
         const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
         runArgs.push(...extraArgs);
 
-        // Start process and persist state
+        // Start process and persist state with console log capture
+        const logPath = path.join(srvDir, 'console.log');
+        try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
           env: { ...process.env, VC_SERVER_ID: String(serverId), VC_NAME: name },
-          stdio: 'ignore',
+          stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
         });
+        // Append stdout/stderr to console.log
+        try {
+          const append = (data: Buffer) => {
+            try { fs.appendFileSync(logPath, data.toString('utf8')); } catch {}
+          };
+          child.stdout?.on('data', append);
+          child.stderr?.on('data', append);
+        } catch {}
         steamProcesses.set(Number(serverId), child);
-        try { fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify({ appId, branch, runCmd, runArgs, port: hostPort }, null, 2)); } catch {}
-
+        try { fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify({ appId
         return res.json({ ok: true, id: `proc-${serverId}`, existed: false, volume: mountPath, port: hostPort, provisioner: 'steamcmd' });
       }
 
@@ -1182,15 +1246,24 @@ function startHttpsServer() {
     if (!meta) return { ok: false };
     const srvDir = serverDir(serverId);
     ensureDir(srvDir);
+    const logPath = meta.logPath || path.join(srvDir, 'console.log');
+    try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
     const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
       cwd: srvDir,
       env: { ...process.env, VC_SERVER_ID: String(serverId) },
-      stdio: 'ignore',
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
     });
+    try {
+      const append = (data: Buffer) => {
+        try { fs.appendFileSync(logPath, data.toString('utf8')); } catch {}
+      };
+      child.stdout?.on('data', append);
+      child.stderr?.on('data', append);
+    } catch {}
     steamProcesses.set(Number(serverId), child);
     try {
-      writeSteamMeta(serverId, { ...meta, pid: child.pid });
+      writeSteamMeta(serverId, { ...meta, pid: child.pid, logPath });
     } catch {}
     try { child.unref(); } catch {}
     return { ok: true, pid: child.pid };
