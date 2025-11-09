@@ -190,9 +190,13 @@ export class QueueService implements OnModuleInit {
         if (usingSteam) {
           // For SteamCMD, do not rely on docker image; omit image field entirely
           image = undefined as any;
-          // Clear docker-specific env/mountPath for steam provisioners to avoid leaking MC defaults
+          // Clear docker-specific env defaults to avoid leaking MC config
           env = {};
-          mountPath = undefined;
+          // Ensure a dedicated install directory is set for SteamCMD (force_install_dir)
+          // Use the daemon's DATA_DIR root (/data) and a per-server subdir
+          if (!mountPath || !String(mountPath).trim()) {
+            mountPath = `/data/servers/${s.id}`;
+          }
         }
 
         // Image-specific defaults
