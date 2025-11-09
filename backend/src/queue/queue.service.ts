@@ -199,10 +199,14 @@ export class QueueService implements OnModuleInit {
 
           // Normalize Steam settings and default branch
           const defaultBranchFor = (appId: number, existing?: string): string => {
-            if (existing && String(existing).trim().length > 0) return String(existing).trim();
-            // Default GMOD to 64-bit branch
-            if (appId === 4020) return 'x86-64';
-            return 'public';
+            const has = (existing || '').trim();
+            // For GMOD, force default to x86-64 if branch is missing or explicitly set to 'public'
+            if (appId === 4020) {
+              if (!has || has.toLowerCase() === 'public') return 'x86-64';
+              return has;
+            }
+            // For other titles, honor provided branch, else default to 'public'
+            return has || 'public';
           };
 
           // Pass installDir to daemon explicitly for force_install_dir (support both keys)

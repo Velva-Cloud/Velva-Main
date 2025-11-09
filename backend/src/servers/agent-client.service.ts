@@ -17,9 +17,9 @@ function loadPEM(value?: string) {
 
 function getTimeoutMs(): number {
   const v = Number(process.env.AGENT_HTTP_TIMEOUT_MS || '');
-  if (Number.isFinite(v) && v >= 5000 && v <= 300000) return v;
-  // Default to 60s to accommodate first-time image pulls on small nodes
-  return 60000;
+  if (Number.isFinite(v) && v >= 5000 && v <= 600000) return v;
+  // Default to 180s to accommodate SteamCMD installs and image pulls
+  return 180000;
 }
 
 @Injectable()

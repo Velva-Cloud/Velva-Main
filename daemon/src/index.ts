@@ -1009,6 +1009,34 @@ function startHttpsServer() {
           return res.status(500).json({ error: 'steamcmd_not_found', detail: 'Install SteamCMD and set STEAMCMD_PATH env or place it at /usr/bin/steamcmd' });
         }
 
+        // Ensure SteamCMD runtime is present (linux32/steamcmd) even if image build missed bootstrap
+        async function ensureSteamCmdReady(): Promise<void> {
+          try {
+            const bin = '/opt/steamcmd/linux32/steamcmd';
+            if (fs.existsSync(bin)) return;
+            // Best-effort bootstrap
+            try { fs.mkdirSync('/opt/steamcmd', { recursive: true }); } catch {}
+            await new Promise<void>((resolve) => {
+              const sh = require('child_process').spawn('/bin/sh', ['-lc',
+                'set -e; ' +
+                'cd /opt/steamcmd && ' +
+                'curl -sqL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz -o steamcmd_linux.tar.gz && ' +
+                'tar -xzf steamcmd_linux.tar.gz && ' +
+                'rm -f steamcmd_linux.tar.gz'
+              ], { stdio: ['ignore', 'pipe', 'pipe'] });
+              sh.on('exit', () => resolve());
+              sh.on('error', () => resolve());
+            });
+            // Attempt to run steamcmd.sh +quit to initialize packages; ignore failures
+            await new Promise<void>((resolve) => {
+              const cp = require('child_process').spawn('/opt/steamcmd/steamcmd.sh', ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
+              cp.on('exit', () => resolve());
+              cp.on('error', () => resolve());
+            });
+          } catch {}
+        }
+        await ensureSteamCmdReady();
+
         const appId = Number(steam?.appId || 0);
         if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
         const branch = (steam?.branch || 'public').toString();
