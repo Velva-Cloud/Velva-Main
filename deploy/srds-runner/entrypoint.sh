@@ -20,8 +20,13 @@ if [[ -z "$APP_ID" ]]; then
   exit 2
 fi
 
-# Preflight steamcmd
-steamcmd +quit || true
+# Preflight steamcmd (explicit path)
+STEAMCMD="/opt/steamcmd/steamcmd.sh"
+if [[ ! -x "$STEAMCMD" ]]; then
+  echo "[runner] steamcmd not found at $STEAMCMD"
+  exit 2
+fi
+"$STEAMCMD" +quit || true
 
 retry_install() {
   local attempt=1
@@ -40,7 +45,7 @@ retry_install() {
     fi
 
     set +e
-    OUT="$(steamcmd "${CMD[@]}" 2>&1)"
+    OUT="$("$STEAMCMD" "${CMD[@]}" 2>&1)"
     CODE=$?
     set -e
     echo "$OUT"

@@ -17,11 +17,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && curl -sqL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz -o steamcmd_linux.tar.gz \
     && tar -xzf steamcmd_linux.tar.gz \
     && rm -f steamcmd_linux.tar.gz \
-    && /opt/steamcmd/steamcmd.sh +quit \
+    && chmod +x /opt/steamcmd/steamcmd.sh \
+    && /opt/steamcmd/steamcmd.sh +quit || true \
+    && ln -sf /opt/steamcmd/steamcmd.sh /usr/bin/steamcmd \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
-RUN useradd -m -d /home/steam -s /bin/bash steam
+RUN useradd -m -d /home/steam -s /bin/bash steam \
+    && mkdir -p /home/steam \
+    && chown -R steam:steam /home/steam \
+    && chown -R steam:steam /opt/steamcmd
+
 USER steam
 WORKDIR /home/steam
 
@@ -29,8 +35,8 @@ WORKDIR /home/steam
 ENV SERVER_DIR=/home/steam/server
 RUN mkdir -p ${SERVER_DIR}
 
-# SteamCMD in PATH for steam user via wrapper
-ENV PATH="/opt/steamcmd:${PATH}"
+# Ensure SteamCMD is in PATH
+ENV PATH="/opt/steamcmd:/usr/bin:${PATH}"
 
 # Copy entrypoint
 COPY --chown=steam:steam entrypoint.sh /home/steam/entrypoint.sh
