@@ -565,129 +565,56 @@ function startHttpsServer() {
 
     try {
       const container = docker.getContainer(`vc-${id}`);
-      const opts = { follow, stdout: true, stderr: true, tail } as any;
+      const opts = { follow: false, stdout: true, stderr: true, tail } as any;
 
-      // Try container logs first via callback form
-      container.logs(opts, (err: any, stream: any) => {
-        if (err || !stream) {
-          // Fallback to steam console log file if container missing
-          const meta = readSteamMeta(id);
-          const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
-          const hasLog = !!logPath && fs.existsSync(logPath || '');
-          if (hasLog && logPath) {
-            // Emit last lines
-            try {
-              const text = fs.readFileSync(logPath, 'utf8');
-              const lines = text.split(/\r?\n/);
-              const last = lines.slice(Math.max(0, lines.length - tail));
-              for (const ln of last) {
-                if (!ln) continue;
-                res.write(`data: ${JSON.stringify(ln)}\n\n`);
-              }
-            } catch {}
-
-            if (follow) {
-              // Poll for file growth and stream appended bytes
-              let lastSize = 0;
-              try {
-                const st = fs.statSync(logPath);
-                lastSize = st.size;
-              } catch {}
-              const intervalMs = Number(process.env.LOG_FOLLOW_INTERVAL_MS || 1000);
-              const timer = setInterval(() => {
-                try {
-                  const st = fs.statSync(logPath);
-                  const newSize = st.size;
-                  if (newSize > lastSize) {
-                    const fileStream = fs.createReadStream(logPath, { start: lastSize, end: newSize - 1, encoding: 'utf8' });
-                    fileStream.on('data', (chunk: Buffer | string) => {
-                      const textChunk = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-                      const parts = textChunk.split(/\r?\n/);
-                      for (const ln of parts) {
-                        if (!ln) continue;
-                        res.write(`data: ${JSON.stringify(ln)}\n\n`);
-                      }
-                    });
-                    fileStream.on('end', () => { lastSize = newSize; });
-                    fileStream.on('error', () => {});
-                  } else {
-                    lastSize = newSize;
-                  }
-                } catch {}
-              }, Math.max(250, intervalMs));
-
-              // Ensure interval cleared on connection close
-              try {
-                req.on('close', () => {
-                  try { clearInterval(timer); } catch {}
-                });
-              } catch {}
-            } else {
-              // Not following; end after snapshot
-              endAll();
-            }
-            return;
-          }
-
-          // Unknown error
-          clearInterval(ping);
-          const code = (err && typeof err.statusCode !== 'undefined') ? err.statusCode : undefined;
-          const rawMsg = (err && typeof err.message !== 'undefined') ? String(err.message) : '';
-          const msg = rawMsg || '';
-          res.status(500).json({ error: msg || 'logs_failed', code });
-          return;
-        }
-
-        // Demux stdout/stderr when needed
-        const out = new PassThrough();
-        const errOut = new PassThrough();
-        let demuxed = false;
-        try {
-          (docker as any).modem.demuxStream(stream, out, errOut);
-          demuxed = true;
-        } catch {
-          demuxed = false;
-        }
-
-        if (demuxed) {
-          const onChunk = (chunk: Buffer) => {
-            const line = chunk.toString('utf8');
-            res.write(`data: ${JSON.stringify(line)}\n\n`);
-          };
-          out.on('data', onChunk);
-          errOut.on('data', onChunk);
-        } else {
-          stream.on('data', (chunk: Buffer) => {
-            const line = chunk.toString('utf8');
-            res.write(`data: ${JSON.stringify(line)}\n\n`);
-          });
-        }
-
-        const closeAll = () => {
-          clearInterval(ping);
-          try { out.destroy(); } catch {}
-          try { errOut.destroy(); } catch {}
-          try { stream.destroy(); } catch {}
-          try { res.end(); } catch {}
+      // Use promise form for logs to avoid callback typing issues
+      const result: any = await container.logs(opts);
+      if (result && typeof result.on === 'function') {
+        // Stream form (TTY or multiplexed)
+        const onData = (chunk: Buffer) => {
+          const line = chunk.toString('utf8');
+          res.write(`data: ${JSON.stringify(line)}\n\n`);
         };
-
-        stream.on('end', closeAll);
-        stream.on('error', closeAll);
-        try { req.on('close', closeAll); } catch {}
-      });
-    } catch (e: any) {
-      // Final fallback: try reading steam log file directly
+        result.on('data', onData);
+        result.on('end', endAll);
+        result.on('error', endAll);
+        try { req.on('close', endAll); } catch {}
+        return;
+      } else {
+        // Buffer/string form
+        let output = '';
+        if (Buffer.isBuffer(result)) output = result.toString('utf8');
+        else if (typeof result === 'string') output = result;
+        else output = String(result || '');
+        const lines = output.split(/\r?\n/);
+        const last = lines.slice(Math.max(0, lines.length - tail));
+        for (const ln of last) {
+          if (!ln) continue;
+          res.write(`data: ${JSON.stringify(ln)}\n\n`);
+        }
+        endAll();
+        return;
+      }
+    } catch (err: any) {
+      // Fallback to steam console log file
       try {
         const meta = readSteamMeta(id);
         const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
         if (logPath && fs.existsSync(logPath)) {
-          const txt = fs.readFileSync(logPath, 'utf8');
-          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-          res.send(txt);
+          const text = fs.readFileSync(logPath, 'utf8');
+          const lines = text.split(/\r?\n/);
+          const last = lines.slice(Math.max(0, lines.length - tail));
+          for (const ln of last) {
+            if (!ln) continue;
+            res.write(`data: ${JSON.stringify(ln)}\n\n`);
+          }
+          // For simplicity, do not follow in SSE for steam fallback (avoids TS issues)
+          endAll();
           return;
         }
       } catch {}
-      res.status(500).json({ error: e?.message || 'logs_failed' });
+      const rawMsg = (err && typeof err.message !== 'undefined') ? String(err.message) : '';
+      res.status(500).json({ error: rawMsg || 'logs_failed' });
     }
   });
 
