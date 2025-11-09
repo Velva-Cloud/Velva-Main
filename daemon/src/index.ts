@@ -1120,34 +1120,41 @@ function startHttpsServer() {
         // Ensure SRCDS binaries are executable
         try {
           const bin1 = path.join(srvDir, 'srcds_linux');
+          const bin1x = path.join(srvDir, 'srcds_linux64');
           const bin2 = path.join(srvDir, 'srcds_run');
           try { fs.chmodSync(bin1, 0o755); } catch {}
+          try { fs.chmodSync(bin1x, 0o755); } catch {}
           try { fs.chmodSync(bin2, 0o755); } catch {}
         } catch {}
 
         // Build launch command per appId (SRCDS family)
-        let runCmd: string;
+        let runCmd: string | null = null;
         let runArgs: string[];
         const hostPort = Number(chosenHostPort || 27015);
         if (appId === 4020) { // Garry's Mod
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = resolveSrcdsBinary(srvDir);
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
         } else if (appId === 740) { // CS:GO
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = resolveSrcdsBinary(srvDir);
           runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2', '+maxplayers', '16', '-tickrate', '128', '+log', 'on'];
         } else if (appId === 232250) { // TF2
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = resolveSrcdsBinary(srvDir);
           runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl', '+maxplayers', '24', '-tickrate', '66', '+log', 'on'];
         } else if (appId === 222860) { // L4D2
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = resolveSrcdsBinary(srvDir);
           runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort), '+log', 'on'];
         } else if (appId === 629760) { // Mordhau
           runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
           runArgs = ['-Port=' + String(hostPort)];
         } else {
           // Generic SRCDS default
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = resolveSrcdsBinary(srvDir);
           runArgs = ['-console', '-port', String(hostPort), '+log', 'on'];
+        }
+
+        if (!runCmd || !fileExists(runCmd)) {
+          // If the binary wasn't found after install/validate, surface a clear error
+          return res.status(500).json({ error: 'binary_missing', detail: `SRCDS binary not found in ${srvDir}. Check install logs and branch (try branch \"x86-64\" for GMod).` });
         }
 
         // Bind IP and enforce strict port binding to avoid accidental dynamic ports
@@ -1205,6 +1212,9 @@ function startHttpsServer() {
           };
           child.stdout?.on('data', append);
           child.stderr?.on('data', append);
+          child.on('error', (err: any) => {
+            append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
+          });
           child.on('exit', (code: number, signal: string) => {
             append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
           });
@@ -1316,6 +1326,26 @@ function startHttpsServer() {
 
   // Helpers for SteamCMD-managed servers
 
+  // Safe file existence check
+  function fileExists(p: string): boolean {
+    try { return fs.existsSync(p); } catch { return false; }
+  }
+
+  // Resolve SRCDS binary path with fallbacks (32/64-bit and runner script)
+  function resolveSrcdsBinary(srvDir: string): string | null {
+    const candidates = [
+      path.join(srvDir, 'srcds_linux'),      // standard
+      path.join(srvDir, 'srcds_linux64'),    // some 64-bit builds
+      path.join(srvDir, 'srcds_run'),        // runner script
+      path.join(srvDir, 'bin', 'srcds_linux'),
+      path.join(srvDir, 'bin', 'srcds_linux64'),
+    ];
+    for (const p of candidates) {
+      if (fileExists(p)) return p;
+    }
+    return null;
+  }
+
   // Select a non-root user from /etc/passwd (uid>=1000) or 'nobody' (65534) if running as root.
   function pickNonRootUser(): { uid: number; gid: number } | null {
     try {
@@ -1425,7 +1455,20 @@ function startHttpsServer() {
     const ids = pickNonRootUser();
     try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
 
-    const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
+    // Validate/resolve SRCDS binary before spawning to avoid ENOENT crash
+    let binary = meta.runCmd;
+    if (!fileExists(binary)) {
+      const resolved = resolveSrcdsBinary(srvDir);
+      if (resolved) {
+        binary = resolved;
+        try { writeSteamMeta(serverId, { ...meta, runCmd: binary }); } catch {}
+      } else {
+        try { fs.appendFileSync(logPath, `\n[ERROR] SRCDS binary not found in ${srvDir}. Cannot start.\n`); } catch {}
+        return { ok: false };
+      }
+    }
+
+    const child = require('child_process').spawn(binary, meta.runArgs, {
       cwd: srvDir,
       env: {
         ...process.env,
@@ -1445,6 +1488,9 @@ function startHttpsServer() {
       };
       child.stdout?.on('data', append);
       child.stderr?.on('data', append);
+      child.on('error', (err: any) => {
+        append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
+      });
       child.on('exit', (code: number, signal: string) => {
         append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
       });
