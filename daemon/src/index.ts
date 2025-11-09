@@ -589,31 +589,32 @@ function startHttpsServer() {
                 const st = fs.statSync(logPath);
                 lastSize = st.size;
               } catch {}
-              const watcher = fs.watch(logPath, { persistent: true }, () => {
+              // Poll for file growth and stream appended bytes
+              const intervalMs = Number(process.env.LOG_FOLLOW_INTERVAL_MS || 1000);
+              const timer = setInterval(() => {
                 try {
                   const st = fs.statSync(logPath);
                   const newSize = st.size;
                   if (newSize > lastSize) {
                     const stream = fs.createReadStream(logPath, { start: lastSize, end: newSize - 1, encoding: 'utf8' });
-                    const onChunk = (chunk: Buffer | string) => {
+                    stream.on('data', (chunk: Buffer | string) => {
                       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
                       const parts = text.split(/\r?\n/);
                       for (const ln of parts) {
                         if (!ln) continue;
                         res.write(`data: ${JSON.stringify(ln)}\n\n`);
                       }
-                    };
-                    stream.on('data', onChunk);
+                    });
                     stream.on('end', () => { lastSize = newSize; });
                     stream.on('error', () => {});
                   } else {
                     lastSize = newSize;
                   }
                 } catch {}
-              });
+              }, Math.max(250, intervalMs));
               const endAll = () => {
                 clearInterval(ping);
-                try { watcher.close(); } catch {}
+                try { clearInterval(timer); } catch {}
                 try { res.end(); } catch {}
               };
               const reqRaw = (res as any).req || undefined;
