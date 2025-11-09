@@ -815,7 +815,7 @@ function startHttpsServer() {
   const steamProcesses = new Map<number, any>();
   // Track recent starts to avoid immediate stop/restart thrash
   const steamStartTimes = new Map<number, number>();
-  const START_COOLDOWN_MS = Number(process.env.STEAM_START_COOLDOWN_MS || 60000);
+  const START_COOLDOWN_MS = Number(process.env.STEAM_START_COOLDOWN_MS || 120000);
 
   // Robust image pull with fallbacks and aliases
   async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
@@ -1443,6 +1443,17 @@ function startHttpsServer() {
   app.post('/stop/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Diagnostic: log stop request origin in steam console if steam-managed
+      try {
+        if (isSteamManaged(id)) {
+          const meta = readSteamMeta(id);
+          const logPath = (meta?.logPath) || path.join(serverDir(id), 'console.log');
+          const who = (req.headers['x-forwarded-for'] as string) || (req.socket as any)?.remoteAddress || 'unknown';
+          const ua = (req.headers['user-agent'] as string) || '';
+          fs.appendFileSync(logPath, `\n[INFO] /stop requested for ${id} from ${who} ua="${ua}" at ${new Date().toISOString()}\n`);
+        }
+      } catch {}
+
       // Try Docker stop
       const container = docker.getContainer(`vc-${id}`);
       try {
