@@ -1239,9 +1239,27 @@ function startHttpsServer() {
   function isSteamManaged(serverId: number | string): boolean {
     return !!readSteamMeta(serverId);
   }
-  function startSteamProcess(serverId: number | string): { ok: boolean; pid?: number } {
+  function isProcessRunning(pid?: number): boolean {
+    if (!pid) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function startSteamProcess(serverId: number | string): { ok: boolean; pid?: number; already?: boolean } {
     const meta = readSteamMeta(serverId);
     if (!meta) return { ok: false };
+
+    // Prevent duplicate spawns: if a process is already tracked and running, do not spawn again
+    const existing = steamProcesses.get(Number(serverId));
+    const existingPid = existing?.pid || meta.pid;
+    if (isProcessRunning(existingPid)) {
+      return { ok: true, pid: existingPid, already: true };
+    }
+
     const srvDir = serverDir(serverId);
     ensureDir(srvDir);
     const logPath = meta.logPath || path.join(srvDir, 'console.log');
@@ -1249,6 +1267,7 @@ function startHttpsServer() {
     // If running as root, drop privileges automatically to avoid SRCDS root warning
     const ids = pickNonRootUser();
     try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
+
     const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
       cwd: srvDir,
       env: { ...process.env, VC_SERVER_ID: String(serverId) },
@@ -1256,18 +1275,25 @@ function startHttpsServer() {
       detached: true,
       ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
     });
+
     try {
-      const append = (data: Buffer) => {
-        try { fs.appendFileSync(logPath, data.toString('utf8')); } catch {}
+      const append = (data: Buffer | string) => {
+        const text = typeof data === 'string' ? data : data.toString('utf8');
+        try { fs.appendFileSync(logPath, text); } catch {}
       };
       child.stdout?.on('data', append);
       child.stderr?.on('data', append);
+      child.on('exit', (code: number, signal: string) => {
+        append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+      });
     } catch {}
+
     steamProcesses.set(Number(serverId), child);
     try {
       writeSteamMeta(serverId, { ...meta, pid: child.pid, logPath });
     } catch {}
     try { child.unref(); } catch {}
+
     return { ok: true, pid: child.pid };
   }
   async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean }> {
@@ -1315,13 +1341,18 @@ function startHttpsServer() {
         // If container not found and Steam-managed, start native process
         if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
           const r = startSteamProcess(id);
-          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid, already: r.already });
           return res.status(500).json({ error: 'steam_start_failed' });
         }
         // Other docker error
         return res.status(500).json({ error: e?.message || 'start_failed' });
       }
     } catch (e: any) {
+      // If docker interaction failed entirely, but steam-managed, start native process best-effort
+      if (isSteamManaged(id)) {
+        const r = startSteamProcess(id);
+        if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid, already: r.already });
+      }
       res.status(500).json({ error: e?.message || 'start_failed' });
     }
   });
