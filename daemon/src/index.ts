@@ -1208,7 +1208,7 @@ function startHttpsServer() {
   }
 
   function steamMetaPath(serverId: number | string) {
-    return path.join(serverDir(server}
+    return path.join(serverDir(serverId), 'steam.json')}
   function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number; logPath?: string } | null {
     try {
       const p = steamMetaPath(serverId);
