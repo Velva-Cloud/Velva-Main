@@ -617,10 +617,8 @@ function startHttpsServer() {
                 try { clearInterval(timer); } catch {}
                 try { res.end(); } catch {}
               };
-              const reqRaw = (res as any).req || undefined;
-              if (reqRaw && typeof reqRaw.on === 'function') {
-                reqRaw.on('close', endAll);
-              }
+              // Tie lifecycle to request connection closing
+              try { req.on('close', endAll); } catch {}
               return;
             } catch {
               clearInterval(ping);
