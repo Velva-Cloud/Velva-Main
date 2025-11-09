@@ -1009,12 +1009,12 @@ function startHttpsServer() {
           return res.status(500).json({ error: 'steamcmd_not_found', detail: 'Install SteamCMD and set STEAMCMD_PATH env or place it at /usr/bin/steamcmd' });
         }
 
-        // Ensure SteamCMD runtime is present (linux32/steamcmd) even if image build missed bootstrap
+        // Ensure SteamCMD runtime is present (linux32/steamcmd) if using the shell script path
         async function ensureSteamCmdReady(): Promise<void> {
           try {
             const bin = '/opt/steamcmd/linux32/steamcmd';
             if (fs.existsSync(bin)) return;
-            // Best-effort bootstrap
+            // Best-effort bootstrap only for /opt/steamcmd layouts
             try { fs.mkdirSync('/opt/steamcmd', { recursive: true }); } catch {}
             await new Promise<void>((resolve) => {
               const sh = require('child_process').spawn('/bin/sh', ['-lc',
@@ -1027,7 +1027,7 @@ function startHttpsServer() {
               sh.on('exit', () => resolve());
               sh.on('error', () => resolve());
             });
-            // Attempt to run steamcmd.sh +quit to initialize packages; ignore failures
+            // Initialize SteamCMD packages once; ignore failures
             await new Promise<void>((resolve) => {
               const cp = require('child_process').spawn('/opt/steamcmd/steamcmd.sh', ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
               cp.on('exit', () => resolve());
@@ -1035,7 +1035,18 @@ function startHttpsServer() {
             });
           } catch {}
         }
-        await ensureSteamCmdReady();
+        // Only run the /opt/steamcmd bootstrap when using the shell script path
+        if (steamcmdPath.endsWith('steamcmd.sh')) {
+          await ensureSteamCmdReady();
+        }
+        // Pre-flight: run 'steamcmd +quit' to initialize local package state regardless of path
+        try {
+          await new Promise<void>((resolve) => {
+            const cp = require('child_process').spawn(steamcmdPath, ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
+            cp.on('exit', () => resolve());
+            cp.on('error', () => resolve());
+          });
+        } catch {}
 
         const appId = Number(steam?.appId || 0);
         if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
