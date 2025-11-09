@@ -230,7 +230,9 @@ export default function CreateServerPage() {
         body.steam = { appId, branch: 'public', args: [] };
       }
 
-      const res = await api.post('/servers', { name: name.trim(), planId, image: (image || '').trim() || undefined, gameId: selectedGameId ||   router.push(`/servers/${server.id}`);
+      const res = await api.post('/servers', { name: name.trim(), planId, image: (image || '').trim() || undefined, gameId: selectedGameId || undefined, env });
+      const server = res.data as { id: number };
+      router.push(`/servers/${server.id}`);
     } catch (e: any) {
       setErr(e?.response?.data?.message || 'Failed to create server');
     } finally {
