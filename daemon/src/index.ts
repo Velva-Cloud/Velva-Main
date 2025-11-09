@@ -1014,19 +1014,44 @@ function startHttpsServer() {
         const branch = (steam?.branch || 'public').toString();
 
         // Install/update into srvDir via SteamCMD
-        const installArgs = [
+        const installArgs: string[] = [
           '+login', 'anonymous',
           '+force_install_dir', srvDir,
           '+app_update', String(appId),
-          '-beta', branch,
-          '+quit',
         ];
+        // Only include -beta when branch is not 'public'
+        if (branch && branch.toLowerCase() !== 'public') {
+          installArgs.push('-beta', branch);
+        }
+        // Validate to reduce corrupt installs
+        installArgs.push('validate', '+quit');
 
+        // Run steamcmd and treat known success phrases as success even with non-zero exit
         await new Promise<void>((resolve, reject) => {
-          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: 'inherit' });
+          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          let out = '';
+          const append = (data: Buffer | string) => {
+            try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
+          };
+          cp.stdout?.on('data', append);
+          cp.stderr?.on('data', append);
           cp.on('error', reject);
-          cp.on('exit', (code: number) => (code === 0 ? resolve() : reject(new Error('steamcmd_install_failed'))));
+          cp.on('exit', (code: number) => {
+            const o = (out || '').toString();
+            const success = /Success!\s*App\s*'\d+'\s*fully installed/i.test(o);
+            if (code === 0 || success) return resolve();
+            // Sometimes shows transient errors then success in a later run; log and reject with detail
+            return reject(new Error(`steamcmd_install_failed: code=${code} out=${o.slice(-1000)}`));
+          });
         });
+
+        // Ensure SRCDS binaries are executable
+        try {
+          const bin1 = path.join(srvDir, 'srcds_linux');
+          const bin2 = path.join(srvDir, 'srcds_run');
+          try { fs.chmodSync(bin1, 0o755); } catch {}
+          try { fs.chmodSync(bin2, 0o755); } catch {}
+        } catch {}
 
         // Build launch command per appId (SRCDS family)
         let runCmd: string;
