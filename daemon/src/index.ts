@@ -1013,38 +1013,109 @@ function startHttpsServer() {
         if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
         const branch = (steam?.branch || 'public').toString();
 
-        // Install/update into srvDir via SteamCMD
-        // Important: set force_install_dir before login to avoid SteamCMD warning and state errors
-        const installArgs: string[] = [
+        // Helpers for SteamCMD install/update with retries and cache cleanup on transient errors
+        async function runSteamCmdOnce(args: string[]): Promise<{ code: number; out: string }> {
+          return await new Promise((resolve) => {
+            const cp = require('child_process').spawn(steamcmdPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            let out = '';
+            const append = (data: Buffer | string) => {
+              try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
+            };
+            cp.stdout?.on('data', append);
+            cp.stderr?.on('data', append);
+            cp.on('error', (e: any) => resolve({ code: 127, out: (out || '') + '\n' + String(e?.message || e) }));
+            cp.on('exit', (code: number) => resolve({ code: Number(code), out }));
+          });
+        }
+        function clearSteamAppCaches(dir: string, app: number) {
+          try {
+            const steamapps = path.join(dir, 'steamapps');
+            // Remove appmanifest and depotcache for the specific app if present
+            try {
+              if (fs.existsSync(steamapps)) {
+                const entries = fs.readdirSync(steamapps);
+                for (const name of entries) {
+                  if (/^appmanifest_/.test(name) || /depotcache/i.test(name)) {
+                    try { fs.rmSync(path.join(steamapps, name), { recursive: true, force: true }); } catch {}
+                  }
+                }
+              }
+            } catch {}
+            // Also clear SteamCMD global package cache to avoid stuck state 0x602
+            try {
+              const pkgDir = '/opt/steamcmd/package';
+              if (fs.existsSync(pkgDir)) {
+                const ents = fs.readdirSync(pkgDir);
+                for (const e of ents) {
+                  try { fs.rmSync(path.join(pkgDir, e), { force: true, recursive: true }); } catch {}
+                }
+              }
+            } catch {}
+          } catch {}
+        }
+
+        // Build base args; Important: set force_install_dir before login to avoid state errors
+        // Add SteamCMD control vars to fail fast and avoid interactive prompts
+        const baseArgs: string[] = [
+          '+@sSteamCmdForcePlatformType', 'linux',
+          '+@ShutdownOnFailedCommand', '1',
+          '+@NoPromptForPassword', '1',
           '+force_install_dir', srvDir,
           '+login', 'anonymous',
           '+app_update', String(appId),
         ];
         // Only include -beta when branch is not 'public'
         if (branch && branch.toLowerCase() !== 'public') {
-          installArgs.push('-beta', branch);
+          baseArgs.push('-beta', branch);
         }
-        // Validate to reduce corrupt installs
-        installArgs.push('validate', '+quit');
+        // Always validate to reduce corrupt installs
+        baseArgs.push('validate', '+quit');
 
-        // Run steamcmd and treat known success phrases as success even with non-zero exit
-        await new Promise<void>((resolve, reject) => {
-          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-          let out = '';
-          const append = (data: Buffer | string) => {
-            try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
-          };
-          cp.stdout?.on('data', append);
-          cp.stderr?.on('data', append);
-          cp.on('error', reject);
-          cp.on('exit', (code: number) => {
-            const o = (out || '').toString();
-            const success = /Success!\s*App\s*'\d+'\s*fully installed/i.test(o);
-            if (code === 0 || success) return resolve();
-            // Sometimes shows transient errors then success in a later run; log and reject with detail
-            return reject(new Error(`steamcmd_install_failed: code=${code} out=${o.slice(-1000)}`));
-          });
-        });
+        // Attempt up to 3 tries; on 2nd try clear caches; on 3rd try switch to x86-64 branch for GMOD if still 'public'
+        let attempt = 0;
+        let lastOut = '';
+        let lastCode = -1;
+        while (attempt < 3) {
+          attempt++;
+          let args = baseArgs.slice();
+          if (attempt === 3 && appId === 4020 && (!branch || branch.toLowerCase() === 'public')) {
+            // Try public 64-bit beta as a fallback for Garry's Mod
+            args = [
+              '+@sSteamCmdForcePlatformType', 'linux',
+              '+@ShutdownOnFailedCommand', '1',
+              '+@NoPromptForPassword', '1',
+              '+force_install_dir', srvDir,
+              '+login', 'anonymous',
+              '+app_update', String(appId), '-beta', 'x86-64', 'validate', '+quit',
+            ];
+          }
+          if (attempt > 1) {
+            // Clean potentially corrupt cache between attempts
+            clearSteamAppCaches(srvDir, appId);
+          }
+          const { code, out } = await runSteamCmdOnce(args);
+          lastOut = out;
+          lastCode = code;
+          const success = /Success!\s*App\s*'\d+'\s*fully installed/i.test(out);
+          // Some SteamCMD runs exit non-zero but still print Success! at the end
+          if (code === 0 || success) {
+            break;
+          }
+          // If transient known state, wait briefly and retry
+          const has602 = /state\s+is\s+0x602/i.test(out);
+          const connectionIssues = /timed out|timeout|Connection (?:failed|closed)|No Connection/i.test(out);
+          if (has602 || connectionIssues || code === 8) {
+            await new Promise(r => setTimeout(r, 1500));
+            continue;
+          }
+          // For other failures, do not spin
+          break;
+        }
+        // Final check
+        const finalSuccess = /Success!\s*App\s*'\d+'\s*fully installed/i.test(lastOut);
+        if (!(lastCode === 0 || finalSuccess)) {
+          throw new Error(`steamcmd_install_failed: code=${lastCode} out=${lastOut.slice(-1000)}`);
+        }
 
         // Ensure SRCDS binaries are executable
         try {
