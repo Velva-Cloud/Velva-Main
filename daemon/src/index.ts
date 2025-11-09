@@ -1394,8 +1394,17 @@ function startHttpsServer() {
   app.delete('/delete/:id', async (req, res) => {
     const id = req.params.id;
     try {
-      const container = docker.getContainer(`vc-${id}`);
-      await container.remove({ force: true });
+      // Stop and remove Docker container if present
+      try {
+        const container = docker.getContainer(`vc-${id}`);
+        // Attempt graceful stop before removal
+        try { await container.stop({ t: Number(process.env.STOP_TIMEOUT || 5) } as any); } catch {}
+        await container.remove({ force: true });
+      } catch {}
+
+      // Stop any Steam-managed native process
+      try { await stopSteamProcess(id); } catch {}
+
       // Release any persisted host port allocations for this server
       try {
         const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
@@ -1406,13 +1415,22 @@ function startHttpsServer() {
           fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
         }
       } catch {}
-      res.json({ ok: true });
+
+      // Delete all persistent files for this server
+      try {
+        const root = serverDir(id);
+        if (fs.existsSync(root)) {
+          await fs.promises.rm(root, { recursive: true, force: true });
+        }
+      } catch {}
+
+      res.json({ ok: true, deletedFiles: true });
     } catch (e: any) {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
-      // Deleting a missing container is idempotent success
+      // Treat missing container as success; still ensure files and allocations are removed
       if (code === 404 || /no such container/i.test(msg)) {
-        // Still release allocation
+        try { await stopSteamProcess(id); } catch {}
         try {
           const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
           const text = fs.existsSync(PORT_STORE_PATH) ? fs.readFileSync(PORT_STORE_PATH, 'utf8') : '';
@@ -1422,7 +1440,13 @@ function startHttpsServer() {
             fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
           }
         } catch {}
-        return res.json({ ok: true, missing: true });
+        try {
+          const root = serverDir(id);
+          if (fs.existsSync(root)) {
+            await fs.promises.rm(root, { recursive: true, force: true });
+          }
+        } catch {}
+        return res.json({ ok: true, missing: true, deletedFiles: true });
       }
       res.status(500).json({ error: e?.message || 'delete_failed' });
     }
