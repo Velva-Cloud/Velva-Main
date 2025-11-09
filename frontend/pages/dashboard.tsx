@@ -60,6 +60,7 @@ export default function Dashboard() {
   const maxServers = Number(sub?.plan?.resources?.maxServers ?? 1);
   const limitReached = sub ? total >= maxServers : true;
   const suspended = !!me?.suspended;
+  const isAdmin = (me?.role === 'ADMIN' || me?.role === 'OWNER');
 
   const fetchServers = async () => {
     try {
@@ -184,7 +185,7 @@ export default function Dashboard() {
 
         {/* Create server CTA */}
         <section className="card p-5 mb-8">
-          {!sub ? (
+          {(!sub && !isAdmin) ? (
             <div className="flex items-center justify-between">
               <div className="subtle">No active subscription. Choose a server size to subscribe.</div>
               <a className="btn btn-primary" href="/billing">Go to Billing</a>
@@ -196,8 +197,8 @@ export default function Dashboard() {
               </div>
               <a
                 href="/servers/create"
-                className={`btn btn-primary ${!sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`}
-                aria-disabled={!sub || sub.status !== 'active' || limitReached}
+                className={`btn btn-primary ${(!isAdmin && (!sub || sub.status !== 'active' || limitReached)) ? 'opacity-70 cursor-not-allowed' : ''}`}
+                aria-disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}
               >
                 Create server
               </a>
@@ -217,7 +218,7 @@ export default function Dashboard() {
               <img src="https://velvacloud.com/logo.png" alt="VelvaCloud" className="mx-auto h-16 w-auto mb-4" />
               <h3 className="text-xl font-semibold mb-2">No servers yet</h3>
               <p className="subtle mb-5">Use the creation page to spin up your first server.</p>
-              <a href="/servers/create" className={`btn btn-primary ${!sub || sub.status !== 'active' || limitReached ? 'opacity-70 cursor-not-allowed' : ''}`} aria-disabled={!sub || sub.status !== 'active' || limitReached}>Create server</a>
+              <a href="/servers/create" className={`btn btn-primary ${(!isAdmin && (!sub || sub.status !== 'active' || limitReached)) ? 'opacity-70 cursor-not-allowed' : ''}`} aria-disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}>Create server</a>
             </div>
           ) : (
             <>
