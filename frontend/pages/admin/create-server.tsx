@@ -85,6 +85,11 @@ export default function AdminCreateServerPage() {
       .then(res => {
         const arr = Array.isArray(res.data) ? res.data : [];
         setCatalog(arr);
+        // Default select the first game if none selected yet
+        if (arr.length > 0 && !selectedGameId) {
+          setSelectedGameId(arr[0].id);
+          if (arr[0].image) setImage(arr[0].image);
+        }
       })
       .catch(() => setCatalog([]));
   }, []);
@@ -275,37 +280,24 @@ export default function AdminCreateServerPage() {
               </div>
 
               <div>
-                <div className="flex items-center justify-between mb-2">
-                  <div className="text-sm">Game (from catalog)</div>
-                  <input
-                    type="text"
-                    placeholder="Search games..."
-                    className="input w-48"
-                    onChange={(e) => setSearch(e.target.value)}
-                    aria-label="Search games"
-                  />
-                </div>
-                <div className="grid sm:grid-cols-2 gap-3">
-                  {catalogCards.map(g => {
-                    const selected = selectedGameId === g.id;
-                    return (
-                      <button
-                        key={g.id}
-                        type="button"
-                        onClick={() => { setSelectedGameId(g.id); setImage(g.image || ''); }}
-                        className={`text-left p-3 rounded border ${selected ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800 hover:bg-slate-800'} transition`}
-                      >
-                        <div className="flex items-center gap-3">
-                          <div className="h-10 w-10 rounded bg-slate-800 flex items-center justify-center text-xs">{g.id.slice(0,2).toUpperCase()}</div>
-                          <div>
-                            <div className="font-medium">{g.name}</div>
-                            <div className="text-xs subtle">{g.id} • {g.provider}</div>
-                          </div>
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
+                <div className="text-sm mb-1">Game (from catalog)</div>
+                <select
+                  className="input"
+                  value={selectedGameId}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setSelectedGameId(val);
+                    const g = catalog.find(x => x.id === val);
+                    setImage(g?.image || '');
+                  }}
+                  aria-label="Select game"
+                >
+                  {catalog.map(g => (
+                    <option key={g.id} value={g.id}>
+                      {g.name} ({g.id}) • {g.provider}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               {/* Advanced settings */}

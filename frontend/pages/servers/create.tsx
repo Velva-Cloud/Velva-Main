@@ -78,6 +78,10 @@ export default function CreateServerPage() {
 
         const gamesArr = Array.isArray(gamesRes.data) ? gamesRes.data : [];
         setCatalog(gamesArr);
+        if (gamesArr.length > 0 && !selectedGameId) {
+          setSelectedGameId(gamesArr[0].id);
+          if (gamesArr[0].image) setImage(gamesArr[0].image);
+        }
       })
       .catch(() => {
         setPlans([]);
@@ -152,8 +156,8 @@ export default function CreateServerPage() {
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
 
   const isSRCDS = useMemo(
-    () => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image),
-    [image]
+    () => !!catalog.find(g => g.id === selectedGameId && g.provider === 'srds_runner'),
+    [catalog, selectedGameId]
   );
 
   const planSummary = (() => {
@@ -309,31 +313,25 @@ export default function CreateServerPage() {
                   </div>
 
                   <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-sm">Game (from catalog)</div>
-                    </div>
-                    <div className="grid sm:grid-cols-2 gap-3">
-                      {catalog.map(g => {
-                        const selected = selectedGameId === g.id;
-                        return (
-                          <button
-                            key={g.id}
-                            type="button"
-                            onClick={() => { setSelectedGameId(g.id); setImage(g.image || ''); }}
-                            className={`text-left p-3 rounded border ${selected ? 'border-sky-600 bg-sky-900/20' : 'border-slate-800 hover:bg-slate-800'} transition`}
-                            disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="h-10 w-10 rounded bg-slate-800 flex items-center justify-center text-xs">{g.id.slice(0,2).toUpperCase()}</div>
-                              <div>
-                                <div className="font-medium">{g.name}</div>
-                                <div className="text-xs subtle">{g.id} • {g.provider}</div>
-                              </div>
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <div className="text-sm mb-1">Game (from catalog)</div>
+                    <select
+                      className="input"
+                      value={selectedGameId}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setSelectedGameId(val);
+                        const g = catalog.find(x => x.id === val);
+                        setImage(g?.image || '');
+                      }}
+                      disabled={!isAdmin && (!sub || sub.status !== 'active' || limitReached)}
+                      aria-label="Select game"
+                    >
+                      {catalog.map(g => (
+                        <option key={g.id} value={g.id}>
+                          {g.name} ({g.id}) • {g.provider}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="mt-4">
