@@ -332,12 +332,13 @@ export class QueueService implements OnModuleInit {
         // Auto-start
         await this.agents.start(baseURL, s.id);
 
-        // Verify running state via inventory; some images (e.g., Minecraft before EULA) exit immediately
+        // Verify running state via inventory; consider both containers and steam processes
         let running = true;
         try {
           const inv = await this.agents.inventory(baseURL);
-          const present = inv?.containers?.find(c => c.serverId === s.id);
-          running = !!(present && present.running);
+          const presentContainer = inv?.containers?.find(c => c.serverId === s.id);
+          const presentSteam = inv?.steam?.find?.((x: any) => x.serverId === s.id);
+          running = !!(presentContainer?.running || presentSteam?.running);
         } catch {
           // best-effort; assume running if inventory fails
           running = true;
@@ -384,12 +385,13 @@ export class QueueService implements OnModuleInit {
           throw e;
         }
 
-        // Verify running state via inventory; if process exited immediately, mark as stopped
+        // Verify running state via inventory; consider both containers and steam processes
         let running = true;
         try {
           const inv = await this.agents.inventory(baseURL);
-          const present = inv?.containers?.find(c => c.serverId === s.id);
-          running = !!(present && present.running);
+          const presentContainer = inv?.containers?.find(c => c.serverId === s.id);
+          const presentSteam = inv?.steam?.find?.((x: any) => x.serverId === s.id);
+          running = !!(presentContainer?.running || presentSteam?.running);
         } catch {
           running = true;
         }
@@ -532,8 +534,14 @@ export class QueueService implements OnModuleInit {
               await this.enqueueStart(s.id);
             }
             if (s.status === 'stopped' && running) {
-              await this.recordEvent(s.id, 'reconcile_stop', `server ${s.id} should be stopped`);
-              await this.enqueueStop(s.id);
+              if (presentSteam) {
+                // Trust steam-managed native process: mark DB as running instead of issuing a stop
+                await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
+                await this.recordEvent(s.id, 'reconcile_mark_running', `server ${s.id} steam process running; updating status`);
+              } else {
+                await this.recordEvent(s.id, 'reconcile_stop', `server ${s.id} should be stopped`);
+                await this.enqueueStop(s.id);
+              }
             }
           }
         }
