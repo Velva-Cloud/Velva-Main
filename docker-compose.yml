@@ -129,6 +129,8 @@ services:
       # SFTP
       SFTP_PORT: 2222
       SFTP_PASSWORD: dev-sftp
+      # Ensure SteamCMD path visible to daemon (built into image)
+      STEAMCMD_PATH: /opt/steamcmd/steamcmd.sh
     depends_on:
       backend:
         condition: service_healthy
