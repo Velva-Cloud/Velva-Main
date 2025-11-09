@@ -9,7 +9,9 @@ RUN apt-get update && \
     tar -xzf steamcmd_linux.tar.gz && \
     rm -f steamcmd_linux.tar.gz && \
     /opt/steamcmd/steamcmd.sh +quit && \
+    # Provide PATH access while preserving steamcmd.sh relative linux32 path
     ln -sf /opt/steamcmd/steamcmd.sh /usr/bin/steamcmd && \
+    ln -sf /opt/steamcmd/linux32 /usr/bin/linux32 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
 # Provide both explicit path and PATH-based binary for daemon
