@@ -16,8 +16,8 @@ RUN apt-get update && \
     ln -sf /opt/steamcmd/linux32 /usr/bin/linux32 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Provide both explicit path and PATH-based binary for daemon
-ENV STEAMCMD_PATH=/opt/steamcmd/steamcmd.sh
+# Provide PATH-based SteamCMD by default; the daemon can also work with /opt/steamcmd/steamcmd.sh
+ENV STEAMCMD_PATH=steamcmd
 
 WORKDIR /app
 COPY package.json package-lock.json* tsconfig.json ./

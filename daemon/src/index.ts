@@ -993,20 +993,28 @@ function startHttpsServer() {
 
       if (provisioner === 'steamcmd') {
         // Ensure steamcmd is available
-        const candidates = [
-          process.env.STEAMCMD_PATH || '',
-          '/usr/bin/steamcmd',
-          '/usr/local/bin/steamcmd',
-          '/opt/steamcmd/steamcmd.sh',
-        ].filter(Boolean);
+        // Resolve SteamCMD path:
+        // - If STEAMCMD_PATH is provided, use it even if it's a bare command name (PATH-resolved).
+        // - Otherwise, fall back to common locations.
         let steamcmdPath: string | null = null;
-        for (const c of candidates) {
-          try {
-            if (c && fs.existsSync(c)) { steamcmdPath = c; break; }
-          } catch {}
+        const envPath = (process.env.STEAMCMD_PATH || '').trim();
+        if (envPath) {
+          steamcmdPath = envPath;
+        } else {
+          const candidates = [
+            '/usr/bin/steamcmd',
+            '/usr/local/bin/steamcmd',
+            '/opt/steamcmd/steamcmd.sh',
+          ];
+          for (const c of candidates) {
+            try {
+              if (fs.existsSync(c)) { steamcmdPath = c; break; }
+            } catch {}
+          }
         }
         if (!steamcmdPath) {
-          return res.status(500).json({ error: 'steamcmd_not_found', detail: 'Install SteamCMD and set STEAMCMD_PATH env or place it at /usr/bin/steamcmd' });
+          // Final fallback to bare command if present in PATH
+          steamcmdPath = 'steamcmd';
         }
 
         // Ensure SteamCMD runtime is present (linux32/steamcmd) if using the shell script path
