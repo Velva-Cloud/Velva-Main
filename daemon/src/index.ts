@@ -1033,23 +1033,23 @@ function startHttpsServer() {
         let runArgs: string[];
         const hostPort = Number(chosenHostPort || 27015);
         if (appId === 4020) { // Garry's Mod
-          runCmd = path.join(srvDir, 'srcds_run');
+          runCmd = path.join(srvDir, 'srcds_linux');
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+exec', 'server.cfg'];
         } else if (appId === 740) { // CS:GO
-          runCmd = path.join(srvDir, 'srcds_run');
+          runCmd = path.join(srvDir, 'srcds_linux');
           runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2'];
         } else if (appId === 232250) { // TF2
-          runCmd = path.join(srvDir, 'srcds_run');
+          runCmd = path.join(srvDir, 'srcds_linux');
           runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl'];
         } else if (appId === 222860) { // L4D2
-          runCmd = path.join(srvDir, 'srcds_run');
+          runCmd = path.join(srvDir, 'srcds_linux');
           runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort)];
         } else if (appId === 629760) { // Mordhau
           runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
           runArgs = ['-Port=' + String(hostPort)];
         } else {
           // Generic SRCDS default
-          runCmd = path.join(srvDir, 'srcds_run');
+          runCmd = path.join(srvDir, 'srcds_linux');
           runArgs = ['-console', '-port', String(hostPort)];
         }
 
@@ -1356,10 +1356,16 @@ function startHttpsServer() {
     // Respect start cooldown to prevent thrash
     const lastStart = steamStartTimes.get(Number(serverId)) || 0;
     if (lastStart && Date.now() - lastStart < START_COOLDOWN_MS) {
+      try {
+        const logPath = (meta?.logPath) || path.join(serverDir(serverId), 'console.log');
+        fs.appendFileSync(logPath, `\n[INFO] stop ignored: recently started (${Date.now() - lastStart}ms ago)\n`);
+      } catch {}
       return { ok: true, recentlyStarted: true };
     }
 
     try {
+      const logPath = (meta?.logPath) || path.join(serverDir(serverId), 'console.log');
+      try { fs.appendFileSync(logPath, `\n[INFO] sending SIGTERM to SRCDS pid=${pid}\n`); } catch {}
       process.kill(pid, 'SIGTERM');
     } catch {}
     const deadline = Date.now() + timeoutMs;
@@ -1375,7 +1381,11 @@ function startHttpsServer() {
       }
     }
     // Force kill
-    try { process.kill(pid, 'SIGKILL'); } catch {}
+    try {
+      const logPath = (meta?.logPath) || path.join(serverDir(serverId), 'console.log');
+      try { fs.appendFileSync(logPath, `\n[INFO] sending SIGKILL to SRCDS pid=${pid}\n`); } catch {}
+      process.kill(pid, 'SIGKILL');
+    } catch {}
     steamProcesses.delete(Number(serverId));
     try { writeSteamMeta(serverId, { ...meta, pid: undefined }); } catch {}
     return { ok: true };
