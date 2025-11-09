@@ -1127,15 +1127,15 @@ function startHttpsServer() {
         // Always validate to reduce corrupt installs
         baseArgs.push('validate', '+quit');
 
-        // Attempt up to 3 tries; on 2nd try clear caches; on 3rd try switch to x86-64 branch for GMOD if still 'public'
+        // Attempt up to 5 tries; progressively clear caches and finally force 64-bit branch for GMOD
         let attempt = 0;
         let lastOut = '';
         let lastCode = -1;
-        while (attempt < 3) {
+        while (attempt < 5) {
           attempt++;
           let args = baseArgs.slice();
-          if (attempt === 3 && appId === 4020 && (!branch || branch.toLowerCase() === 'public')) {
-            // Try public 64-bit beta as a fallback for Garry's Mod
+          if ((attempt >= 3) && appId === 4020 && (!branch || branch.toLowerCase() === 'public')) {
+            // Try 64-bit beta for Garry's Mod after early failures
             args = [
               '+@sSteamCmdForcePlatformType', 'linux',
               '+@ShutdownOnFailedCommand', '1',
@@ -1148,6 +1148,11 @@ function startHttpsServer() {
           if (attempt > 1) {
             // Clean potentially corrupt cache between attempts
             clearSteamAppCaches(srvDir, appId);
+            // Also try removing appmanifest for the specific app
+            try {
+              const mani = path.join(srvDir, 'steamapps', `appmanifest_${appId}.acf`);
+              try { fs.rmSync(mani, { force: true }); } catch {}
+            } catch {}
           }
           const { code, out } = await runSteamCmdOnce(args);
           lastOut = out;
@@ -1161,14 +1166,14 @@ function startHttpsServer() {
           const has602 = /state\s+is\s+0x602/i.test(out);
           const connectionIssues = /timed out|timeout|Connection (?:failed|closed)|No Connection/i.test(out);
           if (has602 || connectionIssues || code === 8) {
-            await new Promise(r => setTimeout(r, 1500));
+            await new Promise(r => setTimeout(r, 2500));
             continue;
           }
           // For other failures, do not spin
           break;
         }
         // Final check
-        const finalSuccess = /Success!\s*App\s*'\d+'\s*fully installed/i.test(lastOut);
+        const finalSuccess = /Success!\s*App\s*'\\d+'\\s*fully installed/i.test(lastOut);
         if (!(lastCode === 0 || finalSuccess)) {
           throw new Error(`steamcmd_install_failed: code=${lastCode} out=${lastOut.slice(-1000)}`);
         }
@@ -1204,6 +1209,13 @@ function startHttpsServer() {
         if (appId === 4020) { // Garry's Mod
           runCmd = pickSrcds();
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
+          // If srcds_run is selected and 64-bit binary exists, force it explicitly via -binary
+          const runScript = path.join(srvDir, 'srcds_run');
+          const bin64 = path.join(srvDir, 'srcds_linux64');
+          if (prefer64 && fileExists(runScript) && fileExists(bin64) && runCmd === runScript) {
+            runArgs.unshift('srcds_linux64');
+            runArgs.unshift('-binary');
+          }
         } else if (appId === 740) { // CS:GO
           runCmd = pickSrcds();
           runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2', '+maxplayers', '16', '-tickrate', '128', '+log', 'on'];
@@ -1258,6 +1270,10 @@ function startHttpsServer() {
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
         // Ensure Steam runtime hints in server dir
         ensureSteamRuntime(srvDir, appId);
+        // Precreate common writable directories to avoid log/cache warnings
+        try { fs.mkdirSync(path.join(srvDir, 'garrysmod', 'logs'), { recursive: true }); } catch {}
+        try { fs.mkdirSync(path.join(srvDir, 'garrysmod', 'cfg'), { recursive: true }); } catch {}
+
         // Default: run as non-root for hosting safety; allow override via SRCDS_KEEP_ROOT=1
         const keepRoot = String(process.env.SRCDS_KEEP_ROOT || '').trim() === '1';
         const ids = keepRoot ? null : pickNonRootUser();
