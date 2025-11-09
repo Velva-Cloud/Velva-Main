@@ -604,7 +604,9 @@ function startHttpsServer() {
                       }
                     };
                     stream.on('data', onChunk);
-                    stream.on('end', () =>                  } else {
+                    stream.on('end', () => { lastSize = newSize; });
+                    stream.on('error', () => {});
+                  } else {
                     lastSize = newSize;
                   }
                 } catch {}
