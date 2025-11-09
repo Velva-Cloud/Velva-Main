@@ -502,10 +502,7 @@ export default function CreateServerPage() {
 
       const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env };
 
-      // Admin assignment
-      if (isAdmin && assignUserId && Number(assignUserId) > 0) {
-        body.userId = Number(assignUserId);
-      }
+      
 
       // Auto-attach Steam settings for SRCDS titles
       if (isSRCDS) {
