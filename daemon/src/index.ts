@@ -1053,6 +1053,8 @@ function startHttpsServer() {
         // Append user-provided args
         const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
         runArgs.push(...extraArgs);
+        // Ensure srcds_run does not auto-restart so we can capture the crash reason
+        if (!runArgs.includes('-norestart')) runArgs.push('-norestart');
 
         // Start process and persist state with console log capture
         const logPath = path.join(srvDir, 'console.log');
@@ -1067,13 +1069,17 @@ function startHttpsServer() {
           detached: true,
           ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
         });
-        // Append stdout/stderr to console.log
+        // Append stdout/stderr to console.log and record exit codes
         try {
-          const append = (data: Buffer) => {
-            try { fs.appendFileSync(logPath, data.toString('utf8')); } catch {}
+          const append = (data: Buffer | string) => {
+            const text = typeof data === 'string' ? data : data.toString('utf8');
+            try { fs.appendFileSync(logPath, text); } catch {}
           };
           child.stdout?.on('data', append);
           child.stderr?.on('data', append);
+          child.on('exit', (code: number, signal: string) => {
+            append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+          });
         } catch {}
         steamProcesses.set(Number(serverId), child);
         try {
