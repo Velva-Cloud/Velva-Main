@@ -1053,9 +1053,24 @@ function startHttpsServer() {
           runArgs = ['-console', '-port', String(hostPort)];
         }
 
+        // Bind IP and enforce strict port binding to avoid accidental dynamic ports
+        if (!runArgs.includes('-ip')) {
+          runArgs.unshift('0.0.0.0');
+          runArgs.unshift('-ip');
+        }
+        if (!runArgs.includes('-strictportbind')) runArgs.push('-strictportbind');
+
         // Append user-provided args
         const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
         runArgs.push(...extraArgs);
+
+        // Inject GSLT token if provided (panel may pass steam.gslt or env SV_STEAM_TOKEN)
+        const gslt = (steam as any)?.gslt || process.env.SV_STEAM_TOKEN || '';
+        const hasGslt = runArgs.some(a => /^\+sv_setsteamaccount$/i.test(a));
+        if (gslt && !hasGslt) {
+          runArgs.push('+sv_setsteamaccount', String(gslt));
+        }
+
         // Ensure LAN mode by default to avoid requiring GSLT/token in tests
         const hasLanFlag = runArgs.some(a => /^\+sv_lan$/i.test(a)) || runArgs.some((a, i) => /^\+sv_lan$/i.test(a) && String(runArgs[i + 1] || '').trim() !== '');
         if (!hasLanFlag) {
