@@ -1064,12 +1064,20 @@ function startHttpsServer() {
         // Start process and persist state with console log capture
         const logPath = path.join(srvDir, 'console.log');
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
+        // Ensure Steam runtime hints in server dir
+        ensureSteamRuntime(srvDir, appId);
         // If running as root, drop privileges automatically to avoid SRCDS root warning
         const ids = pickNonRootUser();
         try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
-          env: { ...process.env, VC_SERVER_ID: String(serverId), VC_NAME: name },
+          env: {
+            ...process.env,
+            VC_SERVER_ID: String(serverId),
+            VC_NAME: name,
+            HOME: srvDir,
+            LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+          },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
           ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
@@ -1218,8 +1226,40 @@ function startHttpsServer() {
     }
   }
 
+  // Ensure Steam runtime hints for SRCDS: steam_appid.txt and sdk32 steamclient symlink inside HOME
+  function ensureSteamRuntime(srvDir: string, appId: number): void {
+    try {
+      // steam_appid.txt
+      const appidPath = path.join(srvDir, 'steam_appid.txt');
+      try { fs.writeFileSync(appidPath, String(appId)); } catch {}
+
+      // Setup HOME-relative .steam/sdk32 symlink to steamclient.so if present
+      const sdkDir = path.join(srvDir, '.steam', 'sdk32');
+      try { fs.mkdirSync(sdkDir, { recursive: true }); } catch {}
+      const srcCandidates = [
+        path.join(srvDir, 'bin', 'steamclient.so'),
+        path.join(srvDir, 'steamclient.so'),
+      ];
+      let src: string | null = null;
+      for (const c of srcCandidates) {
+        try { if (fs.existsSync(c)) { src = c; break; } } catch {}
+      }
+      if (src) {
+        const dst = path.join(sdkDir, 'steamclient.so');
+        try {
+          // Replace any existing file/symlink
+          try { fs.unlinkSync(dst); } catch {}
+          fs.symlinkSync(src, dst);
+        } catch {}
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   function steamMetaPath(serverId: number | string) {
-    return path.join(serverDir(serverId), 'steam.json')}
+    return path.join(serverDir(serverId), 'steam.json')
+  }
   function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number; logPath?: string } | null {
     try {
       const p = steamMetaPath(serverId);
@@ -1264,13 +1304,20 @@ function startHttpsServer() {
     ensureDir(srvDir);
     const logPath = meta.logPath || path.join(srvDir, 'console.log');
     try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
+    // Ensure Steam runtime hints in server dir
+    ensureSteamRuntime(srvDir, meta.appId || 0);
     // If running as root, drop privileges automatically to avoid SRCDS root warning
     const ids = pickNonRootUser();
     try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
 
     const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
       cwd: srvDir,
-      env: { ...process.env, VC_SERVER_ID: String(serverId) },
+      env: {
+        ...process.env,
+        VC_SERVER_ID: String(serverId),
+        HOME: srvDir,
+        LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+      },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
       ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
