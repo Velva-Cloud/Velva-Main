@@ -1014,9 +1014,10 @@ function startHttpsServer() {
         const branch = (steam?.branch || 'public').toString();
 
         // Install/update into srvDir via SteamCMD
+        // Important: set force_install_dir before login to avoid SteamCMD warning and state errors
         const installArgs: string[] = [
-          '+login', 'anonymous',
           '+force_install_dir', srvDir,
+          '+login', 'anonymous',
           '+app_update', String(appId),
         ];
         // Only include -beta when branch is not 'public'
