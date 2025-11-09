@@ -1034,23 +1034,23 @@ function startHttpsServer() {
         const hostPort = Number(chosenHostPort || 27015);
         if (appId === 4020) { // Garry's Mod
           runCmd = path.join(srvDir, 'srcds_linux');
-          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+exec', 'server.cfg'];
+          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
         } else if (appId === 740) { // CS:GO
           runCmd = path.join(srvDir, 'srcds_linux');
-          runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2'];
+          runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2', '+maxplayers', '16', '-tickrate', '128', '+log', 'on'];
         } else if (appId === 232250) { // TF2
           runCmd = path.join(srvDir, 'srcds_linux');
-          runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl'];
+          runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl', '+maxplayers', '24', '-tickrate', '66', '+log', 'on'];
         } else if (appId === 222860) { // L4D2
           runCmd = path.join(srvDir, 'srcds_linux');
-          runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort)];
+          runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort), '+log', 'on'];
         } else if (appId === 629760) { // Mordhau
           runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
           runArgs = ['-Port=' + String(hostPort)];
         } else {
           // Generic SRCDS default
           runCmd = path.join(srvDir, 'srcds_linux');
-          runArgs = ['-console', '-port', String(hostPort)];
+          runArgs = ['-console', '-port', String(hostPort), '+log', 'on'];
         }
 
         // Bind IP and enforce strict port binding to avoid accidental dynamic ports
