@@ -334,7 +334,7 @@ export class ServersService {
       throw new BadRequestException('Invalid or inactive plan');
     }
     const res = (plan.resources || {}) as Resources;
-    const cpuUnits = Number(res.cpu ?? 0); // arbitrary cpu units
+    const cpuUnits = 100; // standardize to 100 CPU units per server
     const ramMB = this.toMb(Number(res.ramMB ?? 0));
     const diskMB = res.diskMB ? this.toMb(Number(res.diskMB)) : this.toMb(Number(res.diskGB ?? 0), true);
 
@@ -393,7 +393,7 @@ export class ServersService {
     }
     for (const s of serversByNode) {
       const r = (s.plan.resources || {}) as Resources;
-      const c = Number(r.cpu ?? 0);
+      const c = 100; // standardize per-server CPU usage to 100 units
       const m = this.toMb(Number(r.ramMB ?? 0));
       const d = r.diskMB ? this.toMb(Number(r.diskMB)) : this.toMb(Number(r.diskGB ?? 0), true);
       const u = usage.get(s.nodeId!)!;
