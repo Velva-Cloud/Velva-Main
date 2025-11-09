@@ -815,7 +815,7 @@ function startHttpsServer() {
   const steamProcesses = new Map<number, any>();
   // Track recent starts to avoid immediate stop/restart thrash
   const steamStartTimes = new Map<number, number>();
-  const START_COOLDOWN_MS = Number(process.env.STEAM_START_COOLDOWN_MS || 15000);
+  const START_COOLDOWN_MS = Number(process.env.STEAM_START_COOLDOWN_MS || 60000);
 
   // Robust image pull with fallbacks and aliases
   async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
