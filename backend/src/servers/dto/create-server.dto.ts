@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Transform } from 'class-transformer';
-import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength, IsObject, IsIn, ValidateNested } from 'class-validator';
+import { IsInt, IsNotEmpty, IsOptional, IsString, Matches, MaxLength, Min, MinLength, IsObject } from 'class-validator';
 
 export class CreateServerDto {
   @ApiProperty({ example: 1 })
@@ -29,19 +29,23 @@ export class CreateServerDto {
   @IsOptional()
   env?: Record<string, string>;
 
-  @ApiProperty({ example: 'docker', enum: ['docker', 'steamcmd'], required: false })
-  @IsString()
-  @IsOptional()
-  @IsIn(['docker', 'steamcmd'])
-  provisioner?: 'docker' | 'steamcmd';
-
   @ApiProperty({
     required: false,
-    description: 'SteamCMD settings when provisioner=steamcmd',
+    description: 'SteamCMD settings for Steam-based servers (e.g., GMod, CS:GO). If provided, the server will be provisioned via SteamCMD automatically.',
     type: Object,
     example: { appId: 4020, branch: 'public', args: ['-tickrate', '66'] },
   })
   @IsObject()
   @IsOptional()
   steam?: { appId: number; branch?: string; args?: string[] };
+
+  @ApiProperty({
+    required: false,
+    description: 'For ADMIN/OWNER only: create the server for this user id.',
+    example: 123,
+  })
+  @Transform(({ value }) => (value === undefined || value === null ? undefined : Number(value)))
+  @IsInt()
+  @IsOptional()
+  userId?: number;
 }

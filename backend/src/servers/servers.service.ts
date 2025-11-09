@@ -309,7 +309,16 @@ export class ServersService {
     });
   }
 
-  async create(userId: number, planId: number, name: string, imageOverride?: string, envOverride?: Record<string, string>, provisioner?: 'docker' | 'steamcmd', steam?: { appId: number; branch?: string; args?: string[] }) {
+  async create(
+    userId: number,
+    planId: number,
+    name: string,
+    imageOverride?: string,
+    envOverride?: Record<string, string>,
+    provisioner?: 'docker' | 'steamcmd',
+    steam?: { appId: number; branch?: string; args?: string[] },
+    options?: { asAdmin?: boolean },
+  ) {
     // Normalize and validate inputs (additional to DTO validation)
     const n = (name || '').trim();
     if (n.length < 3 || n.length > 32) {
@@ -325,7 +334,7 @@ export class ServersService {
       throw new BadRequestException('Invalid or inactive plan');
     }
     const res = (plan.resources || {}) as Resources;
-    const cpuUnits = Number(res.cpu ?? 0); // arbitrary cpu units
+    const cpuUnits = 100; // standardize to 100 CPU units per server
     const ramMB = this.toMb(Number(res.ramMB ?? 0));
     const diskMB = res.diskMB ? this.toMb(Number(res.diskMB)) : this.toMb(Number(res.diskGB ?? 0), true);
 
@@ -335,25 +344,24 @@ export class ServersService {
       throw new BadRequestException('User not found. Please sign out and sign in again.');
     }
 
-    // Enforce subscription plan and limits:
-    // - Require an active subscription
-    // - Only allow creating servers that match the subscribed plan
-    // - Enforce maxServers (default 1) per plan
-    const activeSub = await this.prisma.subscription.findFirst({
-      where: { userId, status: 'active' },
-      include: { plan: true },
-      orderBy: { id: 'desc' },
-    });
-    if (!activeSub) {
-      throw new BadRequestException('You need an active subscription to create a server.');
-    }
-    if (activeSub.planId !== plan.id) {
-      throw new BadRequestException('Selected server size does not match your subscription.');
-    }
-    const maxServers = Number((activeSub.plan?.resources as any)?.maxServers ?? 1);
-    const existingCount = await this.prisma.server.count({ where: { userId } });
-    if (existingCount >= maxServers) {
-      throw new BadRequestException(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}. You already have ${existingCount}.`);
+    // Enforce subscription plan and limits unless created by ADMIN/OWNER
+    if (!options?.asAdmin) {
+      const activeSub = await this.prisma.subscription.findFirst({
+        where: { userId, status: 'active' },
+        include: { plan: true },
+        orderBy: { id: 'desc' },
+      });
+      if (!activeSub) {
+        throw new BadRequestException('You need an active subscription to create a server.');
+      }
+      if (activeSub.planId !== plan.id) {
+        throw new BadRequestException('Selected server size does not match your subscription.');
+      }
+      const maxServers = Number((activeSub.plan?.resources as any)?.maxServers ?? 1);
+      const existingCount = await this.prisma.server.count({ where: { userId } });
+      if (existingCount >= maxServers) {
+        throw new BadRequestException(`Your plan allows up to ${maxServers} server${maxServers > 1 ? 's' : ''}. You already have ${existingCount}.`);
+      }
     }
 
     // Optional uniqueness by user to avoid confusion
@@ -385,7 +393,7 @@ export class ServersService {
     }
     for (const s of serversByNode) {
       const r = (s.plan.resources || {}) as Resources;
-      const c = Number(r.cpu ?? 0);
+      const c = 100; // standardize per-server CPU usage to 100 units
       const m = this.toMb(Number(r.ramMB ?? 0));
       const d = r.diskMB ? this.toMb(Number(r.diskMB)) : this.toMb(Number(r.diskGB ?? 0), true);
       const u = usage.get(s.nodeId!)!;
@@ -399,6 +407,8 @@ export class ServersService {
 
     type Candidate = { id: number; score: number; reason?: string; nodeLoc: string };
     const candidates: Candidate[] = [];
+    const rejects: Array<{ nodeId: number; reason: string; cpu: { cap: number; next: number }; mem: { cap: number; next: number }; disk: { cap: number; next: number } }> = [];
+
     for (const node of nodes) {
       const capCpu = Number(node.capacityCpuCores ?? 0) * 100; // assume 100 cpu units per core unless specified by plans
       const capMem = Number(node.capacityMemoryMb ?? 0);
@@ -411,12 +421,29 @@ export class ServersService {
 
       // Hard-fail if RAM or Disk would exceed 100%
       if ((capMem && nextMem > capMem) || (capDisk && nextDisk > capDisk)) {
+        const r: string[] = [];
+        if (capMem && nextMem > capMem) r.push('mem');
+        if (capDisk && nextDisk > capDisk) r.push('disk');
+        rejects.push({
+          nodeId: node.id,
+          reason: `exceeds_${r.join('_')}`,
+          cpu: { cap: capCpu, next: nextCpu },
+          mem: { cap: capMem, next: nextMem },
+          disk: { cap: capDisk, next: nextDisk },
+        });
         continue;
       }
 
       // Allow CPU up to 150%
       const cpuRatio = capCpu ? nextCpu / capCpu : 0;
       if (capCpu && cpuRatio > 1.5) {
+        rejects.push({
+          nodeId: node.id,
+          reason: 'exceeds_cpu',
+          cpu: { cap: capCpu, next: nextCpu },
+          mem: { cap: capMem, next: nextMem },
+          disk: { cap: capDisk, next: nextDisk },
+        });
         continue;
       }
 
@@ -435,6 +462,21 @@ export class ServersService {
     }
 
     if (!candidates.length) {
+      // Record diagnostic log to help operators understand capacity rejection
+      try {
+        await this.prisma.log.create({
+          data: {
+            userId,
+            action: 'plan_change',
+            metadata: {
+              event: 'capacity_reject',
+              planId: plan.id,
+              required: { cpuUnits, ramMB, diskMB },
+              rejects,
+            },
+          },
+        });
+      } catch {}
       throw new BadRequestException('Insufficient node capacity (RAM/Disk/CPU)');
     }
 
@@ -491,7 +533,8 @@ export class ServersService {
           nodeId: chosenId,
           image: imageOverride || null,
           env: envOverride || {},
-          provisioner: provisioner || (imageOverride ? 'docker' : undefined),
+          // No user-facing toggle; record inferred provisioner for workers/diagnostics
+          provisioner: provisioner || undefined,
           steam: steam || undefined,
         },
       },
@@ -511,6 +554,10 @@ export class ServersService {
       data: { userId, action: 'plan_change', metadata: { event: 'provision_request', serverId: server.id, nodeId: chosenId } },
     });
     await this.queue.enqueueProvision(server.id);
+    // Schedule maintenance reconcile on target node to guard against reused containers/images
+    try {
+      await this.queue['maintenanceQ'].add('reconcile_node', { nodeId: chosenId }, { jobId: `reconcile_${chosenId}`, removeOnComplete: true, removeOnFail: true });
+    } catch {}
 
     return server;
   }

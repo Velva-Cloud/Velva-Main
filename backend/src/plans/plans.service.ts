@@ -6,15 +6,23 @@ function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
 
+function normalizeCpu(resources: any): any {
+  const base = typeof resources === 'object' && resources !== null ? { ...resources } : {};
+  base.cpu = 100; // enforce 100 CPU units per plan
+  return base;
+}
+
 @Injectable()
 export class PlansService {
   constructor(private prisma: PrismaService) {}
 
-  listActive() {
-    return this.prisma.plan.findMany({
+  async listActive() {
+    const items = await this.prisma.plan.findMany({
       where: { isActive: true },
       orderBy: { id: 'asc' },
     });
+    // Return resources with cpu normalized to 100
+    return items.map((p: any) => ({ ...p, resources: normalizeCpu(p.resources) }));
   }
 
   async listAllPaged(page = 1, pageSize = 20) {
@@ -28,30 +36,31 @@ export class PlansService {
         take: ps,
       }),
     ]);
-    return { items, total, page: p, pageSize: ps };
+    return { items: items.map((p: any) => ({ ...p, resources: normalizeCpu(p.resources) })), total, page: p, pageSize: ps };
   }
 
   create(data: { name: string; pricePerMonth: string; resources: Prisma.InputJsonValue; isActive?: boolean }) {
+    const normalized = normalizeCpu(data.resources as any);
     return this.prisma.plan.create({
       data: {
         name: data.name,
         // Prisma accepts Decimal as string
         pricePerMonth: data.pricePerMonth as any,
-        resources: data.resources,
+        resources: normalized,
         isActive: data.isActive ?? true,
       },
     });
   }
 
   update(id: number, data: Partial<{ name: string; pricePerMonth: string; resources: Prisma.InputJsonValue; isActive: boolean }>) {
+    const patch: any = {};
+    if (data.name !== undefined) patch.name = data.name;
+    if (data.pricePerMonth !== undefined) patch.pricePerMonth = data.pricePerMonth as any;
+    if (data.resources !== undefined) patch.resources = normalizeCpu(data.resources as any);
+    if (data.isActive !== undefined) patch.isActive = data.isActive;
     return this.prisma.plan.update({
       where: { id },
-      data: {
-        ...(data.name !== undefined ? { name: data.name } : {}),
-        ...(data.pricePerMonth !== undefined ? { pricePerMonth: data.pricePerMonth as any } : {}),
-        ...(data.resources !== undefined ? { resources: data.resources } : {}),
-        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
-      },
+      data: patch,
     });
   }
 

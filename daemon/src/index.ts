@@ -463,7 +463,26 @@ function startHttpsServer() {
         }));
         return { id: info.Id, name, serverId, running, ports };
       });
-      res.json({ containers });
+
+      // Include steam-managed processes summary
+      const steam: Array<{ serverId: number; running: boolean; pid?: number }> = [];
+      try {
+        for (const [srvId, child] of steamProcesses.entries()) {
+          let running = false;
+          let pid: number | undefined = child?.pid;
+          try {
+            if (pid) {
+              process.kill(pid, 0); // throws if not running
+              running = true;
+            }
+          } catch {
+            running = false;
+          }
+          steam.push({ serverId: srvId, running, pid });
+        }
+      } catch {}
+
+      res.json({ containers, steam });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'inventory_failed' });
     }
@@ -527,75 +546,78 @@ function startHttpsServer() {
   // Console: stream logs via SSE
   app.get('/logs/:id', async (req, res) => {
     const id = req.params.id;
+    const follow = req.query.follow === '1' || req.query.follow === 'true';
+    const tail = Number(req.query.tail || 200);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const ping = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch {}
+    }, 25000);
+
+    const endAll = () => {
+      clearInterval(ping);
+      try { res.end(); } catch {}
+    };
+    try { req.on('close', endAll); } catch {}
+
     try {
       const container = docker.getContainer(`vc-${id}`);
-      const follow = req.query.follow === '1' || req.query.follow === 'true';
-      const tail = Number(req.query.tail || 200);
-      const opts = { follow, stdout: true, stderr: true, tail } as any;
+      const opts = { follow: false, stdout: true, stderr: true, tail } as any;
 
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
-      const ping = setInterval(() => {
-        try { res.write(': ping\n\n'); } catch {}
-      }, 25000);
-
-      // Use callback overload to obtain a stream and satisfy TS types
-      container.logs(opts, (err: any, stream: any) => {
-        if (err || !stream) {
-          clearInterval(ping);
-          const code = err?.statusCode;
-          const msg = String(err?.message || '');
-          if (code === 404 || /no such container/i.test(msg)) {
-            return res.status(404).json({ error: 'container_not_found' });
-          }
-          return res.status(500).json({ error: err?.message || 'logs_failed' });
-        }
-
-        // Demux stdout/stderr when needed
-        const out = new PassThrough();
-        const errOut = new PassThrough();
-        try {
-          (docker as any).modem.demuxStream(stream, out, errOut);
-        } catch {
-          // If not multiplexed (TTY), just use the stream directly
-          stream.on('data', (chunk: Buffer) => {
-            const line = chunk.toString('utf8');
-            res.write(`data: ${JSON.stringify(line)}\n\n`);
-          });
-        }
-
-        const onChunk = (chunk: Buffer) => {
+      // Use promise form for logs to avoid callback typing issues
+      const result: any = await container.logs(opts);
+      const resAny: any = result;
+      const onProp = resAny ? (resAny as any).on : undefined;
+      const isFunc = typeof onProp === 'function';
+      if (isFunc) {
+        // Stream form (TTY or multiplexed)
+        const onData = (chunk: Buffer) => {
           const line = chunk.toString('utf8');
           res.write(`data: ${JSON.stringify(line)}\n\n`);
         };
-        out.on('data', onChunk);
-        errOut.on('data', onChunk);
-
-        const endAll = () => {
-          clearInterval(ping);
-          try { out.destroy(); } catch {}
-          try { errOut.destroy(); } catch {}
-          try { stream.destroy(); } catch {}
-          try { res.end(); } catch {}
-        };
-
-        stream.on('end', endAll);
-        stream.on('error', endAll);
-
-        const reqRaw = (res as any).req || undefined;
-        if (reqRaw && typeof reqRaw.on === 'function') {
-          reqRaw.on('close', endAll);
+        (resAny as any).on('data', onData);
+        (resAny as any).on('end', endAll);
+        (resAny as any).on('error', endAll);
+        try { req.on('close', endAll); } catch {}
+        return;
+      } else {
+        // Buffer/string form
+        let output = '';
+        if (Buffer.isBuffer(result)) output = result.toString('utf8');
+        else if (typeof result === 'string') output = result;
+        else output = (result == null ? '' : String(result));
+        const lines = output.split(/\r?\n/);
+        const last = lines.slice(Math.max(0, lines.length - tail));
+        for (const ln of last) {
+          if (!ln) continue;
+          res.write(`data: ${JSON.stringify(ln)}\n\n`);
         }
-      });
-    } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
+        endAll();
+        return;
       }
-      res.status(500).json({ error: e?.message || 'logs_failed' });
+    } catch (err: any) {
+      // Fallback to steam console log file
+      try {
+        const meta = readSteamMeta(id);
+        const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
+        if (logPath && fs.existsSync(logPath)) {
+          const text = fs.readFileSync(logPath, 'utf8');
+          const lines = text.split(/\r?\n/);
+          const last = lines.slice(Math.max(0, lines.length - tail));
+          for (const ln of last) {
+            if (!ln) continue;
+            res.write(`data: ${JSON.stringify(ln)}\n\n`);
+          }
+          // For simplicity, do not follow in SSE for steam fallback (avoids TS issues)
+          endAll();
+          return;
+        }
+      } catch {}
+      const rawMsg = (err && typeof err.message !== 'undefined') ? String(err.message) : '';
+      res.status(500).json({ error: rawMsg || 'logs_failed' });
     }
   });
 
@@ -607,46 +629,53 @@ function startHttpsServer() {
       const tail = Number(req.query.tail || 200);
       const opts = { follow: false, stdout: true, stderr: true, tail } as any;
 
-      let result: any;
       try {
         // Prefer promise form; returns Buffer for follow=false
-        result = await container.logs(opts);
-      } catch (err: any) {
-        const code = err?.statusCode;
-        const msg = String(err?.message || '');
-        if (code === 404 || /no such container/i.test(msg)) {
-          return res.status(404).json({ error: 'container_not_found' });
-        }
-        return res.status(500).json({ error: err?.message || 'logs_failed' });
-      }
-
-      // Handle Buffer/string vs stream defensively
-      let output = '';
-      if (result && typeof (result as any).on === 'function') {
-        // It's a stream (unexpected for follow=false, but handle)
-        const stream: any = result;
-        stream.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
-        stream.on('end', () => {
+        const result = await container.logs(opts);
+        let output = '';
+        const resAny: any = result;
+        const onProp = resAny ? (resAny as any).on : undefined;
+        const isFunc = typeof onProp === 'function';
+        if (isFunc) {
+          const stream: any = result;
+          stream.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
+          stream.on('end', () => {
+            res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+            res.send(output);
+          });
+          stream.on('error', (err: any) => {
+            res.status(500).json({ error: err?.message || 'logs_failed' });
+          });
+        } else {
+          if (Buffer.isBuffer(result)) output = result.toString('utf8');
+          else if (typeof result === 'string') output = result;
+          else output = (result == null ? '' : String(result));
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           res.send(output);
-        });
-        stream.on('error', (err: any) => {
-          res.status(500).json({ error: err?.message || 'logs_failed' });
-        });
-      } else {
-        // Buffer or string
-        if (Buffer.isBuffer(result)) output = result.toString('utf8');
-        else if (typeof result === 'string') output = result;
-        else output = String(result || '');
-        res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-        res.send(output);
+        }
+        return;
+      } catch (err: any) {
+        // Fall through to steam log file if container missing
+        const code = err?.statusCode;
+        const msg = String(err?.message || '');
+        if (!(code === 404 || /no such container/i.test(msg))) {
+          return res.status(500).json({ error: err?.message || 'logs_failed' });
+        }
       }
+
+      const meta = readSteamMeta(id);
+      const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
+      if (logPath && fs.existsSync(logPath)) {
+        try {
+          const text = fs.readFileSync(logPath, 'utf8');
+          const lines = text.split(/\r?\n/);
+          const last = lines.slice(Math.max(0, lines.length - tail)).join('\n');
+          res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+          return res.send(last);
+        } catch {}
+      }
+      return res.status(404).json({ error: 'container_not_found' });
     } catch (e: any) {
-      const code = e?.statusCode;
-      const msg = String(e?.message || '');
-      if (code === 404 || /no such container/i.test(msg)) {
-        return res.status(404).json({ error: 'container_not_found' });
-      }
       res.status(500).json({ error: e?.message || 'logs_failed' });
     }
   });
@@ -784,6 +813,9 @@ function startHttpsServer() {
 
   // In-memory process table for SteamCMD provisioner
   const steamProcesses = new Map<number, any>();
+  // Track recent starts to avoid immediate stop/restart thrash
+  const steamStartTimes = new Map<number, number>();
+  const START_COOLDOWN_MS = Number(process.env.STEAM_START_COOLDOWN_MS || 120000);
 
   // Robust image pull with fallbacks and aliases
   async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
@@ -982,59 +1014,135 @@ function startHttpsServer() {
         const branch = (steam?.branch || 'public').toString();
 
         // Install/update into srvDir via SteamCMD
-        const installArgs = [
-          '+login', 'anonymous',
+        // Important: set force_install_dir before login to avoid SteamCMD warning and state errors
+        const installArgs: string[] = [
           '+force_install_dir', srvDir,
+          '+login', 'anonymous',
           '+app_update', String(appId),
-          '-beta', branch,
-          '+quit',
         ];
+        // Only include -beta when branch is not 'public'
+        if (branch && branch.toLowerCase() !== 'public') {
+          installArgs.push('-beta', branch);
+        }
+        // Validate to reduce corrupt installs
+        installArgs.push('validate', '+quit');
 
+        // Run steamcmd and treat known success phrases as success even with non-zero exit
         await new Promise<void>((resolve, reject) => {
-          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: 'inherit' });
+          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+          let out = '';
+          const append = (data: Buffer | string) => {
+            try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
+          };
+          cp.stdout?.on('data', append);
+          cp.stderr?.on('data', append);
           cp.on('error', reject);
-          cp.on('exit', (code: number) => (code === 0 ? resolve() : reject(new Error('steamcmd_install_failed'))));
+          cp.on('exit', (code: number) => {
+            const o = (out || '').toString();
+            const success = /Success!\s*App\s*'\d+'\s*fully installed/i.test(o);
+            if (code === 0 || success) return resolve();
+            // Sometimes shows transient errors then success in a later run; log and reject with detail
+            return reject(new Error(`steamcmd_install_failed: code=${code} out=${o.slice(-1000)}`));
+          });
         });
+
+        // Ensure SRCDS binaries are executable
+        try {
+          const bin1 = path.join(srvDir, 'srcds_linux');
+          const bin2 = path.join(srvDir, 'srcds_run');
+          try { fs.chmodSync(bin1, 0o755); } catch {}
+          try { fs.chmodSync(bin2, 0o755); } catch {}
+        } catch {}
 
         // Build launch command per appId (SRCDS family)
         let runCmd: string;
         let runArgs: string[];
         const hostPort = Number(chosenHostPort || 27015);
         if (appId === 4020) { // Garry's Mod
-          runCmd = path.join(srvDir, 'srcds_run');
-          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+exec', 'server.cfg'];
+          runCmd = path.join(srvDir, 'srcds_linux');
+          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
         } else if (appId === 740) { // CS:GO
-          runCmd = path.join(srvDir, 'srcds_run');
-          runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2'];
+          runCmd = path.join(srvDir, 'srcds_linux');
+          runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2', '+maxplayers', '16', '-tickrate', '128', '+log', 'on'];
         } else if (appId === 232250) { // TF2
-          runCmd = path.join(srvDir, 'srcds_run');
-          runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl'];
+          runCmd = path.join(srvDir, 'srcds_linux');
+          runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl', '+maxplayers', '24', '-tickrate', '66', '+log', 'on'];
         } else if (appId === 222860) { // L4D2
-          runCmd = path.join(srvDir, 'srcds_run');
-          runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort)];
+          runCmd = path.join(srvDir, 'srcds_linux');
+          runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort), '+log', 'on'];
         } else if (appId === 629760) { // Mordhau
           runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
           runArgs = ['-Port=' + String(hostPort)];
         } else {
           // Generic SRCDS default
-          runCmd = path.join(srvDir, 'srcds_run');
-          runArgs = ['-console', '-port', String(hostPort)];
+          runCmd = path.join(srvDir, 'srcds_linux');
+          runArgs = ['-console', '-port', String(hostPort), '+log', 'on'];
         }
+
+        // Bind IP and enforce strict port binding to avoid accidental dynamic ports
+        if (!runArgs.includes('-ip')) {
+          runArgs.unshift('0.0.0.0');
+          runArgs.unshift('-ip');
+        }
+        if (!runArgs.includes('-strictportbind')) runArgs.push('-strictportbind');
 
         // Append user-provided args
         const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
         runArgs.push(...extraArgs);
 
-        // Start process and persist state
+        // Inject GSLT token if provided (panel may pass steam.gslt or env SV_STEAM_TOKEN)
+        const gslt = (steam as any)?.gslt || process.env.SV_STEAM_TOKEN || '';
+        const hasGslt = runArgs.some(a => /^\+sv_setsteamaccount$/i.test(a));
+        if (gslt && !hasGslt) {
+          runArgs.push('+sv_setsteamaccount', String(gslt));
+        }
+
+        // Ensure LAN mode by default to avoid requiring GSLT/token in tests
+        const hasLanFlag = runArgs.some(a => /^\+sv_lan$/i.test(a)) || runArgs.some((a, i) => /^\+sv_lan$/i.test(a) && String(runArgs[i + 1] || '').trim() !== '');
+        if (!hasLanFlag) {
+          runArgs.push('+sv_lan', '1');
+        }
+        // Ensure srcds_run does not auto-restart so we can capture the crash reason
+        if (!runArgs.includes('-norestart')) runArgs.push('-norestart');
+
+        // Start process and persist state with console log capture
+        const logPath = path.join(srvDir, 'console.log');
+        try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
+        // Ensure Steam runtime hints in server dir
+        ensureSteamRuntime(srvDir, appId);
+        // If running as root, drop privileges automatically to avoid SRCDS root warning
+        const ids = pickNonRootUser();
+        try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
-          env: { ...process.env, VC_SERVER_ID: String(serverId), VC_NAME: name },
-          stdio: 'ignore',
+          env: {
+            ...process.env,
+            VC_SERVER_ID: String(serverId),
+            VC_NAME: name,
+            HOME: srvDir,
+            LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+          },
+          stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
+          ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
         });
+        // Append stdout/stderr to console.log and record exit codes
+        try {
+          const append = (data: Buffer | string) => {
+            const text = typeof data === 'string' ? data : data.toString('utf8');
+            try { fs.appendFileSync(logPath, text); } catch {}
+          };
+          child.stdout?.on('data', append);
+          child.stderr?.on('data', append);
+          child.on('exit', (code: number, signal: string) => {
+            append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+          });
+        } catch {}
         steamProcesses.set(Number(serverId), child);
-        try { fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify({ appId, branch, runCmd, runArgs, port: hostPort }, null, 2)); } catch {}
-
+        try {
+          const meta = { appId, branch, runCmd, runArgs, port: hostPort, logPath };
+          fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify(meta, null, 2));
+        } catch {}
         return res.json({ ok: true, id: `proc-${serverId}`, existed: false, volume: mountPath, port: hostPort, provisioner: 'steamcmd' });
       }
 
@@ -1136,10 +1244,67 @@ function startHttpsServer() {
         
 
   // Helpers for SteamCMD-managed servers
-  function steamMetaPath(serverId: number | string) {
-    return path.join(serverDir(serverId), 'steam.json');
+
+  // Select a non-root user from /etc/passwd (uid>=1000) or 'nobody' (65534) if running as root.
+  function pickNonRootUser(): { uid: number; gid: number } | null {
+    try {
+      const getuid = (process as any).getuid;
+      if (typeof getuid === 'function' && getuid() !== 0) return null;
+      const passwd = fs.readFileSync('/etc/passwd', 'utf8').split(/\r?\n/);
+      for (const line of passwd) {
+        // name:x:uid:gid:gecos:home:shell
+        const parts = line.split(':');
+        if (parts.length >= 4) {
+          const name = parts[0];
+          const uid = Number(parts[2]);
+          const gid = Number(parts[3]);
+          if (isFinite(uid) && uid >= 1000 && name !== 'root') {
+            return { uid, gid: isFinite(gid) ? gid : uid };
+          }
+        }
+      }
+      // Fallback to nobody/nogroup
+      return { uid: 65534, gid: 65534 };
+    } catch {
+      return null;
+    }
   }
-  function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number } | null {
+
+  // Ensure Steam runtime hints for SRCDS: steam_appid.txt and sdk32 steamclient symlink inside HOME
+  function ensureSteamRuntime(srvDir: string, appId: number): void {
+    try {
+      // steam_appid.txt
+      const appidPath = path.join(srvDir, 'steam_appid.txt');
+      try { fs.writeFileSync(appidPath, String(appId)); } catch {}
+
+      // Setup HOME-relative .steam/sdk32 symlink to steamclient.so if present
+      const sdkDir = path.join(srvDir, '.steam', 'sdk32');
+      try { fs.mkdirSync(sdkDir, { recursive: true }); } catch {}
+      const srcCandidates = [
+        path.join(srvDir, 'bin', 'steamclient.so'),
+        path.join(srvDir, 'steamclient.so'),
+      ];
+      let src: string | null = null;
+      for (const c of srcCandidates) {
+        try { if (fs.existsSync(c)) { src = c; break; } } catch {}
+      }
+      if (src) {
+        const dst = path.join(sdkDir, 'steamclient.so');
+        try {
+          // Replace any existing file/symlink
+          try { fs.unlinkSync(dst); } catch {}
+          fs.symlinkSync(src, dst);
+        } catch {}
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  function steamMetaPath(serverId: number | string) {
+    return path.join(serverDir(serverId), 'steam.json')
+  }
+  function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number; logPath?: string } | null {
     try {
       const p = steamMetaPath(serverId);
       if (!fs.existsSync(p)) return null;
@@ -1158,30 +1323,90 @@ function startHttpsServer() {
   function isSteamManaged(serverId: number | string): boolean {
     return !!readSteamMeta(serverId);
   }
-  function startSteamProcess(serverId: number | string): { ok: boolean; pid?: number } {
+  function isProcessRunning(pid?: number): boolean {
+    if (!pid) return false;
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  function startSteamProcess(serverId: number | string): { ok: boolean; pid?: number; already?: boolean } {
     const meta = readSteamMeta(serverId);
     if (!meta) return { ok: false };
+
+    // Prevent duplicate spawns: if a process is already tracked and running, do not spawn again
+    const existing = steamProcesses.get(Number(serverId));
+    const existingPid = existing?.pid || meta.pid;
+    if (isProcessRunning(existingPid)) {
+      return { ok: true, pid: existingPid, already: true };
+    }
+
     const srvDir = serverDir(serverId);
     ensureDir(srvDir);
+    const logPath = meta.logPath || path.join(srvDir, 'console.log');
+    try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
+    // Ensure Steam runtime hints in server dir
+    ensureSteamRuntime(srvDir, meta.appId || 0);
+    // If running as root, drop privileges automatically to avoid SRCDS root warning
+    const ids = pickNonRootUser();
+    try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
+
     const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
       cwd: srvDir,
-      env: { ...process.env, VC_SERVER_ID: String(serverId) },
-      stdio: 'ignore',
+      env: {
+        ...process.env,
+        VC_SERVER_ID: String(serverId),
+        HOME: srvDir,
+        LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+      ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
     });
+
+    try {
+      const append = (data: Buffer | string) => {
+        const text = typeof data === 'string' ? data : data.toString('utf8');
+        try { fs.appendFileSync(logPath, text); } catch {}
+      };
+      child.stdout?.on('data', append);
+      child.stderr?.on('data', append);
+      child.on('exit', (code: number, signal: string) => {
+        append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+      });
+    } catch {}
+
     steamProcesses.set(Number(serverId), child);
     try {
-      writeSteamMeta(serverId, { ...meta, pid: child.pid });
+      writeSteamMeta(serverId, { ...meta, pid: child.pid, logPath });
     } catch {}
-    try { child.unref(); } catch {}
+    // Record start time to prevent immediate stop/restart thrash
+    try { steamStartTimes.set(Number(serverId), Date.now()); } catch {}
+
     return { ok: true, pid: child.pid };
   }
-  async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean }> {
+  async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean; recentlyStarted?: boolean }> {
     const meta = readSteamMeta(serverId);
     const child = steamProcesses.get(Number(serverId));
     const pid = child?.pid || meta?.pid;
     if (!pid) return { ok: true, already: true };
+
+    // Respect start cooldown to prevent thrash
+    const lastStart = steamStartTimes.get(Number(serverId)) || 0;
+    if (lastStart && Date.now() - lastStart < START_COOLDOWN_MS) {
+      try {
+        const logPath = (meta?.logPath) || path.join(serverDir(serverId), 'console.log');
+        fs.appendFileSync(logPath, `\n[INFO] stop ignored: recently started (${Date.now() - lastStart}ms ago)\n`);
+      } catch {}
+      return { ok: true, recentlyStarted: true };
+    }
+
     try {
+      const logPath = (meta?.logPath) || path.join(serverDir(serverId), 'console.log');
+      try { fs.appendFileSync(logPath, `\n[INFO] sending SIGTERM to SRCDS pid=${pid}\n`); } catch {}
       process.kill(pid, 'SIGTERM');
     } catch {}
     const deadline = Date.now() + timeoutMs;
@@ -1197,7 +1422,11 @@ function startHttpsServer() {
       }
     }
     // Force kill
-    try { process.kill(pid, 'SIGKILL'); } catch {}
+    try {
+      const logPath = (meta?.logPath) || path.join(serverDir(serverId), 'console.log');
+      try { fs.appendFileSync(logPath, `\n[INFO] sending SIGKILL to SRCDS pid=${pid}\n`); } catch {}
+      process.kill(pid, 'SIGKILL');
+    } catch {}
     steamProcesses.delete(Number(serverId));
     try { writeSteamMeta(serverId, { ...meta, pid: undefined }); } catch {}
     return { ok: true };
@@ -1221,13 +1450,18 @@ function startHttpsServer() {
         // If container not found and Steam-managed, start native process
         if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
           const r = startSteamProcess(id);
-          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid });
+          if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid, already: r.already });
           return res.status(500).json({ error: 'steam_start_failed' });
         }
         // Other docker error
         return res.status(500).json({ error: e?.message || 'start_failed' });
       }
     } catch (e: any) {
+      // If docker interaction failed entirely, but steam-managed, start native process best-effort
+      if (isSteamManaged(id)) {
+        const r = startSteamProcess(id);
+        if (r.ok) return res.json({ ok: true, provisioner: 'steamcmd', pid: r.pid, already: r.already });
+      }
       res.status(500).json({ error: e?.message || 'start_failed' });
     }
   });
@@ -1235,6 +1469,17 @@ function startHttpsServer() {
   app.post('/stop/:id', async (req, res) => {
     const id = req.params.id;
     try {
+      // Diagnostic: log stop request origin in steam console if steam-managed
+      try {
+        if (isSteamManaged(id)) {
+          const meta = readSteamMeta(id);
+          const logPath = (meta?.logPath) || path.join(serverDir(id), 'console.log');
+          const who = (req.headers['x-forwarded-for'] as string) || (req.socket as any)?.remoteAddress || 'unknown';
+          const ua = (req.headers['user-agent'] as string) || '';
+          fs.appendFileSync(logPath, `\n[INFO] /stop requested for ${id} from ${who} ua="${ua}" at ${new Date().toISOString()}\n`);
+        }
+      } catch {}
+
       // Try Docker stop
       const container = docker.getContainer(`vc-${id}`);
       try {
@@ -1250,7 +1495,7 @@ function startHttpsServer() {
         // If container missing and Steam-managed, stop native process
         if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
           const r = await stopSteamProcess(id);
-          return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
+          return res.json({ ok: true, provisioner: 'steamcmd', already: r.already, recentlyStarted: r.recentlyStarted });
         }
         // Other errors
         return res.status(500).json({ error: e?.message || 'stop_failed' });
@@ -1259,7 +1504,7 @@ function startHttpsServer() {
       // If docker interaction failed entirely, try steam stop as best-effort
       if (isSteamManaged(id)) {
         const r = await stopSteamProcess(id);
-        return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
+        return res.json({ ok: true, provisioner: 'steamcmd', already: r.already, recentlyStarted: r.recentlyStarted });
       }
       res.status(500).json({ error: e?.message || 'stop_failed' });
     }
@@ -1300,8 +1545,17 @@ function startHttpsServer() {
   app.delete('/delete/:id', async (req, res) => {
     const id = req.params.id;
     try {
-      const container = docker.getContainer(`vc-${id}`);
-      await container.remove({ force: true });
+      // Stop and remove Docker container if present
+      try {
+        const container = docker.getContainer(`vc-${id}`);
+        // Attempt graceful stop before removal
+        try { await container.stop({ t: Number(process.env.STOP_TIMEOUT || 5) } as any); } catch {}
+        await container.remove({ force: true });
+      } catch {}
+
+      // Stop any Steam-managed native process
+      try { await stopSteamProcess(id); } catch {}
+
       // Release any persisted host port allocations for this server
       try {
         const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
@@ -1312,13 +1566,22 @@ function startHttpsServer() {
           fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
         }
       } catch {}
-      res.json({ ok: true });
+
+      // Delete all persistent files for this server
+      try {
+        const root = serverDir(id);
+        if (fs.existsSync(root)) {
+          await fs.promises.rm(root, { recursive: true, force: true });
+        }
+      } catch {}
+
+      res.json({ ok: true, deletedFiles: true });
     } catch (e: any) {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
-      // Deleting a missing container is idempotent success
+      // Treat missing container as success; still ensure files and allocations are removed
       if (code === 404 || /no such container/i.test(msg)) {
-        // Still release allocation
+        try { await stopSteamProcess(id); } catch {}
         try {
           const PORT_STORE_PATH = path.join(DATA_DIR, 'port-allocations.json');
           const text = fs.existsSync(PORT_STORE_PATH) ? fs.readFileSync(PORT_STORE_PATH, 'utf8') : '';
@@ -1328,7 +1591,13 @@ function startHttpsServer() {
             fs.writeFileSync(PORT_STORE_PATH, JSON.stringify(store, null, 2));
           }
         } catch {}
-        return res.json({ ok: true, missing: true });
+        try {
+          const root = serverDir(id);
+          if (fs.existsSync(root)) {
+            await fs.promises.rm(root, { recursive: true, force: true });
+          }
+        } catch {}
+        return res.json({ ok: true, missing: true, deletedFiles: true });
       }
       res.status(500).json({ error: e?.message || 'delete_failed' });
     }

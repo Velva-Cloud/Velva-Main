@@ -155,7 +155,8 @@ export class QueueService implements OnModuleInit {
         const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
         if (!plan) throw new Error('plan_not_found');
         const resources: any = plan.resources || {};
-        const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
+        // Standardize CPU units to 100 per server regardless of plan settings
+        const cpu = 100;
         const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
         let image = typeof resources.image === 'string' ? resources.image : 'nginx:alpine';
         let env = (resources.env && typeof resources.env === 'object') ? { ...(resources.env as any) } : {};
@@ -172,8 +173,8 @@ export class QueueService implements OnModuleInit {
         const createLog = recentCreates.find((l: any) => (l.metadata as any)?.serverId === s.id);
         const overrideImage = createLog ? (createLog.metadata as any)?.image : undefined;
         const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
-        const provisioner = createLog ? (createLog.metadata as any)?.provisioner : undefined;
-        const steam = createLog ? (createLog.metadata as any)?.steam : undefined;
+        const provisionerMeta = createLog ? (createLog.metadata as any)?.provisioner : undefined;
+        let steam = createLog ? (createLog.metadata as any)?.steam : undefined;
         if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
           image = overrideImage.trim();
         }
@@ -181,11 +182,40 @@ export class QueueService implements OnModuleInit {
           env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
-        // If SteamCMD provisioner, override image to a placeholder and derive ports from title/appId
-        let usingSteam = (provisioner === 'steamcmd');
+        // Infer SteamCMD usage:
+        // - If steam.appId present -> SteamCMD
+        // - Or if image matches known Steam-only tags (e.g., cm2network/gmod/garrysmod)
+        const looksGmod = typeof image === 'string' && /^cm2network\/(gmod|garrysmod)(:.+)?$/i.test(image);
+        let usingSteam = !!(steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod || provisionerMeta === 'steamcmd';
         if (usingSteam) {
-          // For SteamCMD, do not rely on docker image; leave image undefined
-          image = '';
+          // For SteamCMD, do not rely on docker image; omit image field entirely
+          image = undefined as any;
+          // Clear docker-specific env defaults to avoid leaking MC config
+          env = {};
+          // Ensure a dedicated install directory is set for SteamCMD
+          if (!mountPath || !String(mountPath).trim()) {
+            mountPath = `/data/servers/${s.id}`;
+          }
+          // Pass installDir to daemon explicitly for force_install_dir (support both keys)
+          if (!steam || typeof steam !== 'object') {
+            steam = { appId: Number(steam?.appId || 0), branch: (steam?.branch || 'public'), args: [] } as any;
+          }
+          (steam as any).installDir = mountPath;
+          (steam as any).forceInstallDir = mountPath;
+
+          // Ensure sensible SRCDS defaults if args are missing
+          const appIdNum = Number((steam as any).appId || 0);
+          const currentArgs: string[] = Array.isArray((steam as any).args) ? (steam as any).args : [];
+          if (currentArgs.length === 0) {
+            const defaults: string[] = ['-console'];
+            // Map appId to game param where applicable
+            if (appIdNum === 4020) defaults.unshift('-game', 'garrysmod');
+            else if (appIdNum === 740) defaults.unshift('-game', 'csgo');
+            else if (appIdNum === 232250) defaults.unshift('-game', 'tf');
+            else if (appIdNum === 222860) defaults.unshift('-game', 'left4dead2');
+            // Do not set -port here; daemon will map ports and can inject launch port
+            (steam as any).args = defaults;
+          }
         }
 
         // Image-specific defaults
@@ -260,7 +290,22 @@ export class QueueService implements OnModuleInit {
             registryAuth = undefined;
           }
 
-          const ret = await this.agents.provision(baseURL, { serverId: s.id, name: s.name, image, cpu, ramMB, env, mountPath, exposePorts, cmd, forceRecreate, hostPortPolicy, registryAuth } as any);
+          const ret = await this.agents.provision(baseURL, {
+            serverId: s.id,
+            name: s.name,
+            image,
+            cpu,
+            ramMB,
+            env,
+            mountPath,
+            exposePorts,
+            cmd,
+            // Force recreate when switching provisioners or images to avoid reusing old containers/volumes
+            forceRecreate: true,
+            hostPortPolicy,
+            registryAuth,
+            ...(usingSteam ? { provisioner: 'steamcmd' as const, steam } : { provisioner: 'docker' as const }),
+          } as any);
           // Record assigned port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;
           if (assignedPort && Number.isFinite(assignedPort)) {
@@ -287,12 +332,13 @@ export class QueueService implements OnModuleInit {
         // Auto-start
         await this.agents.start(baseURL, s.id);
 
-        // Verify running state via inventory; some images (e.g., Minecraft before EULA) exit immediately
+        // Verify running state via inventory; consider both containers and steam processes
         let running = true;
         try {
-          const inv = await this.agents.inventory(baseURL);
-          const present = inv?.containers?.find(c => c.serverId === s.id);
-          running = !!(present && present.running);
+          const inv: any = await this.agents.inventory(baseURL);
+          const presentContainer = inv?.containers?.find((c: any) => c.serverId === s.id);
+          const presentSteam = inv?.steam?.find?.((x: any) => x.serverId === s.id);
+          running = !!(presentContainer?.running || presentSteam?.running);
         } catch {
           // best-effort; assume running if inventory fails
           running = true;
@@ -339,12 +385,13 @@ export class QueueService implements OnModuleInit {
           throw e;
         }
 
-        // Verify running state via inventory; if process exited immediately, mark as stopped
+        // Verify running state via inventory; consider both containers and steam processes
         let running = true;
         try {
-          const inv = await this.agents.inventory(baseURL);
-          const present = inv?.containers?.find(c => c.serverId === s.id);
-          running = !!(present && present.running);
+          const inv: any = await this.agents.inventory(baseURL);
+          const presentContainer = inv?.containers?.find((c: any) => c.serverId === s.id);
+          const presentSteam = inv?.steam?.find?.((x: any) => x.serverId === s.id);
+          running = !!(presentContainer?.running || presentSteam?.running);
         } catch {
           running = true;
         }
@@ -452,7 +499,7 @@ export class QueueService implements OnModuleInit {
         const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
         if (!node) return { ok: false, reason: 'node_not_found' };
         const baseURL = await this.nodeBaseUrl(nodeId);
-        let inv: { containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> } | null = null;
+        let inv: { containers: Array<{ id: string; name: string; serverId?: number; running: boolean }>; steam?: Array<{ serverId: number; running: boolean; pid?: number }> } | null = null;
         try {
           inv = await this.agents.inventory(baseURL);
         } catch (e: any) {
@@ -460,28 +507,41 @@ export class QueueService implements OnModuleInit {
           return { ok: false, reason: 'inventory_failed' };
         }
         const got = inv?.containers || [];
+        const steam = inv?.steam || [];
         const containerServerIds = new Set<number>();
+        const steamServerIds = new Set<number>();
         for (const c of got) {
           if (typeof c.serverId === 'number') containerServerIds.add(c.serverId);
+        }
+        for (const s of steam) {
+          if (typeof s.serverId === 'number') steamServerIds.add(s.serverId);
         }
         const servers = await this.prisma.server.findMany({ where: { nodeId }, select: { id: true, status: true, userId: true } });
 
         // DB -> Daemon reconciliation
         for (const s of servers) {
-          const present = got.find(c => c.serverId === s.id);
-          if (!present) {
-            // Missing container: schedule provision + start for running servers
+          const presentContainer = got.find(c => c.serverId === s.id);
+          const presentSteam = steamServerIds.has(s.id);
+          if (!presentContainer && !presentSteam) {
+            // Missing both container and steam process: schedule provision + start for running servers
             await this.recordEvent(s.id, 'reconcile_missing_container', `server ${s.id} missing on node ${nodeId}`);
             await this.enqueueProvision(s.id);
           } else {
             // State mismatch
-            if (s.status === 'running' && !present.running) {
+            const running = presentContainer ? presentContainer.running : (steam.find(x => x.serverId === s.id)?.running || false);
+            if (s.status === 'running' && !running) {
               await this.recordEvent(s.id, 'reconcile_start', `server ${s.id} should be running`);
               await this.enqueueStart(s.id);
             }
-            if (s.status === 'stopped' && present.running) {
-              await this.recordEvent(s.id, 'reconcile_stop', `server ${s.id} should be stopped`);
-              await this.enqueueStop(s.id);
+            if (s.status === 'stopped' && running) {
+              if (presentSteam) {
+                // Trust steam-managed native process: mark DB as running instead of issuing a stop
+                await this.prisma.server.update({ where: { id: s.id }, data: { status: 'running' } });
+                await this.recordEvent(s.id, 'reconcile_mark_running', `server ${s.id} steam process running; updating status`);
+              } else {
+                await this.recordEvent(s.id, 'reconcile_stop', `server ${s.id} should be stopped`);
+                await this.enqueueStop(s.id);
+              }
             }
           }
         }
