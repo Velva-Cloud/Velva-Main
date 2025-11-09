@@ -155,7 +155,8 @@ export class QueueService implements OnModuleInit {
         const plan = await this.prisma.plan.findUnique({ where: { id: s.planId } });
         if (!plan) throw new Error('plan_not_found');
         const resources: any = plan.resources || {};
-        const cpu = typeof resources.cpu === 'number' ? resources.cpu : undefined;
+        // Standardize CPU units to 100 per server regardless of plan settings
+        const cpu = 100;
         const ramMB = typeof resources.ramMB === 'number' ? resources.ramMB : undefined;
         let image = typeof resources.image === 'string' ? resources.image : 'nginx:alpine';
         let env = (resources.env && typeof resources.env === 'object') ? { ...(resources.env as any) } : {};
