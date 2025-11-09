@@ -813,6 +813,9 @@ function startHttpsServer() {
 
   // In-memory process table for SteamCMD provisioner
   const steamProcesses = new Map<number, any>();
+  // Track recent starts to avoid immediate stop/restart thrash
+  const steamStartTimes = new Map<number, number>();
+  const START_COOLDOWN_MS = Number(process.env.STEAM_START_COOLDOWN_MS || 15000);
 
   // Robust image pull with fallbacks and aliases
   async function pullImageWithFallback(img: string, registryAuth?: { username?: string; password?: string; serveraddress?: string }): Promise<void> {
@@ -1339,15 +1342,23 @@ function startHttpsServer() {
     try {
       writeSteamMeta(serverId, { ...meta, pid: child.pid, logPath });
     } catch {}
-    try { child.unref(); } catch {}
+    // Record start time to prevent immediate stop/restart thrash
+    try { steamStartTimes.set(Number(serverId), Date.now()); } catch
 
     return { ok: true, pid: child.pid };
   }
-  async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean }> {
+  async function stopSteamProcess(serverId: number | string, timeoutMs = 8000): Promise<{ ok: boolean; already?: boolean; recentlyStarted?: boolean }> {
     const meta = readSteamMeta(serverId);
     const child = steamProcesses.get(Number(serverId));
     const pid = child?.pid || meta?.pid;
     if (!pid) return { ok: true, already: true };
+
+    // Respect start cooldown to prevent thrash
+    const lastStart = steamStartTimes.get(Number(serverId)) || 0;
+    if (lastStart && Date.now() - lastStart < START_COOLDOWN_MS) {
+      return { ok: true, recentlyStarted: true };
+    }
+
     try {
       process.kill(pid, 'SIGTERM');
     } catch {}
@@ -1422,7 +1433,7 @@ function startHttpsServer() {
         // If container missing and Steam-managed, stop native process
         if ((code === 404 || /no such container/i.test(msg)) && isSteamManaged(id)) {
           const r = await stopSteamProcess(id);
-          return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
+          return res.json({ ok: true, provisioner: 'steamcmd', already: r.already, recentlyStarted: r.recentlyStarted });
         }
         // Other errors
         return res.status(500).json({ error: e?.message || 'stop_failed' });
@@ -1431,7 +1442,7 @@ function startHttpsServer() {
       // If docker interaction failed entirely, try steam stop as best-effort
       if (isSteamManaged(id)) {
         const r = await stopSteamProcess(id);
-        return res.json({ ok: true, provisioner: 'steamcmd', already: r.already });
+        return res.json({ ok: true, provisioner: 'steamcmd', already: r.already, recentlyStarted: r.recentlyStarted });
       }
       res.status(500).json({ error: e?.message || 'stop_failed' });
     }
