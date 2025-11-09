@@ -98,11 +98,18 @@ export class AgentClientService {
       steam?: { appId: number; branch?: string; args?: string[] };
     },
   ) {
+    if (!baseURL && !process.env.DAEMON_URL) {
+      this.logger.warn(`Provision skipped for server ${data.serverId}: agent baseURL not configured`);
+      throw new Error('agent_unavailable');
+    }
     try {
       const res = await this.getClient(baseURL).post('/provision', data);
       return res.data;
     } catch (e: any) {
-      this.logger.warn(`Provision failed for server ${data.serverId}: ${e?.message || e}`);
+      const status = e?.response?.status;
+      const detail = e?.response?.data ? JSON.stringify(e.response.data) : '';
+      this.logger.warn(`Provision failed for server ${data.serverId}: ${e?.message || e} ${status ? `(status ${status})` : ''} ${detail ? `body ${detail}` : ''}`);
+      this.logger.debug(`Provision payload for server ${data.serverId}: ${JSON.stringify(data)}`);
       throw e;
     }
   }

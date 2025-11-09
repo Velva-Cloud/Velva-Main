@@ -187,8 +187,8 @@ export class QueueService implements OnModuleInit {
         const looksGmod = typeof image === 'string' && /^cm2network\/(gmod|garrysmod)(:.+)?$/i.test(image);
         let usingSteam = !!(steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod || provisionerMeta === 'steamcmd';
         if (usingSteam) {
-          // For SteamCMD, do not rely on docker image; leave image undefined
-          image = '';
+          // For SteamCMD, do not rely on docker image; omit image field entirely
+          image = undefined as any;
         }
 
         // Image-specific defaults
