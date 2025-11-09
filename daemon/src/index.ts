@@ -1117,7 +1117,10 @@ function startHttpsServer() {
           child.stderr?.on('data', append);
         } catch {}
         steamProcesses.set(Number(serverId), child);
-        try { fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify({ appId
+        try {
+          const meta = { appId, branch, runCmd, runArgs, port: hostPort, logPath };
+          fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify(meta, null, 2));
+        } catch {}
         return res.json({ ok: true, id: `proc-${serverId}`, existed: false, volume: mountPath, port: hostPort, provisioner: 'steamcmd' });
       }
 
