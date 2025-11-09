@@ -588,7 +588,7 @@ function startHttpsServer() {
         let output = '';
         if (Buffer.isBuffer(result)) output = result.toString('utf8');
         else if (typeof result === 'string') output = result;
-        else output = String(result || '');
+        else output = (result == null ? '' : String(result));
         const lines = output.split(/\r?\n/);
         const last = lines.slice(Math.max(0, lines.length - tail));
         for (const ln of last) {
@@ -649,7 +649,7 @@ function startHttpsServer() {
         } else {
           if (Buffer.isBuffer(result)) output = result.toString('utf8');
           else if (typeof result === 'string') output = result;
-          else output = String(result || '');
+          else output = (result == null ? '' : String(result));
           res.setHeader('Content-Type', 'text/plain; charset=utf-8');
           res.send(output);
         }
