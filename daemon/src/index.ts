@@ -568,38 +568,56 @@ function startHttpsServer() {
           const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
           if ((err?.statusCode === 404 || /no such container/i.test(String(err?.message || ''))) && logPath && fs.existsSync(logPath)) {
             try {
-              const spawn = require('child_process').spawn;
-              // Emit last lines first
-              const head = spawn('tail', ['-n', String(tail), logPath]);
-              head.stdout.on('data', (chunk: Buffer) => {
-                const line = chunk.toString('utf8');
-                res.write(`data: ${JSON.stringify(line)}\n\n`);
-              });
-              head.on('close', () => {
-                if (!follow) {
-                  clearInterval(ping);
-                  try { res.end(); } catch {}
-                  return;
+              // Emit last lines from the log file
+              try {
+                const text = fs.readFileSync(logPath, 'utf8');
+                const lines = text.split(/\r?\n/);
+                const last = lines.slice(Math.max(0, lines.length - tail));
+                for (const ln of last) {
+                  if (!ln) continue;
+                  res.write(`data: ${JSON.stringify(ln)}\n\n`);
                 }
-                // Follow
-                const t = spawn('tail', ['-F', '-n', '0', logPath]);
-                const onData = (chunk: Buffer) => {
-                  const line = chunk.toString('utf8');
-                  res.write(`data: ${JSON.stringify(line)}\n\n`);
-                };
-                t.stdout.on('data', onData);
-                t.stderr.on('data', onData);
-                const endAll = () => {
-                  clearInterval(ping);
-                  try { t.kill('SIGTERM'); } catch {}
-                  try { res.end(); } catch {}
-                };
-                t.on('close', endAll);
-                const reqRaw = (res as any).req || undefined;
-                if (reqRaw && typeof reqRaw.on === 'function') {
-                  reqRaw.on('close', endAll);
-                }
+              } catch {}
+              if (!follow) {
+                clearInterval(ping);
+                try { res.end(); } catch {}
+                return;
+              }
+              // Follow the log file using fs.watch and incremental reads
+              let lastSize = 0;
+              try {
+                const st = fs.statSync(logPath);
+                lastSize = st.size;
+              } catch {}
+              const watcher = fs.watch(logPath, { persistent: true }, () => {
+                try {
+                  const st = fs.statSync(logPath);
+                  const newSize = st.size;
+                  if (newSize > lastSize) {
+                    const stream = fs.createReadStream(logPath, { start: lastSize, end: newSize - 1, encoding: 'utf8' });
+                    stream.on('data', (chunk: string) => {
+                      const parts = chunk.split(/\r?\n/);
+                      for (const ln of parts) {
+                        if (!ln) continue;
+                        res.write(`data: ${JSON.stringify(ln)}\n\n`);
+                      }
+                    });
+                    stream.on('end', () => { lastSize = newSize; });
+                    stream.on('error', () => {});
+                  } else {
+                    lastSize = newSize;
+                  }
+                } catch {}
               });
+              const endAll = () => {
+                clearInterval(ping);
+                try { watcher.close(); } catch {}
+                try { res.end(); } catch {}
+              };
+              const reqRaw = (res as any).req || undefined;
+              if (reqRaw && typeof reqRaw.on === 'function') {
+                reqRaw.on('close', endAll);
+              }
               return;
             } catch {
               clearInterval(ping);
