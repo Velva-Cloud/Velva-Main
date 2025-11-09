@@ -546,112 +546,122 @@ function startHttpsServer() {
   // Console: stream logs via SSE
   app.get('/logs/:id', async (req, res) => {
     const id = req.params.id;
+    const follow = req.query.follow === '1' || req.query.follow === 'true';
+    const tail = Number(req.query.tail || 200);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+
+    const ping = setInterval(() => {
+      try { res.write(': ping\n\n'); } catch {}
+    }, 25000);
+
+    const endAll = () => {
+      clearInterval(ping);
+      try { res.end(); } catch {}
+    };
+    try { req.on('close', endAll); } catch {}
+
     try {
       const container = docker.getContainer(`vc-${id}`);
-      const follow = req.query.follow === '1' || req.query.follow === 'true';
-      const tail = Number(req.query.tail || 200);
       const opts = { follow, stdout: true, stderr: true, tail } as any;
 
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-
-      const ping = setInterval(() => {
-        try { res.write(': ping\n\n'); } catch {}
-      }, 25000);
-
-      // Try container logs first
+      // Try container logs first via callback form
       container.logs(opts, (err: any, stream: any) => {
         if (err || !stream) {
-          // If container missing and steam-managed, tail the steam console log file
+          // Fallback to steam console log file if container missing
           const meta = readSteamMeta(id);
           const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
           if ((err?.statusCode === 404 || /no such container/i.test(String(err?.message || ''))) && logPath && fs.existsSync(logPath)) {
+            // Emit last lines
             try {
-              // Emit last lines from the log file
-              try {
-                const text = fs.readFileSync(logPath, 'utf8');
-                const lines = text.split(/\r?\n/);
-                const last = lines.slice(Math.max(0, lines.length - tail));
-                for (const ln of last) {
-                  if (!ln) continue;
-                  res.write(`data: ${JSON.stringify(ln)}\n\n`);
-                }
-              } catch {}
-              if (!follow) {
-                clearInterval(ping);
-                try { res.end(); } catch {}
-                return;
+              const text = fs.readFileSync(logPath, 'utf8');
+              const lines = text.split(/\r?\n/);
+              const last = lines.slice(Math.max(0, lines.length - tail));
+              for (const ln of last) {
+                if (!ln) continue;
+                res.write(`data: ${JSON.stringify(ln)}\n\n`);
               }
-              // Follow the log file using fs.watch and incremental reads
+            } catch {}
+
+            if (follow) {
+              // Poll for file growth and stream appended bytes
               let lastSize = 0;
               try {
                 const st = fs.statSync(logPath);
                 lastSize = st.size;
               } catch {}
-              // Poll for file growth and stream appended bytes
               const intervalMs = Number(process.env.LOG_FOLLOW_INTERVAL_MS || 1000);
               const timer = setInterval(() => {
                 try {
                   const st = fs.statSync(logPath);
                   const newSize = st.size;
                   if (newSize > lastSize) {
-                    const stream = fs.createReadStream(logPath, { start: lastSize, end: newSize - 1, encoding: 'utf8' });
-                    stream.on('data', (chunk: Buffer | string) => {
-                      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-                      const parts = text.split(/\r?\n/);
+                    const fileStream = fs.createReadStream(logPath, { start: lastSize, end: newSize - 1, encoding: 'utf8' });
+                    fileStream.on('data', (chunk: Buffer | string) => {
+                      const textChunk = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
+                      const parts = textChunk.split(/\r?\n/);
                       for (const ln of parts) {
                         if (!ln) continue;
                         res.write(`data: ${JSON.stringify(ln)}\n\n`);
                       }
                     });
-                    stream.on('end', () => { lastSize = newSize; });
-                    stream.on('error', () => {});
+                    fileStream.on('end', () => { lastSize = newSize; });
+                    fileStream.on('error', () => {});
                   } else {
                     lastSize = newSize;
                   }
                 } catch {}
               }, Math.max(250, intervalMs));
-              const endAll = () => {
-                clearInterval(ping);
-                try { clearInterval(timer); } catch {}
-                try { res.end(); } catch {}
-              };
-              // Tie lifecycle to request connection closing
-              try { req.on('close', endAll); } catch {}
-              return;
-            } catch {
-              clearInterval(ping);
-              return res.status(404).json({ error: 'container_not_found' });
+
+              // Ensure interval cleared on connection close
+              try {
+                req.on('close', () => {
+                  try { clearInterval(timer); } catch {}
+                });
+              } catch {}
+            } else {
+              // Not following; end after snapshot
+              endAll();
             }
+            return;
           }
+
+          // Unknown error
           clearInterval(ping);
           const code = err?.statusCode;
           const msg = String(err?.message || '');
-          return res.status(500).json({ error: msg || 'logs_failed' });
+          res.status(500).json({ error: msg || 'logs_failed' });
+          return;
         }
 
         // Demux stdout/stderr when needed
         const out = new PassThrough();
         const errOut = new PassThrough();
+        let demuxed = false;
         try {
           (docker as any).modem.demuxStream(stream, out, errOut);
+          demuxed = true;
         } catch {
-          // If not multiplexed (TTY), just use the stream directly
+          demuxed = false;
+        }
+
+        if (demuxed) {
+          const onChunk = (chunk: Buffer) => {
+            const line = chunk.toString('utf8');
+            res.write(`data: ${JSON.stringify(line)}\n\n`);
+          };
+          out.on('data', onChunk);
+          errOut.on('data', onChunk);
+        } else {
           stream.on('data', (chunk: Buffer) => {
             const line = chunk.toString('utf8');
             res.write(`data: ${JSON.stringify(line)}\n\n`);
           });
         }
 
-        const onChunk = (chunk: Buffer) => {
-          const line = chunk.toString('utf8');
-          res.write(`data: ${JSON.stringify(line)}\n\n`);
-        };
-        out.on('data', onChunk);
-        errOut.on('data', onChunk);
-
-        const endAll = () => {
+        const closeAll = () => {
           clearInterval(ping);
           try { out.destroy(); } catch {}
           try { errOut.destroy(); } catch {}
@@ -659,27 +669,26 @@ function startHttpsServer() {
           try { res.end(); } catch {}
         };
 
-        stream.on('end', endAll);
-        stream.on('error', endAll);
-
-        try { req.on('close', endAll); } catch {}
+        stream.on('end', closeAll);
+        stream.on('error', closeAll);
+        try { req.on('close', closeAll); } catch {}
       });
     } catch (e: any) {
       const code = e?.statusCode;
       const msg = String(e?.message || '');
       if (code === 404 || /no such container/i.test(msg)) {
-        // Try steam log file
         const meta = readSteamMeta(id);
         const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
         if (logPath && fs.existsSync(logPath)) {
-          // Fall back to last logs endpoint
           try {
             const txt = fs.readFileSync(logPath, 'utf8');
             res.setHeader('Content-Type', 'text/plain; charset=utf-8');
-            return res.send(txt);
+            res.send(txt);
+            return;
           } catch {}
         }
-        return res.status(404).json({ error: 'container_not_found' });
+        res.status(404).json({ error: 'container_not_found' });
+        return;
       }
       res.status(500).json({ error: e?.message || 'logs_failed' });
     }
