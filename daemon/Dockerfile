@@ -9,8 +9,10 @@ RUN apt-get update && \
     tar -xzf steamcmd_linux.tar.gz && \
     rm -f steamcmd_linux.tar.gz && \
     /opt/steamcmd/steamcmd.sh +quit && \
+    ln -sf /opt/steamcmd/steamcmd.sh /usr/bin/steamcmd && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
+# Provide both explicit path and PATH-based binary for daemon
 ENV STEAMCMD_PATH=/opt/steamcmd/steamcmd.sh
 
 WORKDIR /app
