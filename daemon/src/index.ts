@@ -463,7 +463,26 @@ function startHttpsServer() {
         }));
         return { id: info.Id, name, serverId, running, ports };
       });
-      res.json({ containers });
+
+      // Include steam-managed processes summary
+      const steam: Array<{ serverId: number; running: boolean; pid?: number }> = [];
+      try {
+        for (const [srvId, child] of steamProcesses.entries()) {
+          let running = false;
+          let pid: number | undefined = child?.pid;
+          try {
+            if (pid) {
+              process.kill(pid, 0); // throws if not running
+              running = true;
+            }
+          } catch {
+            running = false;
+          }
+          steam.push({ serverId: srvId, running, pid });
+        }
+      } catch {}
+
+      res.json({ containers, steam });
     } catch (e: any) {
       res.status(500).json({ error: e?.message || 'inventory_failed' });
     }

@@ -497,7 +497,7 @@ export class QueueService implements OnModuleInit {
         const node = await this.prisma.node.findUnique({ where: { id: nodeId } });
         if (!node) return { ok: false, reason: 'node_not_found' };
         const baseURL = await this.nodeBaseUrl(nodeId);
-        let inv: { containers: Array<{ id: string; name: string; serverId?: number; running: boolean }> } | null = null;
+        let inv: { containers: Array<{ id: string; name: string; serverId?: number; running: boolean }>; steam?: Array<{ serverId: number; running: boolean; pid?: number }> } | null = null;
         try {
           inv = await this.agents.inventory(baseURL);
         } catch (e: any) {
@@ -505,26 +505,33 @@ export class QueueService implements OnModuleInit {
           return { ok: false, reason: 'inventory_failed' };
         }
         const got = inv?.containers || [];
+        const steam = inv?.steam || [];
         const containerServerIds = new Set<number>();
+        const steamServerIds = new Set<number>();
         for (const c of got) {
           if (typeof c.serverId === 'number') containerServerIds.add(c.serverId);
+        }
+        for (const s of steam) {
+          if (typeof s.serverId === 'number') steamServerIds.add(s.serverId);
         }
         const servers = await this.prisma.server.findMany({ where: { nodeId }, select: { id: true, status: true, userId: true } });
 
         // DB -> Daemon reconciliation
         for (const s of servers) {
-          const present = got.find(c => c.serverId === s.id);
-          if (!present) {
-            // Missing container: schedule provision + start for running servers
+          const presentContainer = got.find(c => c.serverId === s.id);
+          const presentSteam = steamServerIds.has(s.id);
+          if (!presentContainer && !presentSteam) {
+            // Missing both container and steam process: schedule provision + start for running servers
             await this.recordEvent(s.id, 'reconcile_missing_container', `server ${s.id} missing on node ${nodeId}`);
             await this.enqueueProvision(s.id);
           } else {
             // State mismatch
-            if (s.status === 'running' && !present.running) {
+            const running = presentContainer ? presentContainer.running : (steam.find(x => x.serverId === s.id)?.running || false);
+            if (s.status === 'running' && !running) {
               await this.recordEvent(s.id, 'reconcile_start', `server ${s.id} should be running`);
               await this.enqueueStart(s.id);
             }
-            if (s.status === 'stopped' && present.running) {
+            if (s.status === 'stopped' && running) {
               await this.recordEvent(s.id, 'reconcile_stop', `server ${s.id} should be stopped`);
               await this.enqueueStop(s.id);
             }
