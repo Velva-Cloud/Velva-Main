@@ -196,11 +196,25 @@ export class QueueService implements OnModuleInit {
           if (!mountPath || !String(mountPath).trim()) {
             mountPath = `/data/servers/${s.id}`;
           }
-          // Pass installDir to daemon explicitly for force_install_dir
-          if (steam && typeof steam === 'object') {
-            (steam as any).installDir = mountPath;
-          } else {
-            steam = { appId: Number(steam?.appId || 0), branch: (steam?.branch || 'public'), args: [], installDir: mountPath } as any;
+          // Pass installDir to daemon explicitly for force_install_dir (support both keys)
+          if (!steam || typeof steam !== 'object') {
+            steam = { appId: Number(steam?.appId || 0), branch: (steam?.branch || 'public'), args: [] } as any;
+          }
+          (steam as any).installDir = mountPath;
+          (steam as any).forceInstallDir = mountPath;
+
+          // Ensure sensible SRCDS defaults if args are missing
+          const appIdNum = Number((steam as any).appId || 0);
+          const currentArgs: string[] = Array.isArray((steam as any).args) ? (steam as any).args : [];
+          if (currentArgs.length === 0) {
+            const defaults: string[] = ['-console'];
+            // Map appId to game param where applicable
+            if (appIdNum === 4020) defaults.unshift('-game', 'garrysmod');
+            else if (appIdNum === 740) defaults.unshift('-game', 'csgo');
+            else if (appIdNum === 232250) defaults.unshift('-game', 'tf');
+            else if (appIdNum === 222860) defaults.unshift('-game', 'left4dead2');
+            // Do not set -port here; daemon will map ports and can inject launch port
+            (steam as any).args = defaults;
           }
         }
 
