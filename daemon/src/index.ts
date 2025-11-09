@@ -1343,7 +1343,7 @@ function startHttpsServer() {
       writeSteamMeta(serverId, { ...meta, pid: child.pid, logPath });
     } catch {}
     // Record start time to prevent immediate stop/restart thrash
-    try { steamStartTimes.set(Number(serverId), Date.now()); } catch
+    try { steamStartTimes.set(Number(serverId), Date.now()); } catch {}
 
     return { ok: true, pid: child.pid };
   }
