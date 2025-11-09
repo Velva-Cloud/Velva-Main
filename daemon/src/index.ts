@@ -1440,6 +1440,11 @@ function startHttpsServer() {
           return res.json({ ok: true, id: existingId, existed: true, volume: mountPath, port: hostPort });
         }
 
+        // Ensure host server dir is writable by container user (steam:steam typically 1000:1000)
+        try {
+          require('child_process').spawnSync('/bin/sh', ['-lc', `chown -R 1000:1000 "${srvDir}" || true`], { stdio: 'ignore' });
+        } catch {}
+
         // Create container
         try {
           const container = await docker.createContainer({
