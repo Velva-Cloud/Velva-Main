@@ -875,6 +875,22 @@ function startHttpsServer() {
       return uniq;
     }
 
+    async function imageExistsLocally(ref: string): Promise<boolean> {
+      try {
+        const img = docker.getImage(ref);
+        await img.inspect();
+        return true;
+      } catch {
+        // Try matching by RepoTags
+        try {
+          const imgs = await docker.listImages({ filters: { reference: [ref] } as any });
+          return Array.isArray(imgs) && imgs.length > 0;
+        } catch {
+          return false;
+        }
+      }
+    }
+
     const candidates = resolveCandidates(img);
 
     let lastErr: any = null;
@@ -885,6 +901,12 @@ function startHttpsServer() {
       } catch (e: any) {
         lastErr = e;
         const msg = String(e?.message || '');
+        // If pull failed, but the image exists locally, allow using it
+        try {
+          if (await imageExistsLocally(ref)) {
+            return;
+          }
+        } catch {}
         // Continue to next candidate on common registry errors
         if (/denied/i.test(msg) || /unauthorized/i.test(msg) || /manifest unknown/i.test(msg) || e?.statusCode === 404) {
           continue;
@@ -898,6 +920,12 @@ function startHttpsServer() {
         return;
       } catch (e: any) {
         lastErr = e;
+        // As last resort, accept local image if present under first candidate
+        try {
+          if (await imageExistsLocally(candidates[0])) {
+            return;
+          }
+        } catch {}
       }
     }
     const reason = lastErr?.message || 'image_pull_failed';
