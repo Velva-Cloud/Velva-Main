@@ -1,6 +1,7 @@
 import Link from 'next/link';
 import { useEffect, useRef, useState } from 'react';
 import { getUserRole } from '../utils/auth';
+import api from '../utils/api';
 
 export default function NavBar() {
   const [token, setToken] = useState<string | null>(null);
@@ -13,7 +14,18 @@ export default function NavBar() {
     if (typeof window !== 'undefined') {
       const t = localStorage.getItem('token');
       setToken(t);
-      setRole(getUserRole());
+      // First try role from token
+      const local = getUserRole();
+      setRole(local);
+      // Then verify with API to pick up role changes without requiring logout
+      api.get('/users/me')
+        .then(res => {
+          const r = (res.data?.role || '').toString().toUpperCase();
+          if (r) setRole(r);
+        })
+        .catch(() => {
+          // ignore; keep local role
+        });
     }
   }, []);
 
