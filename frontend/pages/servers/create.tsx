@@ -410,5 +410,4 @@ export default function CreateServerPage() {
       </main>
     </>
   );
-}
 
