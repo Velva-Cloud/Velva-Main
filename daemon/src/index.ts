@@ -1057,11 +1057,17 @@ function startHttpsServer() {
         // Start process and persist state with console log capture
         const logPath = path.join(srvDir, 'console.log');
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
+        // Run as non-root user if configured to avoid SRCDS root warning
+        const runUid = Number(process.env.STEAM_UID || process.env.SRCDS_UID || 1000);
+        const runGid = Number(process.env.STEAM_GID || process.env.SRCDS_GID || 1000);
+        try { fs.chownSync(srvDir, runUid, runGid); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
           env: { ...process.env, VC_SERVER_ID: String(serverId), VC_NAME: name },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
+          uid: runUid,
+          gid: runGid,
         });
         // Append stdout/stderr to console.log
         try {
@@ -1206,11 +1212,17 @@ function startHttpsServer() {
     ensureDir(srvDir);
     const logPath = meta.logPath || path.join(srvDir, 'console.log');
     try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
+    // Run as non-root user if configured to avoid SRCDS root warning
+    const runUid = Number(process.env.STEAM_UID || process.env.SRCDS_UID || 1000);
+    const runGid = Number(process.env.STEAM_GID || process.env.SRCDS_GID || 1000);
+    try { fs.chownSync(srvDir, runUid, runGid); } catch {}
     const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
       cwd: srvDir,
       env: { ...process.env, VC_SERVER_ID: String(serverId) },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
+      uid: runUid,
+      gid: runGid,
     });
     try {
       const append = (data: Buffer) => {
