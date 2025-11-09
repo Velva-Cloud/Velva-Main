@@ -174,7 +174,7 @@ export class QueueService implements OnModuleInit {
         const overrideImage = createLog ? (createLog.metadata as any)?.image : undefined;
         const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
         const provisionerMeta = createLog ? (createLog.metadata as any)?.provisioner : undefined;
-        const steam = createLog ? (createLog.metadata as any)?.steam : undefined;
+        let steam = createLog ? (createLog.metadata as any)?.steam : undefined;
         if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
           image = overrideImage.trim();
         }
