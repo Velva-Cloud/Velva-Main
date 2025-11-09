@@ -1053,6 +1053,11 @@ function startHttpsServer() {
         // Append user-provided args
         const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
         runArgs.push(...extraArgs);
+        // Ensure LAN mode by default to avoid requiring GSLT/token in tests
+        const hasLanFlag = runArgs.some(a => /^\+sv_lan$/i.test(a)) || runArgs.some((a, i) => /^\+sv_lan$/i.test(a) && String(runArgs[i + 1] || '').trim() !== '');
+        if (!hasLanFlag) {
+          runArgs.push('+sv_lan', '1');
+        }
         // Ensure srcds_run does not auto-restart so we can capture the crash reason
         if (!runArgs.includes('-norestart')) runArgs.push('-norestart');
 
