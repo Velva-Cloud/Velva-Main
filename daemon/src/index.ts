@@ -1164,7 +1164,7 @@ function startHttpsServer() {
           throw new Error(`steamcmd_install_failed: code=${lastCode} out=${lastOut.slice(-1000)}`);
         }
 
-        // Ensure SRCDS binaries are executable
+        // Ensure SRCDS binaries are executable and grant CAP_SYS_NICE for non-root thread priority
         try {
           const bin1 = path.join(srvDir, 'srcds_linux');
           const bin1x = path.join(srvDir, 'srcds_linux64');
@@ -1172,6 +1172,24 @@ function startHttpsServer() {
           try { fs.chmodSync(bin1, 0o755); } catch {}
           try { fs.chmodSync(bin1x, 0o755); } catch {}
           try { fs.chmodSync(bin2, 0o755); } catch {}
+          // Best-effort setcap if available inside container
+          try {
+            const setcap = '/sbin/setcap';
+            const setcapAlt = '/usr/sbin/setcap';
+            const tool = fs.existsSync(setcap) ? setcap : (fs.existsSync(setcapAlt) ? setcapAlt : null);
+            const grant = (p: string) => {
+              if (!p || !fs.existsSync(p)) return;
+              require('child_process').spawnSync('/bin/sh', ['-lc', `setcap 'cap_sys_nice+ep' "${p}" || true`], { stdio: 'ignore' });
+            };
+            if (tool) {
+              grant(bin1);
+              grant(bin1x);
+            } else {
+              // Try PATH-resolved setcap
+              grant(bin1);
+              grant(bin1x);
+            }
+          } catch {}
         } catch {}
 
         // Build launch command per appId (SRCDS family)
@@ -1235,10 +1253,9 @@ function startHttpsServer() {
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
         // Ensure Steam runtime hints in server dir
         ensureSteamRuntime(srvDir, appId);
-        // NOTE: Some SRCDS builds assert on thread priority (Permission denied) when not running as root.
-        // To avoid exit code 100, do not drop privileges by default. Enable via SRCDS_DROP_PRIVS=1 if desired.
-        const dropPrivs = String(process.env.SRCDS_DROP_PRIVS || '').trim() === '1';
-        const ids = dropPrivs ? pickNonRootUser() : null;
+        // Default: run as non-root for hosting safety; allow override via SRCDS_KEEP_ROOT=1
+        const keepRoot = String(process.env.SRCDS_KEEP_ROOT || '').trim() === '1';
+        const ids = keepRoot ? null : pickNonRootUser();
         try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
@@ -1519,9 +1536,9 @@ function startHttpsServer() {
     try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
     // Ensure Steam runtime hints in server dir
     ensureSteamRuntime(srvDir, meta.appId || 0);
-    // Do not drop privileges by default to avoid thread priority assertions; enable via SRCDS_DROP_PRIVS=1
-    const dropPrivs = String(process.env.SRCDS_DROP_PRIVS || '').trim() === '1';
-    const ids = dropPrivs ? pickNonRootUser() : null;
+    // Default to non-root for hosting safety; allow override via SRCDS_KEEP_ROOT=1
+    const keepRoot = String(process.env.SRCDS_KEEP_ROOT || '').trim() === '1';
+    const ids = keepRoot ? null : pickNonRootUser();
     try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
 
     // Validate/resolve SRCDS binary before spawning to avoid ENOENT crash

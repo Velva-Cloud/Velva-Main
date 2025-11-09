@@ -14,7 +14,7 @@ FROM node:20-bullseye
 # Install SteamCMD dependencies and SteamCMD itself
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      curl ca-certificates tar \
+      curl ca-certificates tar libcap2-bin \
       lib32gcc-s1 lib32stdc++6 libc6-i386 && \
     mkdir -p /opt/steamcmd && \
     cd /opt/steamcmd && \
