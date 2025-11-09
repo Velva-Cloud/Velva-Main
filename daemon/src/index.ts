@@ -570,15 +570,17 @@ function startHttpsServer() {
       // Use promise form for logs to avoid callback typing issues
       const result: any = await container.logs(opts);
       const resAny: any = result;
-      if (typeof resAny.on === 'function') {
+      const onProp = resAny ? (resAny as any).on : undefined;
+      const isFunc = typeof onProp === 'function';
+      if (isFunc) {
         // Stream form (TTY or multiplexed)
         const onData = (chunk: Buffer) => {
           const line = chunk.toString('utf8');
           res.write(`data: ${JSON.stringify(line)}\n\n`);
         };
-        resAny.on('data', onData);
-        resAny.on('end', endAll);
-        resAny.on('error', endAll);
+        (resAny as any).on('data', onData);
+        (resAny as any).on('end', endAll);
+        (resAny as any).on('error', endAll);
         try { req.on('close', endAll); } catch {}
         return;
       } else {
@@ -632,7 +634,9 @@ function startHttpsServer() {
         const result = await container.logs(opts);
         let output = '';
         const resAny: any = result;
-        if (typeof resAny.on === 'function') {
+        const onProp = resAny ? (resAny as any).on : undefined;
+        const isFunc = typeof onProp === 'function';
+        if (isFunc) {
           const stream: any = result;
           stream.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
           stream.on('end', () => {
