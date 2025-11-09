@@ -139,6 +139,9 @@ services:
         source: /data
         target: /data
       - /var/run/docker.sock:/var/run/docker.sock
+    # Grant capability for SRCDS thread priority while running as non-root
+    cap_add:
+      - SYS_NICE
     # Publish SFTP and daemon TLS to host
     ports:
       - "2223:2222"
