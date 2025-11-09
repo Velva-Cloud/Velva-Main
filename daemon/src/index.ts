@@ -573,9 +573,8 @@ function startHttpsServer() {
           // Fallback to steam console log file if container missing
           const meta = readSteamMeta(id);
           const logPath = meta?.logPath || (meta ? path.join(serverDir(id), 'console.log') : null);
-          const is404 = !!err && (err.statusCode === 404 || /no such container/i.test(String(err.message || '')));
           const hasLog = !!logPath && fs.existsSync(logPath || '');
-          if (is404 && hasLog && logPath) {
+          if (hasLog && logPath) {
             // Emit last lines
             try {
               const text = fs.readFileSync(logPath, 'utf8');
@@ -634,8 +633,11 @@ function startHttpsServer() {
           clearInterval(ping);
           const code = (err && typeof err.statusCode !== 'undefined') ? err.statusCode : undefined;
           const rawMsg = (err && typeof err.message !== 'undefined') ? String(err.message) : '';
-          const msg = rawMsgn;
+          const msg = rawMsg || '';
+          res.status(500).json({ error: msg || 'logs_failed', code });
+          return;
         }
+   }
 
         // Demux stdout/stderr when needed
         const out = new PassThrough();
