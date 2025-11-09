@@ -1021,7 +1021,7 @@ function startHttpsServer() {
         const hostPort = Number(chosenHostPort || 27015);
         if (appId === 4020) { // Garry's Mod
           runCmd = path.join(srvDir, 'srcds_run');
-          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+exec', 'server.cfg'];
+          runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+exec', 'server.cfg'];
         } else if (appId === 740) { // CS:GO
           runCmd = path.join(srvDir, 'srcds_run');
           runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2'];
