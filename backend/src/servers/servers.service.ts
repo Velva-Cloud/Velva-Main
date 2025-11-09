@@ -407,6 +407,8 @@ export class ServersService {
 
     type Candidate = { id: number; score: number; reason?: string; nodeLoc: string };
     const candidates: Candidate[] = [];
+    const rejects: Array<{ nodeId: number; reason: string; cpu: { cap: number; next: number }; mem: { cap: number; next: number }; disk: { cap: number; next: number } }> = [];
+
     for (const node of nodes) {
       const capCpu = Number(node.capacityCpuCores ?? 0) * 100; // assume 100 cpu units per core unless specified by plans
       const capMem = Number(node.capacityMemoryMb ?? 0);
@@ -419,12 +421,29 @@ export class ServersService {
 
       // Hard-fail if RAM or Disk would exceed 100%
       if ((capMem && nextMem > capMem) || (capDisk && nextDisk > capDisk)) {
+        const r: string[] = [];
+        if (capMem && nextMem > capMem) r.push('mem');
+        if (capDisk && nextDisk > capDisk) r.push('disk');
+        rejects.push({
+          nodeId: node.id,
+          reason: `exceeds_${r.join('_')}`,
+          cpu: { cap: capCpu, next: nextCpu },
+          mem: { cap: capMem, next: nextMem },
+          disk: { cap: capDisk, next: nextDisk },
+        });
         continue;
       }
 
       // Allow CPU up to 150%
       const cpuRatio = capCpu ? nextCpu / capCpu : 0;
       if (capCpu && cpuRatio > 1.5) {
+        rejects.push({
+          nodeId: node.id,
+          reason: 'exceeds_cpu',
+          cpu: { cap: capCpu, next: nextCpu },
+          mem: { cap: capMem, next: nextMem },
+          disk: { cap: capDisk, next: nextDisk },
+        });
         continue;
       }
 
@@ -443,6 +462,21 @@ export class ServersService {
     }
 
     if (!candidates.length) {
+      // Record diagnostic log to help operators understand capacity rejection
+      try {
+        await this.prisma.log.create({
+          data: {
+            userId,
+            action: 'plan_change',
+            metadata: {
+              event: 'capacity_reject',
+              planId: plan.id,
+              required: { cpuUnits, ramMB, diskMB },
+              rejects,
+            },
+          },
+        });
+      } catch {}
       throw new BadRequestException('Insufficient node capacity (RAM/Disk/CPU)');
     }
 
