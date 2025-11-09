@@ -48,7 +48,6 @@ export default function CreateServerPage() {
   }, [name]);
 
   useEffect(() => {
-    // Load me + subscription and plans and current usage
     Promise.all([
       api.get('/users/me').catch(() => ({ data: null })),
       api.get('/subscriptions/me').catch(() => ({ data: null })),
@@ -65,8 +64,6 @@ export default function CreateServerPage() {
           .map((p: any) => ({ id: p.id, name: p.name, pricePerMonth: p.pricePerMonth, resources: p.resources }))
           .filter((p: any) => p.id !== undefined);
 
-        // For normal users: only allow selecting the subscribed plan
-        // For ADMIN/OWNER: allow all plans
         const filtered = (meRes.data && (meRes.data.role === 'ADMIN' || meRes.data.role === 'OWNER'))
           ? normalized
           : (subData ? normalized.filter(p => p.id === subData.planId) : normalized);
@@ -88,223 +85,21 @@ export default function CreateServerPage() {
   const suspended = !!me?.suspended;
 
   const images = [
-    // Web
-    {
-      id: 'nginx:alpine',
-      label: 'Nginx (web)',
-      description: 'Lightweight web server suitable for static sites and reverse proxy.',
-      img: '/images/nginx.png',
-      fallback: 'https://avatars.githubusercontent.com/u/529617?s=200&v=4',
-    },
-
-    // Minecraft
-    {
-      id: 'itzg/minecraft-server',
-      label: 'Minecraft (Java)',
-      description: 'Java edition server image with extensive env configuration.',
-      img: '/images/minecraft.png',
-      fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png',
-    },
-    {
-      id: 'itzg/minecraft-bedrock-server',
-      label: 'Minecraft (Bedrock)',
-      description: 'Bedrock edition server for Windows/console players.',
-      img: '/images/minecraft-bedrock.png',
-      fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png',
-    },
-
-    // Valheim
-    {
-      id: 'lloesche/valheim-server',
-      label: 'Valheim',
-      description: 'Full-featured Valheim dedicated server.',
-      img: '/images/valheim.png',
-      fallback: 'https://raw.githubusercontent.com/lloesche/valheim-server-docker/master/img/valheim.png',
-    },
-
-    // Palworld
-    {
-      id: 'thijsvanloef/palworld-server-docker',
-      label: 'Palworld',
-      description: 'Popular survival server; configure with env vars for admin/password.',
-      img: '/images/palworld.png',
-      fallback: 'https://raw.githubusercontent.com/THIJsvanLoEF/Palworld-Server-Docker/main/.github/img/logo.png',
-    },
-
-    // Rust
-    {
-      id: 'didstopia/rust-server',
-      label: 'Rust',
-      description: 'Rust dedicated server with SteamCMD.',
-      img: '/images/rust.png',
-      fallback: 'https://raw.githubusercontent.com/didstopia/rust-server/master/.github/logo.png',
-    },
-
-    // CSGO / CS 1.6 / TF2 / GMod / L4D2 via cm2network
-    {
-      id: 'cm2network/csgo',
-      label: 'Counter-Strike: Global Offensive',
-      description: 'CS:GO dedicated server.',
-      img: '/images/csgo.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
-    {
-      id: 'cm2network/counter-strike',
-      label: 'Counter-Strike 1.6',
-      description: 'Classic Counter-Strike 1.6 server.',
-      img: '/images/cs16.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
-    {
-      id: 'cm2network/tf2',
-      label: 'Team Fortress 2',
-      description: 'TF2 dedicated server.',
-      img: '/images/tf2.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
-    {
-      id: 'cm2network/gmod',
-      label: 'Garry\'s Mod',
-      description: 'GMod dedicated server.',
-      img: '/images/gmod.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
-    {
-      id: 'cm2network/l4d2',
-      label: 'Left 4 Dead 2',
-      description: 'L4D2 dedicated server.',
-      img: '/images/l4d2.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
-
-    // Factorio
-    {
-      id: 'factoriotools/factorio',
-      label: 'Factorio',
-      description: 'Factorio dedicated server (popular automation game).',
-      img: '/images/factorio.png',
-      fallback: 'https://raw.githubusercontent.com/factoriotools/factorio-docker/master/logo.png',
-    },
-
-    // Space Engineers (Wine/SteamCMD based)
-    {
-      id: 'ich777/steamcmd',
-      label: 'Space Engineers (via SteamCMD/WINE)',
-      description: 'Run Space Engineers dedicated server using SteamCMD/WINE; requires specific env vars (GAME_ID etc.).',
-      img: '/images/space-engineers.png',
-      fallback: 'https://raw.githubusercontent.com/ich777/docker-templates/master/img/steamcmd.png',
-    },
-
-    // 7 Days to Die
-    {
-      id: 'didstopia/7dtd-server',
-      label: '7 Days to Die',
-      description: '7DtD dedicated server with SteamCMD.',
-      img: '/images/7dtd.png',
-      fallback: 'https://raw.githubusercontent.com/didstopia/7dtd-server/master/.github/logo.png',
-    },
-
-    // Project Zomboid
-    {
-      id: 'cyrinux/pzserver',
-      label: 'Project Zomboid',
-      description: 'Project Zomboid dedicated server.',
-      img: '/images/pz.png',
-      fallback: 'https://raw.githubusercontent.com/cyrinux/docker-project-zomboid-server/master/pz.webp',
-    },
-
-    // ARK: Survival Evolved
-    {
-      id: 'Hermsi1337/ark-server',
-      label: 'ARK: Survival Evolved',
-      description: 'ARK dedicated server.',
-      img: '/images/ark.png',
-      fallback: 'https://raw.githubusercontent.com/Hermsi1337/docker-ark-server/master/.github/images/logo.png',
-    },
-
-    // Terraria
-    {
-      id: 'beardedio/terraria',
-      label: 'Terraria',
-      description: 'Terraria dedicated server.',
-      img: '/images/terraria.png',
-      fallback: 'https://raw.githubusercontent.com/ryanrhee/terraria/master/icon.png',
-    },
-
-    // V Rising
-    {
-      id: 'devidian/vrising-server',
-      label: 'V Rising',
-      description: 'V Rising dedicated server.',
-      img: '/images/vrising.png',
-      fallback: 'https://raw.githubusercontent.com/Didstopia/docker-images/master/vrising/logo.png',
-    },
-
-    // Satisfactory
-    {
-      id: 'wolveix/satisfactory-server',
-      label: 'Satisfactory',
-      description: 'Satisfactory dedicated server (early access).',
-      img: '/images/satisfactory.png',
-      fallback: 'https://raw.githubusercontent.com/wolveix/satisfactory-server/main/.github/assets/logo.png',
-    },
-
-    // Conan Exiles
-    {
-      id: 'notruffy/conanexiles',
-      label: 'Conan Exiles',
-      description: 'Conan Exiles dedicated server.',
-      img: '/images/conan.png',
-      fallback: 'https://raw.githubusercontent.com/ich777/docker-templates/master/img/conanexiles.png',
-    },
-
-    // Don't Starve Together
-    {
-      id: 'jammsen/docker-dontstarvetogether',
-      label: "Don't Starve Together",
-      description: 'DST dedicated server.',
-      img: '/images/dst.png',
-      fallback: 'https://raw.githubusercontent.com/jammsen/docker-dontstarvetogether/master/.github/img/dst.png',
-    },
-
-    // Unturned
-    {
-      id: 'didstopia/unturned',
-      label: 'Unturned',
-      description: 'Unturned dedicated server.',
-      img: '/images/unturned.png',
-      fallback: 'https://raw.githubusercontent.com/didstopia/docker-images/master/unturned/logo.png',
-    },
-
-    // ECO
-    {
-      id: 'nicolas654/eco-server',
-      label: 'Eco',
-      description: 'Eco dedicated server.',
-      img: '/images/eco.png',
-      fallback: 'https://raw.githubusercontent.com/Nicolas654/docker-eco-server/main/icon.png',
-    },
-
-    // Pavlov VR
-    {
-      id: 'cm2network/pavlov',
-      label: 'Pavlov VR',
-      description: 'Pavlov VR dedicated server (Linux).',
-      img: '/images/pavlov.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
-
-    // Mordhau
-    {
-      id: 'cm2network/mordhau',
-      label: 'MORDHAU',
-      description: 'MORDHAU dedicated server.',
-      img: '/images/mordhau.png',
-      fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4',
-    },
+    { id: 'nginx:alpine', label: 'Nginx (web)', description: 'Lightweight web server suitable for static sites and reverse proxy.', img: '/images/nginx.png', fallback: 'https://avatars.githubusercontent.com/u/529617?s=200&v=4' },
+    { id: 'itzg/minecraft-server', label: 'Minecraft (Java)', description: 'Java edition server image with extensive env configuration.', img: '/images/minecraft.png', fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png' },
+    { id: 'itzg/minecraft-bedrock-server', label: 'Minecraft (Bedrock)', description: 'Bedrock edition server for Windows/console players.', img: '/images/minecraft-bedrock.png', fallback: 'https://raw.githubusercontent.com/itzg/docker-minecraft-server/master/logo.png' },
+    { id: 'lloesche/valheim-server', label: 'Valheim', description: 'Full-featured Valheim dedicated server.', img: '/images/valheim.png', fallback: 'https://raw.githubusercontent.com/lloesche/valheim-server-docker/master/img/valheim.png' },
+    { id: 'thijsvanloef/palworld-server-docker', label: 'Palworld', description: 'Popular survival server; configure with env vars for admin/password.', img: '/images/palworld.png', fallback: 'https://raw.githubusercontent.com/THIJsvanLoEF/Palworld-Server-Docker/main/.github/img/logo.png' },
+    { id: 'didstopia/rust-server', label: 'Rust', description: 'Rust dedicated server with SteamCMD.', img: '/images/rust.png', fallback: 'https://raw.githubusercontent.com/didstopia/rust-server/master/.github/logo.png' },
+    { id: 'cm2network/csgo', label: 'Counter-Strike: Global Offensive', description: 'CS:GO dedicated server.', img: '/images/csgo.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
+    { id: 'cm2network/counter-strike', label: 'Counter-Strike 1.6', description: 'Classic Counter-Strike 1.6 server.', img: '/images/cs16.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
+    { id: 'cm2network/tf2', label: 'Team Fortress 2', description: 'TF2 dedicated server.', img: '/images/tf2.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
+    { id: 'cm2network/gmod', label: 'Garry\'s Mod', description: 'GMod dedicated server.', img: '/images/gmod.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
+    { id: 'cm2network/l4d2', label: 'Left 4 Dead 2', description: 'L4D2 dedicated server.', img: '/images/l4d2.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
+    { id: 'factoriotools/factorio', label: 'Factorio', description: 'Factorio dedicated server (popular automation game).', img: '/images/factorio.png', fallback: 'https://raw.githubusercontent.com/factoriotools/factorio-docker/master/logo.png' },
+    { id: 'cm2network/mordhau', label: 'MORDHAU', description: 'MORDHAU dedicated server.', img: '/images/mordhau.png', fallback: 'https://avatars.githubusercontent.com/u/39604295?s=200&v=4' },
   ];
 
-  // Advanced settings presets per image (no port fields; ports are auto-assigned by the system)
   const presetsByImage: Record<string, Array<{ key: string; label: string; placeholder?: string }>> = {
     'itzg/minecraft-server': [
       { key: 'EULA', label: 'EULA (TRUE/FALSE)', placeholder: 'TRUE' },
@@ -345,100 +140,14 @@ export default function CreateServerPage() {
       { key: 'SERVERNAME', label: 'Server name' },
       { key: 'SERVERPASSWORD', label: 'Server password' },
     ],
-    'didstopia/7dtd-server': [
-      { key: 'SDTD_ServerName', label: 'Server name' },
-      { key: 'SDTD_ServerPassword', label: 'Server password' },
-    ],
-    'cyrinux/pzserver': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'ADMIN_PASSWORD', label: 'Admin password' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'Hermsi1337/ark-server': [
-      { key: 'SESSION_NAME', label: 'Session name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-      { key: 'SERVER_ADMIN_PASSWORD', label: 'Admin password' },
-      { key: 'MAP', label: 'Map', placeholder: 'TheIsland' },
-    ],
-    'beardedio/terraria': [
-      { key: 'WORLD', label: 'World name' },
-      { key: 'PASSWORD', label: 'Server password' },
-    ],
-    'devidian/vrising-server': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'wolveix/satisfactory-server': [
-      // Satisfactory typically auto-configures ports; omit user-set port fields
-    ],
-    'notruffy/conanexiles': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'jammsen/docker-dontstarvetogether': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'didstopia/unturned': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'nicolas654/eco-server': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'cm2network/pavlov': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    'cm2network/mordhau': [
-      { key: 'SERVER_NAME', label: 'Server name' },
-      { key: 'SERVER_PASSWORD', label: 'Server password' },
-    ],
-    // Space Engineers via SteamCMD/WINE (generic template)
-    'ich777/steamcmd': [
-      { key: 'GAME_ID', label: 'Steam GAME_ID', placeholder: '298740' },
-      { key: 'USERNAME', label: 'Steam username' },
-      { key: 'PASSWRD', label: 'Steam password' },
-      { key: 'SERVERNAME', label: 'Server name' },
-    ],
   };
 
   const [advancedEnv, setAdvancedEnv] = useState<Record<string, string>>({});
 
-  // Auto-flag for Steam-based titles
   const isSRCDS = useMemo(
     () => ['cm2network/csgo', 'cm2network/counter-strike', 'cm2network/tf2', 'cm2network/gmod', 'cm2network/l4d2', 'cm2network/mordhau'].includes(image),
     [image]
   );
-
-  // Admin-only assignment UI removed from user create page; use /admin/create-server
-
-  // Map SRCDS image to Steam appId
-  function steamAppIdFor(imageId: string): number | null {
-    switch (imageId) {
-      case 'cm2network/csgo': return 740;
-      case 'cm2network/gmod': return 4020;
-      case 'cm2network/tf2': return 232250;
-      case 'cm2network/l4d2': return 222860;
-      case 'cm2network/mordhau': return 629760;
-      case 'cm2network/counter-strike': return 90; // CS 1.6 (legacy HLDS/HLDS)
-      default: return null;
-    }
-  }
-
-  // SteamCMD settings (generic + SRCDS common controls)
-  const [steamBranch, setSteamBranch] = useState('public');
-  const [steamArgsText, setSteamArgsText] = useState('');
-  const [srStartMap, setSrStartMap] = useState('');
-  const [srMaxPlayers, setSrMaxPlayers] = useState<number | ''>('');
-  const [srTickrate, setSrTickrate] = useState<number | ''>('');
-  const [srGsltToken, setSrGsltToken] = useState('');
-
-  // Reset advanced env when image changes
-  useEffect(() => {
-    setAdvancedEnv({});
-  }, [image]);
 
   const planSummary = (() => {
     const ramMB = Number(sub?.plan?.resources?.ramMB) || 0;
@@ -448,7 +157,6 @@ export default function CreateServerPage() {
     return ramGB ? `${ramGB} GB RAM${cpu ? ` • ${cpu} CPU` : ''}${disk ? ` • ${disk} GB SSD` : ''}` : sub?.plan?.name || '—';
   })();
 
-  // Search support for images
   const [search, setSearch] = useState('');
   const filteredImages = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -481,7 +189,6 @@ export default function CreateServerPage() {
           return;
         }
       } else {
-        // Admin must still select a plan
         if (!planId) {
           setErr('Please select a plan');
           return;
@@ -493,7 +200,6 @@ export default function CreateServerPage() {
       }
       setCreating(true);
 
-      // Build env object from advanced settings
       const env: Record<string, string> = {};
       Object.entries(advancedEnv).forEach(([k, v]) => {
         const vv = (v || '').toString().trim();
@@ -502,19 +208,19 @@ export default function CreateServerPage() {
 
       const body: any = { name: name.trim(), planId, image: image.trim() || undefined, env };
 
-      
-
-      // Auto-attach Steam settings for SRCDS titles
       if (isSRCDS) {
-        const appId = steamAppIdFor(image) || 0;
-        const args: string[] = [];
-        if (srStartMap.trim()) args.push('+map', srStartMap.trim());
-        if (srMaxPlayers && Number(srMaxPlayers) > 0) args.push('-maxplayers', String(srMaxPlayers));
-        if (srTickrate && Number(srTickrate) > 0) args.push('-tickrate', String(srTickrate));
-        if (srGsltToken.trim()) args.push('+sv_setsteamaccount', srGsltToken.trim());
-        const extra = steamArgsText.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
-        args.push(...extra);
-        body.steam = { appId, branch: (steamBranch.trim() || 'public'), args };
+        const appId = (() => {
+          switch (image) {
+            case 'cm2network/csgo': return 740;
+            case 'cm2network/gmod': return 4020;
+            case 'cm2network/tf2': return 232250;
+            case 'cm2network/l4d2': return 222860;
+            case 'cm2network/mordhau': return 629760;
+            case 'cm2network/counter-strike': return 90;
+            default: return 0;
+          }
+        })();
+        body.steam = { appId, branch: 'public', args: [] };
       }
 
       const res = await api.post('/servers', body);
@@ -570,12 +276,6 @@ export default function CreateServerPage() {
                     />
                     {(nameError) && <div className="text-red-400 mt-1 text-sm">{nameError}</div>}
                   </div>
-
-                  {isAdmin && (
-                    <div className="mb-2 p-3 rounded border border-sky-800 bg-sky-900/20 text-sky-200">
-                      Admins: to create and assign a server to a user by email, use <a className="underline" href="/admin/create-server">Admin • Create Server</a>.
-                    </div>
-                  )}
 
                   <div>
                     <div className="text-sm mb-1">Plan</div>
@@ -642,7 +342,6 @@ export default function CreateServerPage() {
                     </div>
                   </div>
 
-                  {/* Advanced settings */}
                   <div className="mt-4">
                     <div className="text-sm font-medium mb-2">Advanced settings</div>
                     <div className="text-xs subtle mb-2">
@@ -662,28 +361,56 @@ export default function CreateServerPage() {
                       ))}
                     </div>
 
-                    {/* SteamCMD controls: auto-shown for SRCDS/Steam titles */}
                     {isSRCDS && (
                       <div className="mt-4">
                         <div className="text-sm font-medium mb-2">SteamCMD settings</div>
                         <div className="grid gap-3 md:grid-cols-2">
                           <div>
                             <div className="text-xs mb-1">Branch</div>
-                            <input className="input" value={steamBranch} onChange={(e) => setSteamBranch(e.target.value)} placeholder="public" />
+                            <input className="input" value={'public'} readOnly />
                           </div>
                           <div className="md:col-span-2">
-                            <div className="text-xs mb-1">Extra launch args (one per line)</div>
-                            <textarea className="input min-h-[80px]" value={steamArgsText} onChange={(e) => setSteamArgsText(e.target.value)} placeholder="-tickrate 66&#10;+exec server.cfg" />
+                            <div className="text-xs mb-1">Extra launch args</div>
+                            <input className="input" value={''} readOnly placeholder="Configured by admin on /admin/create-server" />
                           </div>
                         </div>
 
-                        {/* SRCDS common options */}
                         <div className="mt-3">
-                          <div className="text-sm font-medium mb-2">SRCDS options</div>
-                          <div className="grid gap-3 md:grid-cols-3">
-                            <div>
-                              <div className="text-xs mb-1">Start map</div>
-                              <input className="input" value={srStartMap} onChange={(e) => setSrStartMap(e.target.value)} placeholder="de_dust2" />
+                          <div className="text-sm font-medium mb-2">SRCDS defaults</div>
+                          <div className="text-xs subtle">
+                            Defaults are applied. To customize SRCDS args, use the admin page.
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs subtle">
+                      {isAdmin ? (
+                        <>Admin mode: creating for yourself. To assign to another user, use the admin page.</>
+                      ) : (
+                        <>Subscription: <span className="text-slate-200 font-medium">{sub?.status?.toUpperCase?.() || '—'}</span> • Plan {planSummary} • Usage {Math.min(total, maxServers)} / {maxServers}</>
+                      )}
+                    </div>
+                    <button
+                      onClick={createServer}
+                      disabled={creating || (!isAdmin && (!sub || sub.status !== 'active' || limitReached))}
+                      className={`btn btn-primary ${creating || (!isAdmin && (!sub || sub.status !== 'active' || limitReached)) ? 'opacity-70 cursor-not-allowed' : ''}`}
+                    >
+                      {creating ? 'Creating…' : 'Create server'}
+                    </button>
+                  </div>
+                  {(err) && <div className="text-red-400 mt-1">{err}</div>}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
+      </main>
+    </>
+  );
+} placeholder="de_dust2" />
                             </div>
                             <div>
                               <div className="text-xs mb-1">Max players</div>
