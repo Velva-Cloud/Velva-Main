@@ -190,6 +190,9 @@ export class QueueService implements OnModuleInit {
         if (usingSteam) {
           // For SteamCMD, do not rely on docker image; omit image field entirely
           image = undefined as any;
+          // Clear docker-specific env/mountPath for steam provisioners to avoid leaking MC defaults
+          env = {};
+          mountPath = undefined;
         }
 
         // Image-specific defaults
@@ -274,7 +277,8 @@ export class QueueService implements OnModuleInit {
             mountPath,
             exposePorts,
             cmd,
-            forceRecreate,
+            // Force recreate when switching provisioners or images to avoid reusing old containers/volumes
+            forceRecreate: true,
             hostPortPolicy,
             registryAuth,
             ...(usingSteam ? { provisioner: 'steamcmd' as const, steam } : { provisioner: 'docker' as const }),

@@ -554,6 +554,10 @@ export class ServersService {
       data: { userId, action: 'plan_change', metadata: { event: 'provision_request', serverId: server.id, nodeId: chosenId } },
     });
     await this.queue.enqueueProvision(server.id);
+    // Schedule maintenance reconcile on target node to guard against reused containers/images
+    try {
+      await this.queue['maintenanceQ'].add('reconcile_node', { nodeId: chosenId }, { jobId: `reconcile_${chosenId}`, removeOnComplete: true, removeOnFail: true });
+    } catch {}
 
     return server;
   }
