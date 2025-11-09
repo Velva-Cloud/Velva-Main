@@ -359,7 +359,7 @@ export class QueueService implements OnModuleInit {
             forceRecreate: true,
             hostPortPolicy,
             registryAuth,
-            ...(preferDockerSrds ? { provisioner: 'docker_srds' as any, steam, image } :
+            ...(preferDockerSrds ? { provisioner: 'docker_srds' as any, steam } :
               usingSteam ? { provisioner: 'steamcmd' as const, steam } : { provisioner: 'docker' as const }),
           } as any);
           // Record assigned port if provided
