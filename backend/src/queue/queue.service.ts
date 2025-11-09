@@ -335,8 +335,8 @@ export class QueueService implements OnModuleInit {
         // Verify running state via inventory; consider both containers and steam processes
         let running = true;
         try {
-          const inv = await this.agents.inventory(baseURL);
-          const presentContainer = inv?.containers?.find(c => c.serverId === s.id);
+          const inv: any = await this.agents.inventory(baseURL);
+          const presentContainer = inv?.containers?.find((c: any) => c.serverId === s.id);
           const presentSteam = inv?.steam?.find?.((x: any) => x.serverId === s.id);
           running = !!(presentContainer?.running || presentSteam?.running);
         } catch {
@@ -388,8 +388,8 @@ export class QueueService implements OnModuleInit {
         // Verify running state via inventory; consider both containers and steam processes
         let running = true;
         try {
-          const inv = await this.agents.inventory(baseURL);
-          const presentContainer = inv?.containers?.find(c => c.serverId === s.id);
+          const inv: any = await this.agents.inventory(baseURL);
+          const presentContainer = inv?.containers?.find((c: any) => c.serverId === s.id);
           const presentSteam = inv?.steam?.find?.((x: any) => x.serverId === s.id);
           running = !!(presentContainer?.running || presentSteam?.running);
         } catch {
