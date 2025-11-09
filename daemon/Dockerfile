@@ -2,7 +2,10 @@ FROM node:20-bullseye
 
 # Install SteamCMD dependencies and SteamCMD itself
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends curl ca-certificates tar lib32gcc-s1 lib32stdc++6 && \
+    apt-get install -y --no-install-recommends \
+      curl ca-certificates tar \
+      lib32gcc-s1 lib32stdc++6 libc6-i386 \
+      libcurl4-gnutls:i386 && \
     mkdir -p /opt/steamcmd && \
     cd /opt/steamcmd && \
     curl -sqL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz -o steamcmd_linux.tar.gz && \
