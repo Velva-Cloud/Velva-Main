@@ -1,0 +1,31 @@
+# Game Catalog
+# Add more entries over time; backend reads this to decide images and defaults.
+
+- id: gmod
+  name: Garry's Mod
+  provider: srds_runner
+  appId: 4020
+  defaultBranch: x86-64
+  image: velva/srds-runner:latest
+  ports:
+    - name: game
+      containerPort: 27015
+      protocol: udp
+  defaults:
+    args: ["-game","garrysmod","-console","+map","gm_construct","+gamemode","sandbox","+maxplayers","16"]
+    env: {}
+
+- id: minecraft_paper
+  name: Minecraft (Paper)
+  provider: docker
+  image: itzg/minecraft-server:latest
+  ports:
+    - name: game
+      containerPort: 25565
+      protocol: tcp
+  defaults:
+    args: []
+    env:
+      EULA: "TRUE"
+      ENABLE_AUTOPAUSE: "FALSE"
+      ENABLE_RCON: "TRUE"

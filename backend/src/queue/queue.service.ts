@@ -7,6 +7,7 @@ import { EventEmitter } from 'events';
 import * as client from 'prom-client';
 import { Interval } from '@nestjs/schedule';
 import { getHostPortPolicy, getInternalPorts } from '../servers/port-policy';
+import { GameCatalog, GameEntry } from '../servers/game-catalog';
 
 function backoffOptions(): JobsOptions {
   const base = Number(process.env.JOBS_BACKOFF_BASE_MS || 5000);
@@ -60,10 +61,13 @@ export class QueueService implements OnModuleInit {
   // Events
   private emitter = new EventEmitter();
 
+  private catalog: GameCatalog;
+
   constructor(
     private prisma: PrismaService,
     private agents: AgentClientService,
   ) {
+    this.catalog = GameCatalog.load();
     const url = process.env.REDIS_URL || 'redis://localhost:6379';
     const redisOpts: RedisOptions = {
       // Required by BullMQ to avoid unexpected retries at the redis client level
@@ -175,6 +179,36 @@ export class QueueService implements OnModuleInit {
         const overrideEnv = createLog ? (createLog.metadata as any)?.env : undefined;
         const provisionerMeta = createLog ? (createLog.metadata as any)?.provisioner : undefined;
         let steam = createLog ? (createLog.metadata as any)?.steam : undefined;
+
+        // Game catalog: prefer catalog entry if provided in plan resources or creation log
+        const gameId: string | undefined =
+          (createLog ? (createLog.metadata as any)?.gameId : undefined) ||
+          (resources && (resources as any).gameId) ||
+          undefined;
+        let game: GameEntry | undefined = gameId ? this.catalog.get(String(gameId)) : undefined;
+        if (game && game.provider === 'srds_runner') {
+          // Use docker_srds provisioner with runner image and Steam app metadata
+          image = game.image || 'velva/srds-runner:latest';
+          const appId = Number(game.appId || (steam?.appId || 0));
+          const branch = (steam?.branch || game.defaultBranch || 'public') as string;
+          const args = (steam?.args && Array.isArray(steam.args) && steam.args.length > 0)
+            ? steam.args
+            : (game.defaults?.args || []);
+          steam = { appId, branch, args } as any;
+
+          // Expose ports from catalog
+          if (!exposePorts || exposePorts.length === 0) {
+            exposePorts = (game.ports || []).map(p => `${p.containerPort}/${p.protocol}`);
+          }
+        } else if (game && game.provider === 'docker') {
+          image = game.image || image;
+          // Expose ports from catalog if not present
+          if (!exposePorts || exposePorts.length === 0) {
+            exposePorts = (game.ports || []).map(p => `${p.containerPort}/${p.protocol}`);
+          }
+          // Merge default env
+          env = { ...(game.defaults?.env || {}), ...(env || {}) };
+        }
         if (overrideImage && typeof overrideImage === 'string' && overrideImage.trim().length > 0) {
           image = overrideImage.trim();
         }
@@ -182,24 +216,45 @@ export class QueueService implements OnModuleInit {
           env = { ...(env || {}), ...(overrideEnv || {}) };
         }
 
-        // Infer SteamCMD usage:
-        // - If steam.appId present -> SteamCMD
-        // - Or if image matches known Steam-only tags (e.g., cm2network/gmod/garrysmod)
+        // Infer Steam usage:
+        // Options:
+        //  - docker_srds: our SRCDS runner image (recommended)
+        //  - steamcmd: legacy native path
         const looksGmod = typeof image === 'string' && /^cm2network\/(gmod|garrysmod)(:.+)?$/i.test(image);
-        let usingSteam = !!(steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod || provisionerMeta === 'steamcmd';
-        if (usingSteam) {
-          // For SteamCMD, do not rely on docker image; omit image field entirely
+        let preferDockerSrds = !!(game && game.provider === 'srds_runner');
+        let usingSteam = !!(steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod || provisionerMeta === 'steamcmd' || preferDockerSrds;
+
+        if (usingSteam && !preferDockerSrds && (provisionerMeta === 'steamcmd' || looksGmod || (steam && !game))) {
+          // Legacy native SteamCMD path
           image = undefined as any;
-          // Clear docker-specific env defaults to avoid leaking MC config
           env = {};
-          // Ensure a dedicated install directory is set for SteamCMD
           if (!mountPath || !String(mountPath).trim()) {
             mountPath = `/data/servers/${s.id}`;
           }
+
+          // Normalize Steam settings and default branch
+          const defaultBranchFor = (appId: number, existing?: string): string => {
+            const has = (existing || '').trim();
+            // For GMOD, force default to x86-64 if branch is missing or explicitly set to 'public'
+            if (appId === 4020) {
+              if (!has || has.toLowerCase() === 'public') return 'x86-64';
+              return has;
+            }
+            // For other titles, honor provided branch, else default to 'public'
+            return has || 'public';
+          };
+
           // Pass installDir to daemon explicitly for force_install_dir (support both keys)
           if (!steam || typeof steam !== 'object') {
-            steam = { appId: Number(steam?.appId || 0), branch: (steam?.branch || 'public'), args: [] } as any;
+            // If we inferred from image (looksGmod) and no steam metadata exists, default appId to 4020
+            const inferredAppId = looksGmod ? 4020 : Number(steam?.appId || 0);
+            steam = { appId: inferredAppId, branch: defaultBranchFor(inferredAppId, (steam as any)?.branch), args: [] } as any;
+          } else {
+            // Ensure branch defaults to x86-64 for GMOD when missing/empty
+            const appIdNum = Number((steam as any).appId || 0);
+            (steam as any).branch = defaultBranchFor(appIdNum, (steam as any).branch);
           }
+
           (steam as any).installDir = mountPath;
           (steam as any).forceInstallDir = mountPath;
 
@@ -304,7 +359,8 @@ export class QueueService implements OnModuleInit {
             forceRecreate: true,
             hostPortPolicy,
             registryAuth,
-            ...(usingSteam ? { provisioner: 'steamcmd' as const, steam } : { provisioner: 'docker' as const }),
+            ...(preferDockerSrds ? { provisioner: 'docker_srds' as any, steam } :
+              usingSteam ? { provisioner: 'steamcmd' as const, steam } : { provisioner: 'docker' as const }),
           } as any);
           // Record assigned port if provided
           const assignedPort = (ret && (ret.port as any)) ? Number(ret.port) : null;

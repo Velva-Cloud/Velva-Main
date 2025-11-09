@@ -3,6 +3,7 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { Role } from '../common/roles.enum';
 import * as fs from 'fs';
+import { PrismaService } from '../prisma/prisma.service';
 
 function readJwtSecret(): string {
   const filePath = process.env.JWT_SECRET_FILE;
@@ -18,7 +19,7 @@ function readJwtSecret(): string {
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-  constructor() {
+  constructor(private prisma: PrismaService) {
     super({
       jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
       secretOrKey: readJwtSecret(),
@@ -27,14 +28,32 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   }
 
   async validate(payload: any) {
-    // Normalize role in case tokens carry lowercase values
-    const rawRole = (payload?.role ?? 'USER') as string;
-    const upper = String(rawRole).toUpperCase();
-    const role: Role =
-      upper === 'OWNER' ? Role.OWNER :
-      upper === 'ADMIN' ? Role.ADMIN :
-      upper === 'SUPPORT' ? Role.SUPPORT :
+    // Start with role from token (fallback)
+    const tokenRoleRaw = (payload?.role ?? 'USER') as string;
+    const tokenRoleUpper = String(tokenRoleRaw).toUpperCase();
+    let role: Role =
+      tokenRoleUpper === 'OWNER' ? Role.OWNER :
+      tokenRoleUpper === 'ADMIN' ? Role.ADMIN :
+      tokenRoleUpper === 'SUPPORT' ? Role.SUPPORT :
       Role.USER;
+
+    // Override with current DB role if available so promotions take effect immediately
+    try {
+      const u = await this.prisma.user.findUnique({
+        where: { id: Number(payload.sub) },
+        select: { id: true, role: true, email: true },
+      });
+      if (u?.role) {
+        const dbUpper = String(u.role).toUpperCase();
+        role =
+          dbUpper === 'OWNER' ? Role.OWNER :
+          dbUpper === 'ADMIN' ? Role.ADMIN :
+          dbUpper === 'SUPPORT' ? Role.SUPPORT :
+          Role.USER;
+      }
+    } catch {
+      // ignore DB errors; fall back to token role
+    }
 
     // Attach user info to request object
     return { userId: payload.sub, email: payload.email, role };

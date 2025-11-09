@@ -8,6 +8,7 @@ import { AuthGuard } from '@nestjs/passport';
 import { CreateServerDto } from './dto/create-server.dto';
 import { UpdateServerDto } from './dto/update-server.dto';
 import { SkipThrottle } from '@nestjs/throttler';
+import { GameCatalog } from './game-catalog';
 
 @ApiTags('servers')
 @ApiBearerAuth()
@@ -15,6 +16,16 @@ import { SkipThrottle } from '@nestjs/throttler';
 @Controller('servers')
 export class ServersController {
   constructor(private service: ServersService) {}
+
+  @Get('games')
+  async listGames() {
+    const cat = GameCatalog.load();
+    // Return as array for the frontend to render
+    const ids: string[] = [];
+    // @ts-ignore - private field access via method
+    const entries = (cat as any).byId ? Array.from((cat as any).byId.values()) : [];
+    return entries;
+  }
 
   @Get()
   async list(
@@ -182,22 +193,22 @@ export class ServersController {
     // Allow ADMIN/OWNER to create for any user; others create for themselves
     const targetUserId = (actor.role === Role.ADMIN || actor.role === Role.OWNER) && body.userId ? Number(body.userId) : actor.userId;
 
-    // Auto-detect provisioner:
-    // - If Steam appId provided OR image looks like a Steam-based title (cm2network/gmod, garrysmod, etc.), use steamcmd
-    // - Otherwise use docker
+    // Auto-detect provisioner for legacy images; when using catalog gameId the queue will choose provisioner.
     let provisioner: 'docker' | 'steamcmd' = 'docker';
     let steam = body.steam;
     const image = (body.image || '').toLowerCase();
     const looksGmod = /^cm2network\/(gmod|garrysmod)(:.+)?$/.test(image);
-    if ((steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod) {
-      provisioner = 'steamcmd';
-      if (!steam && looksGmod) {
-        steam = { appId: 4020 };
+    if (!body.gameId) {
+      if ((steam && typeof steam.appId === 'number' && steam.appId > 0) || looksGmod) {
+        provisioner = 'steamcmd';
+        if (!steam && looksGmod) {
+          steam = { appId: 4020 };
+        }
       }
     }
 
     const asAdmin = actor.role === Role.ADMIN || actor.role === Role.OWNER;
-    return this.service.create(targetUserId, body.planId, body.name, body.image, body.env, provisioner, steam, { asAdmin });
+    return this.service.create(targetUserId, body.planId, body.name, body.image, body.env, provisioner, steam, { asAdmin, gameId: body.gameId });
   }
 
   // Admin-only updates

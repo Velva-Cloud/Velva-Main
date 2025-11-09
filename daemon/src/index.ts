@@ -875,6 +875,22 @@ function startHttpsServer() {
       return uniq;
     }
 
+    async function imageExistsLocally(ref: string): Promise<boolean> {
+      try {
+        const img = docker.getImage(ref);
+        await img.inspect();
+        return true;
+      } catch {
+        // Try matching by RepoTags
+        try {
+          const imgs = await docker.listImages({ filters: { reference: [ref] } as any });
+          return Array.isArray(imgs) && imgs.length > 0;
+        } catch {
+          return false;
+        }
+      }
+    }
+
     const candidates = resolveCandidates(img);
 
     let lastErr: any = null;
@@ -885,6 +901,12 @@ function startHttpsServer() {
       } catch (e: any) {
         lastErr = e;
         const msg = String(e?.message || '');
+        // If pull failed, but the image exists locally, allow using it
+        try {
+          if (await imageExistsLocally(ref)) {
+            return;
+          }
+        } catch {}
         // Continue to next candidate on common registry errors
         if (/denied/i.test(msg) || /unauthorized/i.test(msg) || /manifest unknown/i.test(msg) || e?.statusCode === 404) {
           continue;
@@ -898,6 +920,12 @@ function startHttpsServer() {
         return;
       } catch (e: any) {
         lastErr = e;
+        // As last resort, accept local image if present under first candidate
+        try {
+          if (await imageExistsLocally(candidates[0])) {
+            return;
+          }
+        } catch {}
       }
     }
     const reason = lastErr?.message || 'image_pull_failed';
@@ -993,90 +1021,263 @@ function startHttpsServer() {
 
       if (provisioner === 'steamcmd') {
         // Ensure steamcmd is available
-        const candidates = [
-          process.env.STEAMCMD_PATH || '',
-          '/usr/bin/steamcmd',
-          '/usr/local/bin/steamcmd',
-          '/opt/steamcmd/steamcmd.sh',
-        ].filter(Boolean);
+        // Resolve SteamCMD path:
+        // - If STEAMCMD_PATH is provided, use it even if it's a bare command name (PATH-resolved).
+        // - Otherwise, fall back to common locations.
         let steamcmdPath: string | null = null;
-        for (const c of candidates) {
-          try {
-            if (c && fs.existsSync(c)) { steamcmdPath = c; break; }
-          } catch {}
+        const envPath = (process.env.STEAMCMD_PATH || '').trim();
+        if (envPath) {
+          steamcmdPath = envPath;
+        } else {
+          const candidates = [
+            '/usr/bin/steamcmd',
+            '/usr/local/bin/steamcmd',
+            '/opt/steamcmd/steamcmd.sh',
+          ];
+          for (const c of candidates) {
+            try {
+              if (fs.existsSync(c)) { steamcmdPath = c; break; }
+            } catch {}
+          }
         }
         if (!steamcmdPath) {
-          return res.status(500).json({ error: 'steamcmd_not_found', detail: 'Install SteamCMD and set STEAMCMD_PATH env or place it at /usr/bin/steamcmd' });
+          // Final fallback to bare command if present in PATH
+          steamcmdPath = 'steamcmd';
         }
+
+        // Ensure SteamCMD runtime is present (linux32/steamcmd) if using the shell script path
+        async function ensureSteamCmdReady(): Promise<void> {
+          try {
+            const bin = '/opt/steamcmd/linux32/steamcmd';
+            if (fs.existsSync(bin)) return;
+            // Best-effort bootstrap only for /opt/steamcmd layouts
+            try { fs.mkdirSync('/opt/steamcmd', { recursive: true }); } catch {}
+            await new Promise<void>((resolve) => {
+              const sh = require('child_process').spawn('/bin/sh', ['-lc',
+                'set -e; ' +
+                'cd /opt/steamcmd && ' +
+                'curl -sqL https://steamcdn-a.akamaihd.net/client/installer/steamcmd_linux.tar.gz -o steamcmd_linux.tar.gz && ' +
+                'tar -xzf steamcmd_linux.tar.gz && ' +
+                'rm -f steamcmd_linux.tar.gz'
+              ], { stdio: ['ignore', 'pipe', 'pipe'] });
+              sh.on('exit', () => resolve());
+              sh.on('error', () => resolve());
+            });
+            // Initialize SteamCMD packages once; ignore failures
+            await new Promise<void>((resolve) => {
+              const cp = require('child_process').spawn('/opt/steamcmd/steamcmd.sh', ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
+              cp.on('exit', () => resolve());
+              cp.on('error', () => resolve());
+            });
+          } catch {}
+        }
+        // Only run the /opt/steamcmd bootstrap when using the shell script path
+        if (steamcmdPath.endsWith('steamcmd.sh')) {
+          await ensureSteamCmdReady();
+        }
+        // Pre-flight: run 'steamcmd +quit' to initialize local package state regardless of path
+        async function steamcmdPreflight(): Promise<void> {
+          try {
+            await new Promise<void>((resolve) => {
+              const cp = require('child_process').spawn('/bin/sh', ['-lc', 'steamcmd +quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
+              cp.on('exit', () => resolve());
+              cp.on('error', () => resolve());
+            });
+          } catch {
+            // ignore
+          }
+        }
+        await steamcmdPreflight();
 
         const appId = Number(steam?.appId || 0);
         if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
         const branch = (steam?.branch || 'public').toString();
+        const prefer64 = /x86-64/i.test(branch);
 
-        // Install/update into srvDir via SteamCMD
-        // Important: set force_install_dir before login to avoid SteamCMD warning and state errors
-        const installArgs: string[] = [
+        // Helpers for SteamCMD install/update with retries and cache cleanup on transient errors
+        async function runSteamCmdOnce(args: string[]): Promise<{ code: number; out: string }> {
+          return await new Promise((resolve) => {
+            // Always invoke via shell to avoid direct spawn EPERM issues
+            const quoted = args.map(a => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ');
+            const cmd = `steamcmd ${quoted}`;
+            const cp = require('child_process').spawn('/bin/sh', ['-lc', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
+            let out = '';
+            const append = (data: Buffer | string) => {
+              try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
+            };
+            cp.stdout?.on('data', append);
+            cp.stderr?.on('data', append);
+            cp.on('error', (e: any) => resolve({ code: 127, out: (out || '') + '\n' + String(e?.message || e) }));
+            cp.on('exit', (code: number) => resolve({ code: Number(code), out }));
+          });
+        }
+        function clearSteamAppCaches(dir: string, app: number) {
+          try {
+            const steamapps = path.join(dir, 'steamapps');
+            // Remove appmanifest and depotcache for the specific app if present
+            try {
+              if (fs.existsSync(steamapps)) {
+                const entries = fs.readdirSync(steamapps);
+                for (const name of entries) {
+                  if (/^appmanifest_/.test(name) || /depotcache/i.test(name)) {
+                    try { fs.rmSync(path.join(steamapps, name), { recursive: true, force: true }); } catch {}
+                  }
+                }
+              }
+            } catch {}
+            // Also clear SteamCMD global package cache to avoid stuck state 0x602
+            try {
+              const pkgDir = '/opt/steamcmd/package';
+              if (fs.existsSync(pkgDir)) {
+                const ents = fs.readdirSync(pkgDir);
+                for (const e of ents) {
+                  try { fs.rmSync(path.join(pkgDir, e), { force: true, recursive: true }); } catch {}
+                }
+              }
+            } catch {}
+          } catch {}
+        }
+
+        // Build base args; Important: set force_install_dir before login to avoid state errors
+        // Add SteamCMD control vars to fail fast and avoid interactive prompts
+        const baseArgs: string[] = [
+          '+@sSteamCmdForcePlatformType', 'linux',
+          '+@ShutdownOnFailedCommand', '1',
+          '+@NoPromptForPassword', '1',
           '+force_install_dir', srvDir,
           '+login', 'anonymous',
           '+app_update', String(appId),
         ];
         // Only include -beta when branch is not 'public'
         if (branch && branch.toLowerCase() !== 'public') {
-          installArgs.push('-beta', branch);
+          baseArgs.push('-beta', branch);
         }
-        // Validate to reduce corrupt installs
-        installArgs.push('validate', '+quit');
+        // Always validate to reduce corrupt installs
+        baseArgs.push('validate', '+quit');
 
-        // Run steamcmd and treat known success phrases as success even with non-zero exit
-        await new Promise<void>((resolve, reject) => {
-          const cp = require('child_process').spawn(steamcmdPath, installArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
-          let out = '';
-          const append = (data: Buffer | string) => {
-            try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
-          };
-          cp.stdout?.on('data', append);
-          cp.stderr?.on('data', append);
-          cp.on('error', reject);
-          cp.on('exit', (code: number) => {
-            const o = (out || '').toString();
-            const success = /Success!\s*App\s*'\d+'\s*fully installed/i.test(o);
-            if (code === 0 || success) return resolve();
-            // Sometimes shows transient errors then success in a later run; log and reject with detail
-            return reject(new Error(`steamcmd_install_failed: code=${code} out=${o.slice(-1000)}`));
-          });
-        });
+        // Attempt up to 5 tries; progressively clear caches and finally force 64-bit branch for GMOD
+        let attempt = 0;
+        let lastOut = '';
+        let lastCode = -1;
+        while (attempt < 5) {
+          attempt++;
+          let args = baseArgs.slice();
+          if ((attempt >= 3) && appId === 4020 && (!branch || branch.toLowerCase() === 'public')) {
+            // Try 64-bit beta for Garry's Mod after early failures
+            args = [
+              '+@sSteamCmdForcePlatformType', 'linux',
+              '+@ShutdownOnFailedCommand', '1',
+              '+@NoPromptForPassword', '1',
+              '+force_install_dir', srvDir,
+              '+login', 'anonymous',
+              '+app_update', String(appId), '-beta', 'x86-64', 'validate', '+quit',
+            ];
+          }
+          if (attempt > 1) {
+            // Clean potentially corrupt cache between attempts
+            clearSteamAppCaches(srvDir, appId);
+            // Also try removing appmanifest for the specific app
+            try {
+              const mani = path.join(srvDir, 'steamapps', `appmanifest_${appId}.acf`);
+              try { fs.rmSync(mani, { force: true }); } catch {}
+            } catch {}
+          }
+          const { code, out } = await runSteamCmdOnce(args);
+          lastOut = out;
+          lastCode = code;
+          const success = /Success!\s*App\s*'\d+'\s*fully installed/i.test(out);
+          // Some SteamCMD runs exit non-zero but still print Success! at the end
+          if (code === 0 || success) {
+            break;
+          }
+          // If transient known state, wait briefly and retry
+          const has602 = /state\s+is\s+0x602/i.test(out);
+          const connectionIssues = /timed out|timeout|Connection (?:failed|closed)|No Connection/i.test(out);
+          if (has602 || connectionIssues || code === 8) {
+            await new Promise(r => setTimeout(r, 2500));
+            continue;
+          }
+          // For other failures, do not spin
+          break;
+        }
+        // Final check
+        const finalSuccess = /Success!\s*App\s*'\\d+'\\s*fully installed/i.test(lastOut);
+        if (!(lastCode === 0 || finalSuccess)) {
+          throw new Error(`steamcmd_install_failed: code=${lastCode} out=${lastOut.slice(-1000)}`);
+        }
 
-        // Ensure SRCDS binaries are executable
+        // Ensure SRCDS binaries are executable and try to grant CAP_SYS_NICE for non-root thread priority
         try {
           const bin1 = path.join(srvDir, 'srcds_linux');
+          const bin1x = path.join(srvDir, 'srcds_linux64');
           const bin2 = path.join(srvDir, 'srcds_run');
           try { fs.chmodSync(bin1, 0o755); } catch {}
+          try { fs.chmodSync(bin1x, 0o755); } catch {}
           try { fs.chmodSync(bin2, 0o755); } catch {}
+          // Best-effort setcap; requires libcap2-bin present in image
+          try {
+            const has = (p: string) => p && fs.existsSync(p);
+            const sh = (cmd: string) => require('child_process').spawnSync('/bin/sh', ['-lc', cmd], { stdio: 'ignore' });
+            if (has(bin1)) sh(`setcap 'cap_sys_nice+ep' "${bin1}" || true`);
+            if (has(bin1x)) sh(`setcap 'cap_sys_nice+ep' "${bin1x}" || true`);
+          } catch {}
         } catch {}
 
         // Build launch command per appId (SRCDS family)
-        let runCmd: string;
+        let runCmd: string | null = null;
         let runArgs: string[];
         const hostPort = Number(chosenHostPort || 27015);
+        const pickSrcds = (): string | null => {
+          const c64 = path.join(srvDir, 'srcds_linux64');
+          const c32 = path.join(srvDir, 'srcds_linux');
+          const run = path.join(srvDir, 'srcds_run');
+          if (prefer64 && fileExists(c64)) return c64;
+          if (fileExists(c32)) return c32;
+          if (fileExists(run)) return run;
+          const bin64 = path.join(srvDir, 'bin', 'srcds_linux64');
+          const bin32 = path.join(srvDir, 'bin', 'srcds_linux');
+          if (prefer64 && fileExists(bin64)) return bin64;
+          if (fileExists(bin32)) return bin32;
+          return resolveSrcdsBinary(srvDir);
+        };
+
         if (appId === 4020) { // Garry's Mod
-          runCmd = path.join(srvDir, 'srcds_linux');
+          // Prefer engine binary directly to avoid srcds_run countdown when possible
+          const engine64 = path.join(srvDir, 'srcds_linux64');
+          const engine32 = path.join(srvDir, 'srcds_linux');
+          if (prefer64 && fileExists(engine64)) runCmd = engine64;
+          else if (fileExists(engine32)) runCmd = engine32;
+          else runCmd = pickSrcds();
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
+          // If we still ended up with srcds_run, force explicit binary choice via -binary
+          if (runCmd === path.join(srvDir, 'srcds_run')) {
+            if (prefer64 && fileExists(engine64)) {
+              runArgs.unshift('srcds_linux64', '-binary');
+            } else if (fileExists(engine32)) {
+              runArgs.unshift('srcds_linux', '-binary');
+            }
+          }
         } else if (appId === 740) { // CS:GO
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = pickSrcds();
           runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2', '+maxplayers', '16', '-tickrate', '128', '+log', 'on'];
         } else if (appId === 232250) { // TF2
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = pickSrcds();
           runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl', '+maxplayers', '24', '-tickrate', '66', '+log', 'on'];
         } else if (appId === 222860) { // L4D2
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = pickSrcds();
           runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort), '+log', 'on'];
         } else if (appId === 629760) { // Mordhau
           runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
           runArgs = ['-Port=' + String(hostPort)];
         } else {
           // Generic SRCDS default
-          runCmd = path.join(srvDir, 'srcds_linux');
+          runCmd = pickSrcds();
           runArgs = ['-console', '-port', String(hostPort), '+log', 'on'];
+        }
+
+        if (!runCmd || !fileExists(runCmd)) {
+          // If the binary wasn't found after install/validate, surface a clear error
+          return res.status(500).json({ error: 'binary_missing', detail: `SRCDS binary not found in ${srvDir}. Check install logs and branch (try branch \"x86-64\" for GMod).` });
         }
 
         // Bind IP and enforce strict port binding to avoid accidental dynamic ports
@@ -1110,33 +1311,58 @@ function startHttpsServer() {
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
         // Ensure Steam runtime hints in server dir
         ensureSteamRuntime(srvDir, appId);
-        // If running as root, drop privileges automatically to avoid SRCDS root warning
-        const ids = pickNonRootUser();
+        // Precreate common writable directories to avoid log/cache warnings
+        try { fs.mkdirSync(path.join(srvDir, 'garrysmod', 'logs'), { recursive: true }); } catch {}
+        try { fs.mkdirSync(path.join(srvDir, 'garrysmod', 'cfg'), { recursive: true }); } catch {}
+
+        // Default: run as non-root for hosting safety; allow override via SRCDS_KEEP_ROOT=1
+        const keepRoot = String(process.env.SRCDS_KEEP_ROOT || '').trim() === '1';
+        const ids = keepRoot ? null : pickNonRootUser();
         try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
-        const child = require('child_process').spawn(runCmd, runArgs, {
+        const launch = (rootOverride = false) => require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
           env: {
             ...process.env,
             VC_SERVER_ID: String(serverId),
             VC_NAME: name,
             HOME: srvDir,
-            LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+            // Include linux64 in library path for 64-bit branches
+            LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${path.join(srvDir, 'bin', 'linux64')}:${process.env.LD_LIBRARY_PATH || ''}`,
           },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
-          ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
+          ...(rootOverride ? {} : (ids ? { uid: ids.uid, gid: ids.gid } : {})),
         });
+        let child = launch(false);
+        const startedAt = Date.now();
+        let retriedAsRoot = false;
+
         // Append stdout/stderr to console.log and record exit codes
         try {
           const append = (data: Buffer | string) => {
             const text = typeof data === 'string' ? data : data.toString('utf8');
             try { fs.appendFileSync(logPath, text); } catch {}
           };
-          child.stdout?.on('data', append);
-          child.stderr?.on('data', append);
-          child.on('exit', (code: number, signal: string) => {
-            append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
-          });
+          append(`[INFO] Launching: ${runCmd} ${runArgs.join(' ')}\n`);
+          const attach = (proc: any) => {
+            proc.stdout?.on('data', append);
+            proc.stderr?.on('data', append);
+            proc.on('error', (err: any) => {
+              append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
+            });
+            proc.on('exit', (code: number, signal: string) => {
+              const lifetime = Date.now() - startedAt;
+              append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+              // Auto-retry once as root if early exit with scheduler assertion (code 100)
+              if (!retriedAsRoot && lifetime < 8000 && Number(code) === 100) {
+                retriedAsRoot = true;
+                append(`[INFO] Early exit with code 100 detected; retrying once with root to bypass scheduler assertion\n`);
+                try { child.removeAllListeners(); } catch {}
+                try { child = launch(true); append(`[INFO] Launching (root): ${runCmd} ${runArgs.join(' ')}\n`); attach(child); steamProcesses.set(Number(serverId), child); } catch {}
+              }
+            });
+          };
+          attach(child);
         } catch {}
         steamProcesses.set(Number(serverId), child);
         try {
@@ -1144,6 +1370,118 @@ function startHttpsServer() {
           fs.writeFileSync(path.join(srvDir, 'steam.json'), JSON.stringify(meta, null, 2));
         } catch {}
         return res.json({ ok: true, id: `proc-${serverId}`, existed: false, volume: mountPath, port: hostPort, provisioner: 'steamcmd' });
+      }
+
+      // Docker-based SRCDS runner (containerized SteamCMD + SRCDS, like Minecraft model)
+      else if (provisioner === 'docker_srds') {
+        const runnerImage = (req.body?.image && String(req.body.image).trim()) || 'velva/srds-runner:latest';
+        await pullImageWithFallback(runnerImage, req.body?.registryAuth);
+
+        // Decide internal/container port and mapping
+        const internal = internalPorts.length > 0 ? internalPorts[0] : { containerPort: 27015, proto: 'udp' as const };
+        const hostPort = Number(chosenHostPort || internal.containerPort);
+        // Build ExposedPorts and PortBindings
+        const expKey = `${internal.containerPort}/${internal.proto}`;
+        const exposedDocker: Record<string, {}> = { [expKey]: {} };
+        const portBindingsDocker: Record<string, Array<{ HostPort: string }>> = { [expKey]: [{ HostPort: String(hostPort) }] };
+
+        // Env for runner
+        const appId = Number(steam?.appId || 0);
+        if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
+        const branch = (steam?.branch || 'public').toString();
+        const extraArgs: string[] = Array.isArray(steam?.args) ? steam!.args!.map((a: any) => String(a)) : [];
+        // Ensure essential flags
+        if (!extraArgs.includes('-game')) { extraArgs.unshift('garrysmod'); extraArgs.unshift('-game'); }
+        if (!extraArgs.includes('-console')) { extraArgs.unshift('-console'); }
+        // Compose SRCDS_ARGS as single string
+        const srdsArgsStr = extraArgs.join(' ');
+        const gslt = (steam as any)?.gslt || process.env.SV_STEAM_TOKEN || '';
+
+        const envArr: string[] = [
+          `VC_SERVER_ID=${serverId}`,
+          `VC_NAME=${name}`,
+          `APP_ID=${appId}`,
+          `BRANCH=${branch}`,
+          `PORT=${internal.containerPort}`,
+          `SRCDS_ARGS=${srdsArgsStr}`,
+        ];
+        if (gslt) envArr.push(`GSLT=${gslt}`);
+        if (env && typeof env === 'object') {
+          for (const [k, v] of Object.entries(env)) envArr.push(`${k}=${String(v)}`);
+        }
+
+        // CPU units to NanoCpus:
+        let nanoCpus: number | undefined = undefined;
+        if (typeof cpu === 'number' && isFinite(cpu) && cpu > 0) {
+          const unitsPerCore = Number(process.env.CPU_UNITS_PER_CORE || 100);
+          const coresAvail = Math.max(1, (os.cpus()?.length || 1));
+          let coreLimit = cpu / (unitsPerCore > 0 ? unitsPerCore : 100);
+          coreLimit = Math.max(0.01, Math.min(coresAvail, coreLimit));
+          nanoCpus = Math.round(coreLimit * 1e9);
+        }
+
+        // Handle existing container
+        let existingId: string | null = null;
+        try {
+          const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+          if (Array.isArray(matches) && matches.length > 0) existingId = matches[0].Id;
+        } catch {}
+
+        if (existingId && forceRecreate) {
+          try {
+            const c = docker.getContainer(existingId);
+            try { await c.stop({ t: Number(process.env.STOP_TIMEOUT || 5) } as any); } catch {}
+            await c.remove({ force: true });
+            existingId = null;
+          } catch {}
+        }
+
+        if (existingId) {
+          return res.json({ ok: true, id: existingId, existed: true, volume: mountPath, port: hostPort });
+        }
+
+        // Ensure host server dir is writable by container user (steam:steam typically 1000:1000)
+        try {
+          require('child_process').spawnSync('/bin/sh', ['-lc', `chown -R 1000:1000 "${srvDir}" || true`], { stdio: 'ignore' });
+        } catch {}
+
+        // Create container
+        try {
+          const container = await docker.createContainer({
+            name: containerName,
+            Image: runnerImage,
+            Tty: false,
+            OpenStdin: false,
+            AttachStdin: false,
+            AttachStdout: true,
+            AttachStderr: true,
+            HostConfig: {
+              Binds: [`${srvDir}:/home/steam/server`],
+              NanoCpus: nanoCpus,
+              Memory: typeof ramMB === 'number' ? ramMB * 1024 * 1024 : undefined,
+              RestartPolicy: { Name: 'unless-stopped' },
+              CapAdd: ['SYS_NICE'],
+              SecurityOpt: ['seccomp=unconfined'],
+              PortBindings: portBindingsDocker,
+            } as any,
+            Env: envArr,
+            ExposedPorts: exposedDocker,
+          } as any);
+          return res.json({ ok: true, id: container.id, existed: false, volume: mountPath, port: hostPort, provisioner: 'docker_srds' });
+        } catch (e: any) {
+          const msg = String(e?.message || '');
+          if (e?.statusCode === 409 || /already in use/i.test(msg) || /Conflict/i.test(msg)) {
+            try {
+              const matches = await docker.listContainers({ all: true, filters: { name: [containerName] } as any });
+              if (Array.isArray(matches) && matches.length > 0) {
+                const info = matches[0];
+                return res.json({ ok: true, id: info.Id, existed: true, volume: mountPath, port: hostPort, provisioner: 'docker_srds' });
+              }
+            } catch {}
+          }
+          console.error('provision_error_docker_srds:', e);
+          return res.status(500).json({ error: e?.message || 'provision_failed' });
+        }
       }
 
       // Docker path
@@ -1245,6 +1583,27 @@ function startHttpsServer() {
 
   // Helpers for SteamCMD-managed servers
 
+  // Safe file existence check
+  function fileExists(p: string): boolean {
+    try { return fs.existsSync(p); } catch { return false; }
+  }
+
+  // Resolve SRCDS engine binary path with fallbacks (prefer direct engine over runner script)
+  function resolveSrcdsBinary(srvDir: string): string | null {
+    const candidates = [
+      path.join(srvDir, 'srcds_linux64'),    // prefer 64-bit if present
+      path.join(srvDir, 'srcds_linux'),      // 32-bit engine
+      path.join(srvDir, 'bin', 'srcds_linux64'),
+      path.join(srvDir, 'bin', 'srcds_linux'),
+    ];
+    for (const p of candidates) {
+      if (fileExists(p)) return p;
+    }
+    // if engine not found, fall back to srcds_run so we can inject -binary
+    const run = path.join(srvDir, 'srcds_run');
+    return fileExists(run) ? run : null;
+  }
+
   // Select a non-root user from /etc/passwd (uid>=1000) or 'nobody' (65534) if running as root.
   function pickNonRootUser(): { uid: number; gid: number } | null {
     try {
@@ -1270,32 +1629,50 @@ function startHttpsServer() {
     }
   }
 
-  // Ensure Steam runtime hints for SRCDS: steam_appid.txt and sdk32 steamclient symlink inside HOME
+  // Ensure Steam runtime hints for SRCDS: steam_appid.txt and sdk32/sdk64 steamclient symlinks inside HOME
   function ensureSteamRuntime(srvDir: string, appId: number): void {
     try {
       // steam_appid.txt
       const appidPath = path.join(srvDir, 'steam_appid.txt');
       try { fs.writeFileSync(appidPath, String(appId)); } catch {}
 
-      // Setup HOME-relative .steam/sdk32 symlink to steamclient.so if present
-      const sdkDir = path.join(srvDir, '.steam', 'sdk32');
-      try { fs.mkdirSync(sdkDir, { recursive: true }); } catch {}
-      const srcCandidates = [
-        path.join(srvDir, 'bin', 'steamclient.so'),
-        path.join(srvDir, 'steamclient.so'),
-      ];
-      let src: string | null = null;
-      for (const c of srcCandidates) {
-        try { if (fs.existsSync(c)) { src = c; break; } } catch {}
-      }
-      if (src) {
-        const dst = path.join(sdkDir, 'steamclient.so');
-        try {
-          // Replace any existing file/symlink
-          try { fs.unlinkSync(dst); } catch {}
-          fs.symlinkSync(src, dst);
-        } catch {}
-      }
+      // Setup HOME-relative .steam/sdk32 symlink to steamclient.so if present (32-bit)
+      try {
+        const sdk32 = path.join(srvDir, '.steam', 'sdk32');
+        fs.mkdirSync(sdk32, { recursive: true });
+        const src32Candidates = [
+          path.join(srvDir, 'bin', 'steamclient.so'),
+          path.join(srvDir, 'steamclient.so'),
+        ];
+        let src32: string | null = null;
+        for (const c of src32Candidates) {
+          try { if (fs.existsSync(c)) { src32 = c; break; } } catch {}
+        }
+        if (src32) {
+          const dst32 = path.join(sdk32, 'steamclient.so');
+          try { fs.unlinkSync(dst32); } catch {}
+          try { fs.symlinkSync(src32, dst32); } catch {}
+        }
+      } catch {}
+
+      // Setup HOME-relative .steam/sdk64 symlink to 64-bit steamclient.so when available
+      try {
+        const sdk64 = path.join(srvDir, '.steam', 'sdk64');
+        fs.mkdirSync(sdk64, { recursive: true });
+        const src64Candidates = [
+          path.join(srvDir, 'bin', 'linux64', 'steamclient.so'),
+          path.join(srvDir, 'linux64', 'steamclient.so'),
+        ];
+        let src64: string | null = null;
+        for (const c of src64Candidates) {
+          try { if (fs.existsSync(c)) { src64 = c; break; } } catch {}
+        }
+        if (src64) {
+          const dst64 = path.join(sdk64, 'steamclient.so');
+          try { fs.unlinkSync(dst64); } catch {}
+          try { fs.symlinkSync(src64, dst64); } catch {}
+        }
+      } catch {}
     } catch {
       // ignore
     }
@@ -1350,33 +1727,65 @@ function startHttpsServer() {
     try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
     // Ensure Steam runtime hints in server dir
     ensureSteamRuntime(srvDir, meta.appId || 0);
-    // If running as root, drop privileges automatically to avoid SRCDS root warning
-    const ids = pickNonRootUser();
+    // Default to non-root for hosting safety; allow override via SRCDS_KEEP_ROOT=1
+    const keepRoot = String(process.env.SRCDS_KEEP_ROOT || '').trim() === '1';
+    const ids = keepRoot ? null : pickNonRootUser();
     try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
 
-    const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
+    // Validate/resolve SRCDS binary before spawning to avoid ENOENT crash
+    let binary = meta.runCmd;
+    if (!fileExists(binary)) {
+      const resolved = resolveSrcdsBinary(srvDir);
+      if (resolved) {
+        binary = resolved;
+        try { writeSteamMeta(serverId, { ...meta, runCmd: binary }); } catch {}
+      } else {
+        try { fs.appendFileSync(logPath, `\n[ERROR] SRCDS binary not found in ${srvDir}. Cannot start.\n`); } catch {}
+        return { ok: false };
+      }
+    }
+
+    const launch = (rootOverride = false) => require('child_process').spawn(binary, meta.runArgs, {
       cwd: srvDir,
       env: {
         ...process.env,
         VC_SERVER_ID: String(serverId),
         HOME: srvDir,
-        LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${process.env.LD_LIBRARY_PATH || ''}`,
+        // Include linux64 in library path for 64-bit branches
+        LD_LIBRARY_PATH: `${srvDir}:${path.join(srvDir, 'bin')}:${path.join(srvDir, 'bin', 'linux64')}:${process.env.LD_LIBRARY_PATH || ''}`,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
-      ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
+      ...(rootOverride ? {} : (ids ? { uid: ids.uid, gid: ids.gid } : {})),
     });
+
+    let child = launch(false);
+    const startedAt = Date.now();
+    let retriedAsRoot = false;
 
     try {
       const append = (data: Buffer | string) => {
         const text = typeof data === 'string' ? data : data.toString('utf8');
         try { fs.appendFileSync(logPath, text); } catch {}
       };
-      child.stdout?.on('data', append);
-      child.stderr?.on('data', append);
-      child.on('exit', (code: number, signal: string) => {
-        append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
-      });
+      const attach = (proc: any) => {
+        proc.stdout?.on('data', append);
+        proc.stderr?.on('data', append);
+        proc.on('error', (err: any) => {
+          append(`\n[ERROR] SRCDS spawn error: ${String(err?.message || err)}\n`);
+        });
+        proc.on('exit', (code: number, signal: string) => {
+          const lifetime = Date.now() - startedAt;
+          append(`\n[INFO] SRCDS exited (code=${code ?? 'null'} signal=${signal ?? 'null'})\n`);
+          if (!retriedAsRoot && lifetime < 8000 && Number(code) === 100) {
+            retriedAsRoot = true;
+            append(`[INFO] Early exit with code 100 detected; retrying once with root to bypass scheduler assertion\n`);
+            try { child.removeAllListeners(); } catch {}
+            try { child = launch(true); attach(child); steamProcesses.set(Number(serverId), child); } catch {}
+          }
+        });
+      };
+      attach(child);
     } catch {}
 
     steamProcesses.set(Number(serverId), child);

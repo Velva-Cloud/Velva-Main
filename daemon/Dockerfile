@@ -1,9 +1,20 @@
+# ---- Builder: install dev deps and compile TypeScript ----
+FROM node:20-bullseye AS builder
+
+WORKDIR /app
+COPY package.json tsconfig.json ./
+# Install dev dependencies (no lockfile available), skip audits/fund prompts
+RUN npm install --no-audit --no-fund
+COPY src ./src
+RUN npm run build
+
+# ---- Runtime: install only production deps + SteamCMD runtime ----
 FROM node:20-bullseye
 
 # Install SteamCMD dependencies and SteamCMD itself
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-      curl ca-certificates tar \
+      curl ca-certificates tar libcap2-bin \
       lib32gcc-s1 lib32stdc++6 libc6-i386 && \
     mkdir -p /opt/steamcmd && \
     cd /opt/steamcmd && \
@@ -16,18 +27,18 @@ RUN apt-get update && \
     ln -sf /opt/steamcmd/linux32 /usr/bin/linux32 && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Provide both explicit path and PATH-based binary for daemon
-ENV STEAMCMD_PATH=/opt/steamcmd/steamcmd.sh
+# Provide PATH-based SteamCMD by default; daemon can also work with /opt/steamcmd/steamcmd.sh
+ENV STEAMCMD_PATH=steamcmd
+
+# Reduce npm noise/logging
+ENV NPM_CONFIG_LOGLEVEL=warn
 
 WORKDIR /app
-COPY package.json package-lock.json* tsconfig.json ./
-# Install all dependencies including dev for build step
-RUN npm install
-COPY src ./src
-# Build TypeScript -> dist
-RUN npm run build
-# Remove devDependencies to minimize image size
-RUN npm prune --production
+COPY package.json ./
+# Install only production dependencies (no lockfile), skip audits/fund prompts
+RUN npm install --omit=dev --no-audit --no-fund
+# Copy compiled app from builder
+COPY --from=builder /app/dist ./dist
 
 # Expose TLS port
 EXPOSE 9443
