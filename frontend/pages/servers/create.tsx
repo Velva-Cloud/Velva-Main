@@ -412,31 +412,7 @@ export default function CreateServerPage() {
     [image]
   );
 
-  // Admin-only assignment
-  const [assignUserId, setAssignUserId] = useState<number | ''>('');
-  const [assignSearch, setAssignSearch] = useState('');
-  const [assignResults, setAssignResults] = useState<Array<{ id: number; email: string; role: string }>>([]);
-  const [assignLoading, setAssignLoading] = useState(false);
-
-  async function triggerAssignSearch() {
-    const q = assignSearch.trim();
-    if (!q) {
-      setAssignResults([]);
-      return;
-    }
-    try {
-      setAssignLoading(true);
-      const res = await api.get('/users', { params: { search: q, pageSize: 5, page: 1 } });
-      const data = res.data;
-      const items = Array.isArray(data?.items) ? data.items : (Array.isArray(data) ? data : []);
-      const mapped = items.map((u: any) => ({ id: u.id, email: u.email, role: u.role }));
-      setAssignResults(mapped);
-    } catch {
-      setAssignResults([]);
-    } finally {
-      setAssignLoading(false);
-    }
-  }
+  // Admin-only assignment UI removed from user create page; use /admin/create-server
 
   // Map SRCDS image to Steam appId
   function steamAppIdFor(imageId: string): number | null {
@@ -599,51 +575,8 @@ export default function CreateServerPage() {
                   </div>
 
                   {isAdmin && (
-                    <div>
-                      <div className="text-sm mb-1">Assign to user</div>
-                      <div className="grid gap-2">
-                        <div className="flex items-center gap-2">
-                          <input
-                            className="input flex-1"
-                            type="text"
-                            placeholder="Search by email…"
-                            value={assignSearch}
-                            onChange={(e) => setAssignSearch(e.target.value)}
-                          />
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={triggerAssignSearch}
-                          >
-                            Search
-                          </button>
-                        </div>
-                        {assignLoading && <div className="text-xs subtle">Searching…</div>}
-                        {assignResults.length > 0 && (
-                          <div className="rounded border border-slate-800 bg-slate-900/60">
-                            {assignResults.map(u => {
-                              const selected = assignUserId === u.id;
-                              return (
-                                <button
-                                  key={u.id}
-                                  type="button"
-                                  onClick={() => { setAssignUserId(u.id); setAssignSearch(`${u.email}`); }}
-                                  className={`w-full text-left px-3 py-2 border-b border-slate-800 last:border-b-0 ${selected ? 'bg-sky-900/30' : 'hover:bg-slate-800'}`}
-                                >
-                                  <div className="flex items-center justify-between">
-                                    <div className="text-sm">{u.email}</div>
-                                    <div className="text-xs subtle">#{u.id} • {u.role}</div>
-                                  </div>
-                                </button>
-                              );
-                            })}
-                          </div>
-                        )}
-                        <div className="text-xs subtle">Leave empty to assign to yourself.</div>
-                        {assignUserId ? (
-                          <div className="text-xs">Selected user ID: <span className="text-slate-200 font-medium">{assignUserId}</span></div>
-                        ) : null}
-                      </div>
+                    <div className="mb-2 p-3 rounded border border-sky-800 bg-sky-900/20 text-sky-200">
+                      Admins: to create and assign a server to a user by email, use <a className="underline" href="/admin/create-server">Admin • Create Server</a>.
                     </div>
                   )}
 
@@ -801,4 +734,3 @@ export default function CreateServerPage() {
       </main>
     </>
   );
-}

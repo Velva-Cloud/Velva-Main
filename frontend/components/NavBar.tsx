@@ -84,6 +84,7 @@ export default function NavBar() {
                         <Link href="/admin" className="dropdown-link">Admin Home</Link>
                         <Link href="/admin/logs" className="dropdown-link">Admin • Logs</Link>
                         <Link href="/admin/plans" className="dropdown-link">Admin • Plans</Link>
+                        <Link href="/admin/create-server" className="dropdown-link">Admin • Create Server</Link>
                       </>
                     )}
                   </div>
