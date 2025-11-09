@@ -1459,8 +1459,9 @@ function startHttpsServer() {
     for (const p of candidates) {
       if (fileExists(p)) return p;
     }
-    // do not return srcds_run; we will inject -binary if we must use it
-    const run = path.join(srvDir,
+    // if engine not found, fall back to srcds_run so we can inject -binary
+    const run = path.join(srvDir, 'srcds_run');
+    return fileExists(run) ? run : null;
   }
 
   // Select a non-root user from /etc/passwd (uid>=1000) or 'nobody' (65534) if running as root.
