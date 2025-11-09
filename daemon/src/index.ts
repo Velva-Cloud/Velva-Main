@@ -1048,13 +1048,24 @@ function startHttpsServer() {
           await ensureSteamCmdReady();
         }
         // Pre-flight: run 'steamcmd +quit' to initialize local package state regardless of path
-        try {
-          await new Promise<void>((resolve) => {
-            const cp = require('child_process').spawn(steamcmdPath, ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
-            cp.on('exit', () => resolve());
-            cp.on('error', () => resolve());
-          });
-        } catch {}
+        async function steamcmdPreflight(): Promise<void> {
+          try {
+            await new Promise<void>((resolve) => {
+              let cp: any;
+              try {
+                cp = require('child_process').spawn(steamcmdPath, ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
+              } catch {
+                // Fallback to PATH via shell
+                cp = require('child_process').spawn('/bin/sh', ['-lc', 'steamcmd +quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
+              }
+              cp.on('exit', () => resolve());
+              cp.on('error', () => resolve());
+            });
+          } catch {
+            // ignore
+          }
+        }
+        await steamcmdPreflight();
 
         const appId = Number(steam?.appId || 0);
         if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
@@ -1063,14 +1074,22 @@ function startHttpsServer() {
         // Helpers for SteamCMD install/update with retries and cache cleanup on transient errors
         async function runSteamCmdOnce(args: string[]): Promise<{ code: number; out: string }> {
           return await new Promise((resolve) => {
-            const cp = require('child_process').spawn(steamcmdPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            let cp: any;
+            let usedShell = false;
+            try {
+              cp = require('child_process').spawn(steamcmdPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+            } catch (e: any) {
+              // Fallback to shell PATH invocation
+              usedShell = true;
+              cp = require('child_process').spawn('/bin/sh', ['-lc', `steamcmd ${args.map(a => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ')}`], { stdio: ['ignore', 'pipe', 'pipe'] });
+            }
             let out = '';
             const append = (data: Buffer | string) => {
               try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
             };
             cp.stdout?.on('data', append);
             cp.stderr?.on('data', append);
-            cp.on('error', (e: any) => resolve({ code: 127, out: (out || '') + '\n' + String(e?.message || e) }));
+            cp.on('error', (e: any) => resolve({ code: 127, out: (out || '') + '\n' + String(e?.message || e) + (usedShell ? '' : '\n') }));
             cp.on('exit', (code: number) => resolve({ code: Number(code), out }));
           });
         }
