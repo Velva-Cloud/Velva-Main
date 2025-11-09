@@ -1057,17 +1057,15 @@ function startHttpsServer() {
         // Start process and persist state with console log capture
         const logPath = path.join(srvDir, 'console.log');
         try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
-        // Run as non-root user if configured to avoid SRCDS root warning
-        const runUid = Number(process.env.STEAM_UID || process.env.SRCDS_UID || 1000);
-        const runGid = Number(process.env.STEAM_GID || process.env.SRCDS_GID || 1000);
-        try { fs.chownSync(srvDir, runUid, runGid); } catch {}
+        // If running as root, drop privileges automatically to avoid SRCDS root warning
+        const ids = pickNonRootUser();
+        try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
         const child = require('child_process').spawn(runCmd, runArgs, {
           cwd: srvDir,
           env: { ...process.env, VC_SERVER_ID: String(serverId), VC_NAME: name },
           stdio: ['ignore', 'pipe', 'pipe'],
           detached: true,
-          uid: runUid,
-          gid: runGid,
+          ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
         });
         // Append stdout/stderr to console.log
         try {
@@ -1183,9 +1181,34 @@ function startHttpsServer() {
         
 
   // Helpers for SteamCMD-managed servers
-  function steamMetaPath(serverId: number | string) {
-    return path.join(serverDir(serverId), 'steam.json');
+
+  // Select a non-root user from /etc/passwd (uid>=1000) or 'nobody' (65534) if running as root.
+  function pickNonRootUser(): { uid: number; gid: number } | null {
+    try {
+      const getuid = (process as any).getuid;
+      if (typeof getuid === 'function' && getuid() !== 0) return null;
+      const passwd = fs.readFileSync('/etc/passwd', 'utf8').split(/\r?\n/);
+      for (const line of passwd) {
+        // name:x:uid:gid:gecos:home:shell
+        const parts = line.split(':');
+        if (parts.length >= 4) {
+          const name = parts[0];
+          const uid = Number(parts[2]);
+          const gid = Number(parts[3]);
+          if (isFinite(uid) && uid >= 1000 && name !== 'root') {
+            return { uid, gid: isFinite(gid) ? gid : uid };
+          }
+        }
+      }
+      // Fallback to nobody/nogroup
+      return { uid: 65534, gid: 65534 };
+    } catch {
+      return null;
+    }
   }
+
+  function steamMetaPath(serverId: number | string) {
+    return path.join(serverDir(server}
   function readSteamMeta(serverId: number | string): { appId: number; branch?: string; runCmd: string; runArgs: string[]; port?: number; pid?: number; logPath?: string } | null {
     try {
       const p = steamMetaPath(serverId);
@@ -1212,17 +1235,15 @@ function startHttpsServer() {
     ensureDir(srvDir);
     const logPath = meta.logPath || path.join(srvDir, 'console.log');
     try { fs.writeFileSync(logPath, '', { flag: 'a' }); } catch {}
-    // Run as non-root user if configured to avoid SRCDS root warning
-    const runUid = Number(process.env.STEAM_UID || process.env.SRCDS_UID || 1000);
-    const runGid = Number(process.env.STEAM_GID || process.env.SRCDS_GID || 1000);
-    try { fs.chownSync(srvDir, runUid, runGid); } catch {}
+    // If running as root, drop privileges automatically to avoid SRCDS root warning
+    const ids = pickNonRootUser();
+    try { if (ids) fs.chownSync(srvDir, ids.uid, ids.gid); } catch {}
     const child = require('child_process').spawn(meta.runCmd, meta.runArgs, {
       cwd: srvDir,
       env: { ...process.env, VC_SERVER_ID: String(serverId) },
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true,
-      uid: runUid,
-      gid: runGid,
+      ...(ids ? { uid: ids.uid, gid: ids.gid } : {}),
     });
     try {
       const append = (data: Buffer) => {
