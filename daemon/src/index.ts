@@ -1064,6 +1064,7 @@ function startHttpsServer() {
         const appId = Number(steam?.appId || 0);
         if (!appId) return res.status(400).json({ error: 'steam_appid_required' });
         const branch = (steam?.branch || 'public').toString();
+        const prefer64 = /x86-64/i.test(branch);
 
         // Helpers for SteamCMD install/update with retries and cache cleanup on transient errors
         async function runSteamCmdOnce(args: string[]): Promise<{ code: number; out: string }> {
@@ -1186,24 +1187,38 @@ function startHttpsServer() {
         let runCmd: string | null = null;
         let runArgs: string[];
         const hostPort = Number(chosenHostPort || 27015);
+        const pickSrcds = (): string | null => {
+          const c64 = path.join(srvDir, 'srcds_linux64');
+          const c32 = path.join(srvDir, 'srcds_linux');
+          const run = path.join(srvDir, 'srcds_run');
+          if (prefer64 && fileExists(c64)) return c64;
+          if (fileExists(c32)) return c32;
+          if (fileExists(run)) return run;
+          const bin64 = path.join(srvDir, 'bin', 'srcds_linux64');
+          const bin32 = path.join(srvDir, 'bin', 'srcds_linux');
+          if (prefer64 && fileExists(bin64)) return bin64;
+          if (fileExists(bin32)) return bin32;
+          return resolveSrcdsBinary(srvDir);
+        };
+
         if (appId === 4020) { // Garry's Mod
-          runCmd = resolveSrcdsBinary(srvDir);
+          runCmd = pickSrcds();
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
         } else if (appId === 740) { // CS:GO
-          runCmd = resolveSrcdsBinary(srvDir);
+          runCmd = pickSrcds();
           runArgs = ['-game', 'csgo', '-console', '-port', String(hostPort), '+map', 'de_dust2', '+maxplayers', '16', '-tickrate', '128', '+log', 'on'];
         } else if (appId === 232250) { // TF2
-          runCmd = resolveSrcdsBinary(srvDir);
+          runCmd = pickSrcds();
           runArgs = ['-game', 'tf', '-console', '-port', String(hostPort), '+map', 'cp_dustbowl', '+maxplayers', '24', '-tickrate', '66', '+log', 'on'];
         } else if (appId === 222860) { // L4D2
-          runCmd = resolveSrcdsBinary(srvDir);
+          runCmd = pickSrcds();
           runArgs = ['-game', 'left4dead2', '-console', '-port', String(hostPort), '+log', 'on'];
         } else if (appId === 629760) { // Mordhau
           runCmd = path.join(srvDir, 'MordhauServer-Linux-Shipping');
           runArgs = ['-Port=' + String(hostPort)];
         } else {
           // Generic SRCDS default
-          runCmd = resolveSrcdsBinary(srvDir);
+          runCmd = pickSrcds();
           runArgs = ['-console', '-port', String(hostPort), '+log', 'on'];
         }
 
