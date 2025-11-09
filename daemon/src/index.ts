@@ -1216,12 +1216,18 @@ function startHttpsServer() {
         if (appId === 4020) { // Garry's Mod
           runCmd = pickSrcds();
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
-          // If srcds_run is selected and 64-bit binary exists, force it explicitly via -binary
+          // If srcds_run is selected, force explicit binary to avoid countdown/warnings and prefer correct arch
           const runScript = path.join(srvDir, 'srcds_run');
           const bin64 = path.join(srvDir, 'srcds_linux64');
-          if (prefer64 && fileExists(runScript) && fileExists(bin64) && runCmd === runScript) {
-            runArgs.unshift('srcds_linux64');
-            runArgs.unshift('-binary');
+          const bin32 = path.join(srvDir, 'srcds_linux');
+          if (runCmd === runScript) {
+            if (prefer64 && fileExists(bin64)) {
+              runArgs.unshift('srcds_linux64');
+              runArgs.unshift('-binary');
+            } else if (fileExists(bin32)) {
+              runArgs.unshift('srcds_linux');
+              runArgs.unshift('-binary');
+            }
           }
         } else if (appId === 740) { // CS:GO
           runCmd = pickSrcds();
