@@ -662,10 +662,7 @@ function startHttpsServer() {
         stream.on('end', endAll);
         stream.on('error', endAll);
 
-        const reqRaw = (res as any).req || undefined;
-        if (reqRaw && typeof reqRaw.on === 'function') {
-          reqRaw.on('close', endAll);
-        }
+        try { req.on('close', endAll); } catch {}
       });
     } catch (e: any) {
       const code = e?.statusCode;
