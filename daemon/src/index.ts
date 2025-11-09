@@ -1051,13 +1051,7 @@ function startHttpsServer() {
         async function steamcmdPreflight(): Promise<void> {
           try {
             await new Promise<void>((resolve) => {
-              let cp: any;
-              try {
-                cp = require('child_process').spawn(steamcmdPath, ['+quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
-              } catch {
-                // Fallback to PATH via shell
-                cp = require('child_process').spawn('/bin/sh', ['-lc', 'steamcmd +quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
-              }
+              const cp = require('child_process').spawn('/bin/sh', ['-lc', 'steamcmd +quit'], { stdio: ['ignore', 'pipe', 'pipe'] });
               cp.on('exit', () => resolve());
               cp.on('error', () => resolve());
             });
@@ -1074,22 +1068,17 @@ function startHttpsServer() {
         // Helpers for SteamCMD install/update with retries and cache cleanup on transient errors
         async function runSteamCmdOnce(args: string[]): Promise<{ code: number; out: string }> {
           return await new Promise((resolve) => {
-            let cp: any;
-            let usedShell = false;
-            try {
-              cp = require('child_process').spawn(steamcmdPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-            } catch (e: any) {
-              // Fallback to shell PATH invocation
-              usedShell = true;
-              cp = require('child_process').spawn('/bin/sh', ['-lc', `steamcmd ${args.map(a => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ')}`], { stdio: ['ignore', 'pipe', 'pipe'] });
-            }
+            // Always invoke via shell to avoid direct spawn EPERM issues
+            const quoted = args.map(a => `'${String(a).replace(/'/g, `'\\''`)}'`).join(' ');
+            const cmd = `steamcmd ${quoted}`;
+            const cp = require('child_process').spawn('/bin/sh', ['-lc', cmd], { stdio: ['ignore', 'pipe', 'pipe'] });
             let out = '';
             const append = (data: Buffer | string) => {
               try { out += (typeof data === 'string' ? data : data.toString('utf8')); } catch {}
             };
             cp.stdout?.on('data', append);
             cp.stderr?.on('data', append);
-            cp.on('error', (e: any) => resolve({ code: 127, out: (out || '') + '\n' + String(e?.message || e) + (usedShell ? '' : '\n') }));
+            cp.on('error', (e: any) => resolve({ code: 127, out: (out || '') + '\n' + String(e?.message || e) }));
             cp.on('exit', (code: number) => resolve({ code: Number(code), out }));
           });
         }
@@ -1183,7 +1172,7 @@ function startHttpsServer() {
           throw new Error(`steamcmd_install_failed: code=${lastCode} out=${lastOut.slice(-1000)}`);
         }
 
-        // Ensure SRCDS binaries are executable and grant CAP_SYS_NICE for non-root thread priority
+        // Ensure SRCDS binaries are executable
         try {
           const bin1 = path.join(srvDir, 'srcds_linux');
           const bin1x = path.join(srvDir, 'srcds_linux64');
@@ -1191,24 +1180,6 @@ function startHttpsServer() {
           try { fs.chmodSync(bin1, 0o755); } catch {}
           try { fs.chmodSync(bin1x, 0o755); } catch {}
           try { fs.chmodSync(bin2, 0o755); } catch {}
-          // Best-effort setcap if available inside container
-          try {
-            const setcap = '/sbin/setcap';
-            const setcapAlt = '/usr/sbin/setcap';
-            const tool = fs.existsSync(setcap) ? setcap : (fs.existsSync(setcapAlt) ? setcapAlt : null);
-            const grant = (p: string) => {
-              if (!p || !fs.existsSync(p)) return;
-              require('child_process').spawnSync('/bin/sh', ['-lc', `setcap 'cap_sys_nice+ep' "${p}" || true`], { stdio: 'ignore' });
-            };
-            if (tool) {
-              grant(bin1);
-              grant(bin1x);
-            } else {
-              // Try PATH-resolved setcap
-              grant(bin1);
-              grant(bin1x);
-            }
-          } catch {}
         } catch {}
 
         // Build launch command per appId (SRCDS family)
