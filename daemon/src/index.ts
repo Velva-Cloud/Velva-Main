@@ -632,10 +632,9 @@ function startHttpsServer() {
 
           // Unknown error
           clearInterval(ping);
-          const code = err?.statusCode;
-          const msg = String(err?.message || '');
-          res.status(500).json({ error: msg || 'logs_failed' });
-          return;
+          const code = (err && typeof err.statusCode !== 'undefined') ? err.statusCode : undefined;
+          const rawMsg = (err && typeof err.message !== 'undefined') ? String(err.message) : '';
+          const msg = rawMsgn;
         }
 
         // Demux stdout/stderr when needed
