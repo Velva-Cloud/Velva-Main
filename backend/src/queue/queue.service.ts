@@ -192,10 +192,15 @@ export class QueueService implements OnModuleInit {
           image = undefined as any;
           // Clear docker-specific env defaults to avoid leaking MC config
           env = {};
-          // Ensure a dedicated install directory is set for SteamCMD (force_install_dir)
-          // Use the daemon's DATA_DIR root (/data) and a per-server subdir
+          // Ensure a dedicated install directory is set for SteamCMD
           if (!mountPath || !String(mountPath).trim()) {
             mountPath = `/data/servers/${s.id}`;
+          }
+          // Pass installDir to daemon explicitly for force_install_dir
+          if (steam && typeof steam === 'object') {
+            (steam as any).installDir = mountPath;
+          } else {
+            steam = { appId: Number(steam?.appId || 0), branch: (steam?.branch || 'public'), args: [], installDir: mountPath } as any;
           }
         }
 
