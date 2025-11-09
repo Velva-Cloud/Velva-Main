@@ -2,9 +2,9 @@
 FROM node:20-bullseye AS builder
 
 WORKDIR /app
-COPY package.json package-lock.json* tsconfig.json ./
-# Faster, deterministic installs using lockfile; skip audits/fund prompts
-RUN npm ci --no-audit --no-fund
+COPY package.json tsconfig.json ./
+# Install dev dependencies (no lockfile available), skip audits/fund prompts
+RUN npm install --no-audit --no-fund
 COPY src ./src
 RUN npm run build
 
@@ -34,9 +34,9 @@ ENV STEAMCMD_PATH=steamcmd
 ENV NPM_CONFIG_LOGLEVEL=warn
 
 WORKDIR /app
-COPY package.json package-lock.json* ./
-# Install only production dependencies using lockfile; skip audits/fund prompts
-RUN npm ci --omit=dev --no-audit --no-fund
+COPY package.json ./
+# Install only production dependencies (no lockfile), skip audits/fund prompts
+RUN npm install --omit=dev --no-audit --no-fund
 # Copy compiled app from builder
 COPY --from=builder /app/dist ./dist
 
