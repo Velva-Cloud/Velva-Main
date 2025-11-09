@@ -1214,19 +1214,19 @@ function startHttpsServer() {
         };
 
         if (appId === 4020) { // Garry's Mod
-          runCmd = pickSrcds();
+          // Prefer engine binary directly to avoid srcds_run countdown when possible
+          const engine64 = path.join(srvDir, 'srcds_linux64');
+          const engine32 = path.join(srvDir, 'srcds_linux');
+          if (prefer64 && fileExists(engine64)) runCmd = engine64;
+          else if (fileExists(engine32)) runCmd = engine32;
+          else runCmd = pickSrcds();
           runArgs = ['-game', 'garrysmod', '-console', '-port', String(hostPort), '+map', 'gm_construct', '+gamemode', 'sandbox', '+maxplayers', '16', '-tickrate', '66', '+log', 'on', '+exec', 'server.cfg'];
-          // If srcds_run is selected, force explicit binary to avoid countdown/warnings and prefer correct arch
-          const runScript = path.join(srvDir, 'srcds_run');
-          const bin64 = path.join(srvDir, 'srcds_linux64');
-          const bin32 = path.join(srvDir, 'srcds_linux');
-          if (runCmd === runScript) {
-            if (prefer64 && fileExists(bin64)) {
-              runArgs.unshift('srcds_linux64');
-              runArgs.unshift('-binary');
-            } else if (fileExists(bin32)) {
-              runArgs.unshift('srcds_linux');
-              runArgs.unshift('-binary');
+          // If we still ended up with srcds_run, force explicit binary choice via -binary
+          if (runCmd === path.join(srvDir, 'srcds_run')) {
+            if (prefer64 && fileExists(engine64)) {
+              runArgs.unshift('srcds_linux64', '-binary');
+            } else if (fileExists(engine32)) {
+              runArgs.unshift('srcds_linux', '-binary');
             }
           }
         } else if (appId === 740) { // CS:GO
@@ -1315,6 +1315,7 @@ function startHttpsServer() {
             const text = typeof data === 'string' ? data : data.toString('utf8');
             try { fs.appendFileSync(logPath, text); } catch {}
           };
+          append(`[INFO] Launching: ${runCmd} ${runArgs.join(' ')}\n`);
           const attach = (proc: any) => {
             proc.stdout?.on('data', append);
             proc.stderr?.on('data', append);
@@ -1329,7 +1330,7 @@ function startHttpsServer() {
                 retriedAsRoot = true;
                 append(`[INFO] Early exit with code 100 detected; retrying once with root to bypass scheduler assertion\n`);
                 try { child.removeAllListeners(); } catch {}
-                try { child = launch(true); attach(child); steamProcesses.set(Number(serverId), child); } catch {}
+                try { child = launch(true); append(`[INFO] Launching (root): ${runCmd} ${runArgs.join(' ')}\n`); attach(child); steamProcesses.set(Number(serverId), child); } catch {}
               }
             });
           };
@@ -1447,19 +1448,19 @@ function startHttpsServer() {
     try { return fs.existsSync(p); } catch { return false; }
   }
 
-  // Resolve SRCDS binary path with fallbacks (32/64-bit and runner script)
+  // Resolve SRCDS engine binary path with fallbacks (prefer direct engine over runner script)
   function resolveSrcdsBinary(srvDir: string): string | null {
     const candidates = [
-      path.join(srvDir, 'srcds_linux'),      // standard
-      path.join(srvDir, 'srcds_linux64'),    // some 64-bit builds
-      path.join(srvDir, 'srcds_run'),        // runner script
-      path.join(srvDir, 'bin', 'srcds_linux'),
+      path.join(srvDir, 'srcds_linux64'),    // prefer 64-bit if present
+      path.join(srvDir, 'srcds_linux'),      // 32-bit engine
       path.join(srvDir, 'bin', 'srcds_linux64'),
+      path.join(srvDir, 'bin', 'srcds_linux'),
     ];
     for (const p of candidates) {
       if (fileExists(p)) return p;
     }
-    return null;
+    // do not return srcds_run; we will inject -binary if we must use it
+    const run = path.join(srvDir,
   }
 
   // Select a non-root user from /etc/passwd (uid>=1000) or 'nobody' (65534) if running as root.

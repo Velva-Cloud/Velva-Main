@@ -142,6 +142,9 @@ services:
     # Grant capability for SRCDS thread priority while running as non-root
     cap_add:
       - SYS_NICE
+    # Relax seccomp to avoid exec/priority-related sandbox denials (can tighten later)
+    security_opt:
+      - seccomp=unconfined
     # Publish SFTP and daemon TLS to host
     ports:
       - "2223:2222"
